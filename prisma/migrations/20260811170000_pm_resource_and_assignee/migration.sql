@@ -1,0 +1,3 @@
+-- AlterEnum
+ALTER TYPE "ResourceType" ADD VALUE IF NOT EXISTS 'PM';
+ALTER TYPE "AssigneeRole" ADD VALUE IF NOT EXISTS 'PM';

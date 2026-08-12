@@ -1,0 +1,5 @@
+{
+  "buildCommand": "prisma migrate deploy && prisma generate && next build --webpack",
+  "framework": "nextjs",
+  "regions": ["fra1"]
+}

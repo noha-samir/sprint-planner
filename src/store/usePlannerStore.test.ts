@@ -1,0 +1,110 @@
+import { describe, expect, it } from "vitest";
+import type { Task } from "../lib/scheduler/types";
+import {
+  activeSprintTasks,
+  buildCarryOverTasks,
+  compactPrioritiesAfterRelease,
+  enforceUniquePoPriorities,
+} from "./taskRules";
+import { mergeIncomingTasksWithCurrent } from "./replanMerge";
+
+const makeTask = (id: string, poPriority: number | null, carryToNextSprint = false): Task => ({
+  id,
+  storyName: `Story ${id}`,
+  storyLink: "",
+  poPriority,
+  feDevs: [],
+  feHours: 0,
+  beDevs: [],
+  beHours: 0,
+        androidDevs: [],
+        androidHours: 0,
+        iosDevs: [],
+        iosHours: 0,
+        needsIos: false,
+  integrationHours: 0,
+  integrationFlags: {
+    needsDevOps: false,
+    needsCdc: false,
+    needsDbSync: false,
+    needsOtherSquad: false,
+    needsThirdParty: false,
+  },
+  qcs: [],
+  productManagers: [],
+  qcHours: 0,
+  bufferHours: 0,
+  carryToNextSprint,
+  status: "TODO",
+});
+
+describe("store task helpers", () => {
+  it("auto-shifts PO priorities to remain unique", () => {
+    const tasks = [makeTask("a", 1), makeTask("b", 2), makeTask("c", 3), makeTask("d", null)];
+    const updated = enforceUniquePoPriorities(tasks, "c", 2);
+    expect(updated.find((item) => item.id === "a")?.poPriority).toBe(1);
+    expect(updated.find((item) => item.id === "c")?.poPriority).toBe(2);
+    expect(updated.find((item) => item.id === "b")?.poPriority).toBe(3);
+    expect(updated.find((item) => item.id === "d")?.poPriority).toBeNull();
+  });
+
+  it("normalizes invalid priority values to minimum 1", () => {
+    const tasks = [makeTask("a", 1), makeTask("b", 2)];
+    const updated = enforceUniquePoPriorities(tasks, "b", 0);
+    expect(updated.find((item) => item.id === "b")?.poPriority).toBe(1);
+    expect(updated.find((item) => item.id === "a")?.poPriority).toBe(2);
+  });
+
+  it("keeps prioritized tasks contiguous after reordering", () => {
+    const tasks = [makeTask("a", 1), makeTask("b", 2), makeTask("c", 3)];
+    const moved = enforceUniquePoPriorities(tasks, "b", 3);
+    expect(moved.find((item) => item.id === "a")?.poPriority).toBe(1);
+    expect(moved.find((item) => item.id === "c")?.poPriority).toBe(2);
+    expect(moved.find((item) => item.id === "b")?.poPriority).toBe(3);
+  });
+
+  it("compacts priorities when one task is cleared", () => {
+    const tasks = [makeTask("a", 1), makeTask("b", 2), makeTask("c", 3)];
+    const updated = enforceUniquePoPriorities(tasks, "b", null);
+    expect(updated.find((item) => item.id === "a")?.poPriority).toBe(1);
+    expect(updated.find((item) => item.id === "c")?.poPriority).toBe(2);
+    expect(updated.find((item) => item.id === "b")?.poPriority).toBeNull();
+  });
+
+  it("returns only active sprint tasks", () => {
+    const tasks = [makeTask("a", 1, false), makeTask("b", 2, true), makeTask("c", null, false)];
+    const active = activeSprintTasks(tasks);
+    expect(active.map((item) => item.id)).toEqual(["a", "c"]);
+  });
+
+  it("clears released story PO priority and compacts remaining priorities", () => {
+    const tasks = [
+      makeTask("a", 1),
+      { ...makeTask("b", 2), status: "Released" as const },
+      makeTask("c", 3),
+    ];
+    const updated = compactPrioritiesAfterRelease(tasks, "b");
+    expect(updated.find((item) => item.id === "b")?.poPriority).toBeNull();
+    expect(updated.find((item) => item.id === "a")?.poPriority).toBe(1);
+    expect(updated.find((item) => item.id === "c")?.poPriority).toBe(2);
+  });
+
+  it("builds carry-over tasks and resets status/flag", () => {
+    const tasks = [
+      makeTask("a", 1, true),
+      { ...makeTask("b", 2, true), status: "Testing" as const },
+      makeTask("c", 3, false),
+    ];
+    const carry = buildCarryOverTasks(tasks);
+    expect(carry.map((item) => item.id)).toEqual(["a", "b"]);
+    expect(carry.every((item) => item.status === "To Do")).toBe(true);
+    expect(carry.every((item) => item.carryToNextSprint === false)).toBe(true);
+  });
+
+  it("keeps local replanFromStep when server payload is null", () => {
+    const incomingTasks: Task[] = [{ ...makeTask("a", 1), replanFromStep: null }];
+    const currentTasks: Task[] = [{ ...makeTask("a", 1), replanFromStep: "QC" }];
+    const merged = mergeIncomingTasksWithCurrent(incomingTasks, currentTasks);
+    expect(merged[0].replanFromStep).toBe("QC");
+  });
+});

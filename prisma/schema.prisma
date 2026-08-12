@@ -1,0 +1,384 @@
+// Sprint Planner — normalized PostgreSQL schema (Neon)
+// Approved design: relational assignees/tags/jira; history snapshots remain Json
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum UserRole {
+  super_admin
+  em
+  editor
+  reviewer
+}
+
+enum ResourceType {
+  FE
+  BE
+  MO
+  QC
+  PM
+  OtherSquad
+}
+
+enum OwnershipMode {
+  fullyMine
+  shared
+}
+
+enum Theme {
+  ocean
+  sunset
+  forest
+}
+
+enum ReleaseStrategy {
+  earliestStoriesFirst
+  latestReleaseOnly
+}
+
+enum AssigneeRole {
+  FE
+  BE
+  ANDROID
+  IOS
+  QC
+  PM
+}
+
+enum JiraSubtaskRole {
+  fe
+  be
+  android
+  ios
+}
+
+enum TaskReplanStep {
+  Start
+  FE
+  Integration
+  QC
+  Buffer
+}
+
+model AppConfig {
+  id                 Int      @id @default(1)
+  allowedEmailDomain String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model Squad {
+  id        String   @id
+  name      String
+  emEmail   String
+  hidden    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users           User[]
+  squadAccounts   SquadAccount[]
+  sprintConfig    SprintConfig?
+  plannerMeta     PlannerMeta?
+  holidays        SquadHoliday[]
+  tasks           Task[]
+  resources       Resource[]
+  jiraConfig      SquadJiraConfig?
+  sprintHistories SprintHistory[]
+
+  @@index([hidden])
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  role      UserRole
+  squadId   String
+  squad     Squad    @relation(fields: [squadId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([squadId])
+  @@index([role])
+}
+
+model SquadAccount {
+  id        String   @id @default(cuid())
+  email     String
+  role      UserRole
+  squadId   String
+  squad     Squad    @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([email, squadId])
+  @@index([squadId])
+}
+
+model SessionVersion {
+  email     String   @id
+  version   Int      @default(0)
+  updatedAt DateTime @updatedAt
+}
+
+model JiraAccount {
+  email      String   @id
+  accountId  String
+  /// AES-GCM ciphertext of the user's Jira API token (AUTH_SECRET). Never put in JWT/cookies.
+  apiTokenEnc String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model SprintConfig {
+  squadId           String          @id
+  squad             Squad           @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  sprintStartDate   String
+  planningSunday    String
+  hoursPerDay       Int
+  sprintWorkingDays Int
+  theme             Theme           @default(ocean)
+  releaseStrategy   ReleaseStrategy @default(earliestStoriesFirst)
+  workdayStartHour  Int?
+  replanAsOf        String?
+  timelineStartDate String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+}
+
+model SquadHoliday {
+  id        String   @id @default(cuid())
+  squadId   String
+  squad     Squad    @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  date      String
+  createdAt DateTime @default(now())
+
+  @@unique([squadId, date])
+  @@index([squadId])
+}
+
+model PlannerMeta {
+  squadId                     String   @id
+  squad                       Squad    @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  snapshot1TakenAt            String?
+  estimatedBaselineCapturedAt String?
+  uatTrackingEnabled          Boolean  @default(false)
+  curScheduleSnapshot         Json?
+  curScheduleTakenAt          String?
+  rulesVersion                Int      @default(2)
+  replanAsOf                  String?
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  estimatedBaselines TaskEstimatedBaseline[]
+  needRemarkTasks    TaskNeedRemark[]
+  dashboardOrder     DashboardTaskOrder[]
+}
+
+model TaskEstimatedBaseline {
+  id          String      @id @default(cuid())
+  squadId     String
+  taskId      String
+  releaseAt   String
+  plannerMeta PlannerMeta @relation(fields: [squadId], references: [squadId], onDelete: Cascade)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([squadId, taskId])
+  @@index([squadId])
+}
+
+model TaskNeedRemark {
+  squadId     String
+  taskId      String
+  plannerMeta PlannerMeta @relation(fields: [squadId], references: [squadId], onDelete: Cascade)
+
+  @@id([squadId, taskId])
+}
+
+model DashboardTaskOrder {
+  squadId     String
+  taskId      String
+  position    Int
+  plannerMeta PlannerMeta @relation(fields: [squadId], references: [squadId], onDelete: Cascade)
+
+  @@id([squadId, taskId])
+  @@index([squadId, position])
+}
+
+model Task {
+  id                String          @id
+  squadId           String
+  squad             Squad           @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  storyName         String          @default("")
+  storyLink         String          @default("")
+  taskNotes         String          @default("")
+  poPriority        Int?
+  status            String
+  feHours           Float           @default(0)
+  beHours           Float           @default(0)
+  androidHours      Float           @default(0)
+  iosHours          Float           @default(0)
+  needsIos          Boolean         @default(false)
+  /** Mobile product flag for Jira subtask titles: none | star | hubs. */
+  mobileApp         String          @default("none")
+  /** Optional Mobile start date (date-only stored as calendar day). */
+  moStartDate       DateTime?       @db.Date
+  integrationHours  Float           @default(0)
+  qcHours           Float           @default(0)
+  bufferHours       Float           @default(0)
+  needsDevOps       Boolean         @default(false)
+  needsCdc          Boolean         @default(false)
+  needsDbSync       Boolean         @default(false)
+  needsOtherSquad   Boolean         @default(false)
+  needsThirdParty   Boolean         @default(false)
+  replanFromStep    TaskReplanStep?
+  carryToNextSprint Boolean         @default(false)
+  releaseGroup      String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  assignees TaskAssignee[]
+  tags      TaskTag[]
+  jiraLink  TaskJiraLink?
+
+  @@unique([squadId, id])
+  @@index([squadId])
+  @@index([squadId, status])
+  @@index([squadId, poPriority])
+  @@index([squadId, releaseGroup])
+}
+
+model Resource {
+  id            String         @id @default(cuid())
+  squadId       String
+  squad         Squad          @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  name          String
+  type          ResourceType
+  capacityHours Float?
+  ownershipMode OwnershipMode?
+  ourSquadHours Float?
+  nickname      String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  assignees    TaskAssignee[]
+  jiraMappings JiraAssigneeMap[]
+
+  @@unique([squadId, name])
+  @@index([squadId, type])
+}
+
+model TaskAssignee {
+  id           String       @id @default(cuid())
+  taskId       String
+  task         Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  role         AssigneeRole
+  resourceName String
+  resourceId   String?
+  resource     Resource?    @relation(fields: [resourceId], references: [id], onDelete: SetNull)
+  createdAt    DateTime     @default(now())
+
+  @@unique([taskId, role, resourceName])
+  @@index([taskId, role])
+}
+
+model TaskTag {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  tag       String
+  createdAt DateTime @default(now())
+
+  @@unique([taskId, tag])
+  @@index([taskId])
+}
+
+model TaskJiraLink {
+  taskId         String    @id
+  task           Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  parentIssueKey String
+  lastPushedAt   DateTime?
+  lastPulledAt   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  subtasks TaskJiraSubtask[]
+}
+
+model TaskJiraSubtask {
+  id           String          @id @default(cuid())
+  taskId       String
+  jiraLink     TaskJiraLink    @relation(fields: [taskId], references: [taskId], onDelete: Cascade)
+  key          String
+  role         JiraSubtaskRole
+  assigneeName String
+  hours        Float
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@unique([taskId, key])
+  @@index([taskId, role])
+}
+
+model SquadJiraConfig {
+  squadId                     String    @id
+  squad                       Squad     @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  siteUrl                     String?
+  projectKey                  String?
+  issueTypeSubTask            String?
+  productManagerName          String?
+  productManagerJiraAccountId String?
+  developmentEstimateFieldId  String?
+  testingEstimateFieldId      String?
+  qcEngineerFieldId           String?
+  productManagerFieldId       String?
+  branchNameFieldId           String?
+  qcEngineerFieldIsUser       Boolean?
+  productManagerFieldIsUser   Boolean?
+  subtaskSquadFieldId         String?
+  subtaskSquadOptionId        String?
+  assigneesSyncedAt           DateTime?
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
+
+  assignees JiraAssigneeMap[]
+}
+
+model JiraAssigneeMap {
+  id            String          @id @default(cuid())
+  squadId       String
+  jiraConfig    SquadJiraConfig @relation(fields: [squadId], references: [squadId], onDelete: Cascade)
+  resourceName  String
+  jiraAccountId String
+  resourceId    String?
+  resource      Resource?       @relation(fields: [resourceId], references: [id], onDelete: SetNull)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@unique([squadId, resourceName])
+}
+
+model SprintHistory {
+  id                String   @id
+  squadId           String
+  squad             Squad    @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  archivedAt        DateTime
+  sprintStartDate   String
+  planningSunday    String
+  tasksSnapshot     Json
+  resourcesSnapshot Json
+  configSnapshot    Json
+  totalTasks        Int      @default(0)
+  carryOverTasks    Int      @default(0)
+  totalResources    Int      @default(0)
+  createdAt         DateTime @default(now())
+
+  @@index([squadId, archivedAt])
+}
