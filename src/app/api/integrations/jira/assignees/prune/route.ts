@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSuperAdminAccess } from "@/lib/integrations/jira/apiAuth";
 import { readSquadJiraConfig, writeSquadJiraConfig } from "@/lib/integrations/jira/configStore";
 import { pruneAssigneeMapToRoster } from "@/lib/integrations/jira/resourceJiraIdentity";
-import { sanitizeSquadKey } from "@/lib/squads/sanitizeSquadKey";
+import { sanitizeSquadKey } from "@/lib/authz/permissions";
 
 /**
  * Super-admin: drop assignee-map keys that are no longer on the roster.
