@@ -41,7 +41,7 @@ export interface Task {
   qcs: string[];
   qcHours: number;
   /** Product managers assigned to this story (roster type PM). */
-  productManagers: string[];
+  productManagers?: string[];
   /** Slack after QC before release (working hours, calendar-aware). */
   bufferHours?: number;
   /** Optional checkpoint used by Mark Progress Now to keep only remaining phases. */

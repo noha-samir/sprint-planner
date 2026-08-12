@@ -359,6 +359,7 @@ export const parseTasksImportRow = (
     androidDevs: android.names,
     iosDevs: needsIos ? ios.names : [],
     qcs: qc.names,
+    productManagers: [],
     beHours,
     feHours,
     androidHours,

@@ -181,6 +181,7 @@ describe("parseBulkTaskPaste", () => {
         androidDevsRaw: "Nour",
         iosDevsRaw: "",
         qcsRaw: "QC-One",
+        productManagersRaw: "",
         beHoursRaw: "8",
         feHoursRaw: "4",
         androidHoursRaw: "6",

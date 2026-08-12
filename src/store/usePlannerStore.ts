@@ -324,7 +324,7 @@ const buildState = (tasks: Task[], resources: Resource[], config: Config) => {
       androidDevs: coerceAssigneeNamesToRoster(normalized.androidDevs, normalizedResources),
       iosDevs: coerceAssigneeNamesToRoster(normalized.iosDevs, normalizedResources),
       qcs: coerceAssigneeNamesToRoster(normalized.qcs, normalizedResources),
-      productManagers: coerceAssigneeNamesToRoster(normalized.productManagers, normalizedResources),
+      productManagers: coerceAssigneeNamesToRoster(normalized.productManagers ?? [], normalizedResources),
     };
   });
   const cfg = normalizeConfig(config);
@@ -707,7 +707,7 @@ export const usePlannerStore = create<PlannerState>()(
                 ),
                 iosDevs: task.iosDevs.map((name) => (name === previous.name ? resource.name : name)),
                 qcs: task.qcs.map((name) => (name === previous.name ? resource.name : name)),
-                productManagers: task.productManagers.map((name) =>
+                productManagers: (task.productManagers ?? []).map((name) =>
                   name === previous.name ? resource.name : name,
                 ),
               }))
@@ -736,7 +736,7 @@ export const usePlannerStore = create<PlannerState>()(
               androidDevs: task.androidDevs.filter((name) => name !== removed.name),
               iosDevs: task.iosDevs.filter((name) => name !== removed.name),
               qcs: task.qcs.filter((name) => name !== removed.name),
-              productManagers: task.productManagers.filter((name) => name !== removed.name),
+              productManagers: (task.productManagers ?? []).filter((name) => name !== removed.name),
             }))
           : tasks;
         set({
@@ -778,7 +778,7 @@ export const usePlannerStore = create<PlannerState>()(
           androidDevs: task.androidDevs.map(remap),
           iosDevs: task.iosDevs.map(remap),
           qcs: task.qcs.map(remap),
-          productManagers: task.productManagers.map(remap),
+          productManagers: (task.productManagers ?? []).map(remap),
         }));
         set({
           ...buildWithPlannerMeta(

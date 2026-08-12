@@ -138,9 +138,11 @@ const splitTodoLines = (raw: string | undefined) =>
     .filter(Boolean);
 const formatTagLabel = (tag: string) => tag.trim().split(/\s+/).join(" - ");
 
+type AssigneePickerKind = "be" | "fe" | "android" | "ios" | "int" | "qc" | "pm" | "status";
+
 type AssigneePickerOpen = {
   taskId: string;
-  kind: "be" | "fe" | "android" | "ios" | "int" | "qc" | "pm" | "status";
+  kind: AssigneePickerKind;
   trigger: HTMLElement;
 } | null;
 
@@ -511,7 +513,7 @@ export function TaskTable() {
 
   const toggleAssigneePicker = (
     taskId: string,
-    kind: "be" | "fe" | "android" | "ios" | "int" | "qc" | "status",
+    kind: AssigneePickerKind,
     trigger: HTMLElement,
   ) => {
     setStoryFieldsOpen(null);
@@ -526,7 +528,7 @@ export function TaskTable() {
 
   const renderTablePickerPortal = (
     taskId: string,
-    kind: "be" | "fe" | "android" | "ios" | "int" | "qc" | "status",
+    kind: AssigneePickerKind,
     content: ReactNode,
     options?: { multiselectable?: boolean; ariaLabel?: string; statusPanel?: boolean },
   ) => {
@@ -2547,7 +2549,7 @@ export function TaskTable() {
                               >
                                 {(task.productManagers?.length ?? 0) === 0
                                   ? "Choose…"
-                                  : `${task.productManagers.length} selected`}
+                                  : `${task.productManagers?.length ?? 0} selected`}
                               </span>
                               <span className="text-slate-400" aria-hidden>
                                 ▾
@@ -2557,7 +2559,7 @@ export function TaskTable() {
                             <div className="assignee-picker-summary truncate">
                               {(task.productManagers?.length ?? 0) === 0
                                 ? "None"
-                                : `${task.productManagers.length} selected`}
+                                : `${task.productManagers?.length ?? 0} selected`}
                             </div>
                           )}
                           {isEditor
