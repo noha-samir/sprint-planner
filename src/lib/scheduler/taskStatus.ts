@@ -75,6 +75,15 @@ export const isBufferPhaseTaskStatus = (status: string): boolean => {
 
 export const isUatTaskStatus = (status: string): boolean => normalize(status) === "uat";
 
+/**
+ * UAT / STAGING / Ready for Production — engineering schedule no longer owns
+ * go-live; UAT and Production dates are pending on the PM.
+ */
+export const isReleasePendingOnPmStatus = (status: string): boolean => {
+  const value = normalize(status);
+  return value === "uat" || value === "staging" || value === "ready for production";
+};
+
 export const isTestingTaskStatus = (status: string): boolean => {
   const value = normalize(status);
   return value === "testing" || value === "ready for testing" || value === "pending bug fixes";

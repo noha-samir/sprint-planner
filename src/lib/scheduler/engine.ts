@@ -10,7 +10,7 @@ import {
 import { resolveRemainingEffort, type RemainingEffort } from "./remainingEffort";
 import { effectiveIosHours } from "./mobilePlatform";
 import { alignReleaseGroups, normalizeReleaseGroup } from "./releaseGroups";
-import { isExcludedFromSchedule, isTodoTaskStatus } from "./taskStatus";
+import { isExcludedFromSchedule, isReleasePendingOnPmStatus, isTodoTaskStatus } from "./taskStatus";
 import { effectiveReplanFromStep } from "./statusReplan";
 
 import type {
@@ -646,7 +646,9 @@ export const schedule = (tasks: Task[], resources: Resource[], config: Config): 
     const qcBlocks = qcBlocksByTaskId.get(task.id) ?? [];
     const qcEnd = maxEnd(qcBlocks);
     const { bufferStart, bufferEnd } = resolveBufferWindow(qcEnd, remaining.bufferHours, config);
-    const uatReleaseDate = bufferEnd != null ? resolveUatReleaseDate(bufferEnd, config) : null;
+    const pendingOnPm = isReleasePendingOnPmStatus(task.status);
+    const uatReleaseDate =
+      pendingOnPm || bufferEnd == null ? null : resolveUatReleaseDate(bufferEnd, config);
     const productionReleaseDate = uatReleaseDate ? getProductionReleaseDateFrom(uatReleaseDate, config) : null;
     const thursdayReleaseScope = resolveThursdayReleaseScope(uatReleaseDate, productionReleaseDate);
 

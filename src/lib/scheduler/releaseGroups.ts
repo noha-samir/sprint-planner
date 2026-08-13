@@ -1,4 +1,5 @@
 import { getProductionReleaseDateFrom, resolveUatReleaseDate } from "./calendar";
+import { isReleasePendingOnPmStatus } from "./taskStatus";
 import type { Config, ScheduledTask, Task, ThursdayReleaseScope } from "./types";
 
 const resolveThursdayReleaseScope = (
@@ -18,11 +19,26 @@ export const normalizeReleaseGroup = (value: string | null | undefined): string 
   return trimmed.length > 0 ? trimmed : null;
 };
 
+/** Clear computed release dates when go-live is pending on the PM. */
+export const clearReleaseDatesPendingOnPm = (task: ScheduledTask): ScheduledTask => ({
+  ...task,
+  uatReleaseDate: null,
+  productionReleaseDate: null,
+  releaseDate: null,
+  isThursdayRelease: false,
+  thursdayReleaseScope: "none",
+  isOverflow: false,
+});
+
 /**
  * Earliest moment this scheduled story is ready for UAT: buffer end, else QC end,
  * else its existing UAT date. Never invents an earlier optimistic estimate.
+ * UAT+ statuses defer dates to the PM — no scheduler readiness gate.
  */
 export const scheduledReadyForUat = (member: ScheduledTask, config: Config): Date | null => {
+  if (isReleasePendingOnPmStatus(member.status)) {
+    return null;
+  }
   if (member.bufferEnd) {
     return resolveUatReleaseDate(member.bufferEnd, config);
   }
@@ -37,6 +53,9 @@ export const scheduledReadyForUat = (member: ScheduledTask, config: Config): Dat
  * scheduled QC or buffer finish (fixes frozen snapshots and bad alignments).
  */
 export const clampReleaseDatesToWorkEnd = (task: ScheduledTask, config: Config): ScheduledTask => {
+  if (isReleasePendingOnPmStatus(task.status)) {
+    return clearReleaseDatesPendingOnPm(task);
+  }
   const ready = scheduledReadyForUat(task, config);
   if (!ready) {
     return task;
@@ -110,6 +129,10 @@ export const alignReleaseGroups = (
     const isOverflow = sharedUat.getTime() > sprintEndDate.getTime();
 
     for (const member of members) {
+      if (isReleasePendingOnPmStatus(member.status)) {
+        alignedById.set(member.id, clearReleaseDatesPendingOnPm(member));
+        continue;
+      }
       alignedById.set(member.id, {
         ...member,
         uatReleaseDate: sharedUat,

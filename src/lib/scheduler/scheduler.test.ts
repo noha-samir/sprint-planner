@@ -375,7 +375,9 @@ describe("scheduler behavior", () => {
     expect(task.qcBlocks).toHaveLength(0);
     expect(task.bufferStart).not.toBeNull();
     expect(task.bufferEnd).not.toBeNull();
-    expect(task.releaseDate).not.toBeNull();
+    expect(task.releaseDate).toBeNull();
+    expect(task.uatReleaseDate).toBeNull();
+    expect(task.productionReleaseDate).toBeNull();
     expect(task.bufferEnd!.getTime()).toBeGreaterThan(task.bufferStart!.getTime());
   });
 

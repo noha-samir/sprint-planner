@@ -186,6 +186,32 @@ describe("alignReleaseGroups", () => {
     expect(aligned[1].uatReleaseDate!.getTime()).toBe(aligned[0].uatReleaseDate!.getTime());
     expect(aligned[0].uatReleaseDate!.getTime()).toBeGreaterThan(earlyOptimistic.getTime());
   });
+
+  it("clears release dates for UAT+ members pending on PM without blocking siblings", () => {
+    const testingUat = new Date("2026-05-10T16:00:00.000Z");
+    const testingProd = new Date("2026-05-11T10:00:00.000Z");
+    const aligned = alignReleaseGroups(
+      [],
+      [
+        scheduled("pm-owned", testingUat, testingProd, "Wave", {
+          status: "UAT",
+          bufferEnd: testingUat,
+        }),
+        scheduled("still-testing", testingUat, testingProd, "Wave", {
+          status: "Testing",
+          bufferEnd: testingUat,
+        }),
+      ],
+      config,
+      new Date("2026-05-14T17:00:00.000Z"),
+    );
+
+    const pending = aligned.find((task) => task.id === "pm-owned")!;
+    const testing = aligned.find((task) => task.id === "still-testing")!;
+    expect(pending.releaseDate).toBeNull();
+    expect(pending.uatReleaseDate).toBeNull();
+    expect(testing.releaseDate).not.toBeNull();
+  });
 });
 
 describe("clampReleaseDatesToWorkEnd", () => {
@@ -201,5 +227,19 @@ describe("clampReleaseDatesToWorkEnd", () => {
     );
     expect(clamped.uatReleaseDate!.getTime()).toBeGreaterThanOrEqual(qcEnd.getTime());
     expect(clamped.releaseDate!.getTime()).toBe(clamped.uatReleaseDate!.getTime());
+  });
+
+  it("clears release dates when status is pending on PM", () => {
+    const bufferEnd = new Date("2026-08-11T15:00:00.000Z");
+    const clamped = clampReleaseDatesToWorkEnd(
+      scheduled("story", bufferEnd, new Date("2026-08-12T10:00:00.000Z"), null, {
+        status: "Ready for Production",
+        bufferEnd,
+      }),
+      config,
+    );
+    expect(clamped.releaseDate).toBeNull();
+    expect(clamped.uatReleaseDate).toBeNull();
+    expect(clamped.productionReleaseDate).toBeNull();
   });
 });

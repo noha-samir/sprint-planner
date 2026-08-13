@@ -1,4 +1,5 @@
-import { clampReleaseDatesToWorkEnd } from "@/lib/scheduler/releaseGroups";
+import { clampReleaseDatesToWorkEnd, clearReleaseDatesPendingOnPm } from "@/lib/scheduler/releaseGroups";
+import { isReleasePendingOnPmStatus } from "@/lib/scheduler/taskStatus";
 import type { Config, ScheduleResult, ScheduledBlock, ScheduledTask } from "@/lib/scheduler/types";
 
 export type CurScheduleSnapshot = {
@@ -169,6 +170,13 @@ export const mergeFrozenScheduleWithFresh = (
   const freshById = new Map(fresh.tasks.map((task) => [task.id, task]));
   const merged: ScheduledTask[] = [];
 
+  const finalize = (task: ScheduledTask): ScheduledTask => {
+    if (isReleasePendingOnPmStatus(task.status)) {
+      return clearReleaseDatesPendingOnPm(task);
+    }
+    return config ? clampReleaseDatesToWorkEnd(task, config) : task;
+  };
+
   activeTaskIds.forEach((taskId) => {
     const frozenTask = frozenById.get(taskId);
     const freshTask = freshById.get(taskId);
@@ -181,15 +189,15 @@ export const mergeFrozenScheduleWithFresh = (
         status: freshTask.status,
         releaseGroup: freshTask.releaseGroup ?? frozenTask.releaseGroup,
       };
-      merged.push(config ? clampReleaseDatesToWorkEnd(next, config) : next);
+      merged.push(finalize(next));
       return;
     }
     if (freshTask) {
-      merged.push(config ? clampReleaseDatesToWorkEnd(freshTask, config) : freshTask);
+      merged.push(finalize(freshTask));
       return;
     }
     if (frozenTask) {
-      merged.push(config ? clampReleaseDatesToWorkEnd(frozenTask, config) : frozenTask);
+      merged.push(finalize(frozenTask));
     }
   });
 

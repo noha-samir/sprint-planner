@@ -5,6 +5,7 @@ import {
   isHiddenByDefaultStatusFilter,
   isInactiveTaskStatus,
   isReleasedTaskStatus,
+  isReleasePendingOnPmStatus,
   normalizeTaskStatus,
   resourceInsightStatusBucket,
   resourceInsightStatusRank,
@@ -34,6 +35,14 @@ describe("taskStatus", () => {
     expect(isExcludedFromSchedule("Production")).toBe(true);
     expect(isExcludedFromSchedule("Ready for Production")).toBe(false);
     expect(isExcludedFromSchedule("In Progress")).toBe(false);
+  });
+
+  it("marks UAT / STAGING / Ready for Production as release pending on PM", () => {
+    expect(isReleasePendingOnPmStatus("UAT")).toBe(true);
+    expect(isReleasePendingOnPmStatus("STAGING")).toBe(true);
+    expect(isReleasePendingOnPmStatus("Ready for Production")).toBe(true);
+    expect(isReleasePendingOnPmStatus("Testing")).toBe(false);
+    expect(isReleasePendingOnPmStatus("Production")).toBe(false);
   });
 
   it("hides only discoped/cancelled/closed/production in the default status filter", () => {

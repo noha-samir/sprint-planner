@@ -7,7 +7,7 @@ import { getSprintWindowEnd, parseCalendarDate } from "@/lib/scheduler/calendar"
 import { getCurrentStoryPhase, getStatusPhase, type StoryPhase } from "@/lib/scheduler/currentPhase";
 import { schedule } from "@/lib/scheduler/engine";
 import { thursdayReleaseChipLabel, type Task } from "@/lib/scheduler/types";
-import { isExcludedFromSchedule, statusRowClass } from "@/lib/scheduler/taskStatus";
+import { isExcludedFromSchedule, isReleasePendingOnPmStatus, statusRowClass } from "@/lib/scheduler/taskStatus";
 import { activeSprintTasks } from "@/store/taskRules";
 import { usePlannerStore } from "@/store/usePlannerStore";
 import type { SprintHistoryEntry, SprintHistoryListItem } from "@/lib/history/types";
@@ -364,7 +364,9 @@ export default function HistoryPage() {
                         <td className="p-1 text-center text-[12px] font-semibold text-slate-700">{totalEffortHours(task)}h</td>
                         <td className="p-1 text-center text-[12px] font-semibold text-slate-900">{task.status}</td>
                         <td className="p-1 align-middle text-center text-[12px] font-bold text-slate-900">
-                          {computed?.releaseDate ? (
+                          {isReleasePendingOnPmStatus(task.status) ? (
+                            <span className="text-slate-700">Pending on PM</span>
+                          ) : computed?.releaseDate ? (
                             <div className="flex flex-col items-center justify-center leading-tight">
                               <span>{fmtDateOnly(computed.releaseDate)}</span>
                               <span className="text-[10px] text-slate-800">{fmtTimeOnly(computed.releaseDate)}</span>

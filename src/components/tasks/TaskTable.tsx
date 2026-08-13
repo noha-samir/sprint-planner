@@ -55,6 +55,7 @@ import {
   isDiscopedTaskStatus,
   isExcludedFromSchedule,
   isHiddenByDefaultStatusFilter,
+  isReleasePendingOnPmStatus,
   statusChipClass,
   statusFilterClass,
   statusRowClass,
@@ -1737,6 +1738,7 @@ export function TaskTable() {
             ) : null}
             {orderedTasks.map((task, taskIndex) => {
               const computed = taskResultMap.get(task.id);
+              const releasePendingOnPm = isReleasePendingOnPmStatus(task.status);
               const productionReleaseDate = computed?.releaseDate
                 ? computed.productionReleaseDate ?? getProductionReleaseDateFrom(computed.releaseDate, config)
                 : null;
@@ -2697,7 +2699,11 @@ export function TaskTable() {
                     <div className="release-date-stack">
                       <div className="release-date-card">
                         <div className="release-date-label">UAT</div>
-                        {computed?.releaseDate ? (
+                        {releasePendingOnPm ? (
+                          <span className="release-date-empty" title="Go-live timing is with the PM">
+                            Pending on PM
+                          </span>
+                        ) : computed?.releaseDate ? (
                           <div className="release-date-value">
                             <span className="release-date-line">
                               {fmtDateOnly(computed.releaseDate)} <span aria-hidden>•</span> {fmtTimeOnly(computed.releaseDate)}
@@ -2713,7 +2719,14 @@ export function TaskTable() {
                       </div>
                       <div className="release-date-card release-date-card-production">
                         <div className="release-date-label release-date-label-production">Production</div>
-                        {productionReleaseDate ? (
+                        {releasePendingOnPm ? (
+                          <span
+                            className="release-date-empty release-date-line-production"
+                            title="Go-live timing is with the PM"
+                          >
+                            Pending on PM
+                          </span>
+                        ) : productionReleaseDate ? (
                           <div className="release-date-value">
                             <span className="release-date-line release-date-line-production">
                               {fmtDateOnly(productionReleaseDate)} <span aria-hidden>•</span> {fmtTimeOnly(productionReleaseDate)}
@@ -2952,13 +2965,21 @@ export function TaskTable() {
                   Status: {selectedTimelineTask.status}
                   {" · "}
                   UAT release:{" "}
-                  {selectedTimelineComputed.releaseDate
-                    ? fmt(selectedTimelineComputed.releaseDate)
-                    : "Pending schedule"}
-                  {selectedTimelineComputed.productionReleaseDate ? (
+                  {isReleasePendingOnPmStatus(selectedTimelineTask.status)
+                    ? "Pending on PM"
+                    : selectedTimelineComputed.releaseDate
+                      ? fmt(selectedTimelineComputed.releaseDate)
+                      : "Pending schedule"}
+                  {!isReleasePendingOnPmStatus(selectedTimelineTask.status) &&
+                  selectedTimelineComputed.productionReleaseDate ? (
                     <>
                       {" · "}
                       Production: {fmt(selectedTimelineComputed.productionReleaseDate)}
+                    </>
+                  ) : isReleasePendingOnPmStatus(selectedTimelineTask.status) ? (
+                    <>
+                      {" · "}
+                      Production: Pending on PM
                     </>
                   ) : null}
                 </p>

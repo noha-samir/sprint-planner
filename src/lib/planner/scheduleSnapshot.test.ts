@@ -70,13 +70,27 @@ describe("scheduleSnapshot", () => {
 
   it("keeps frozen release dates when fresh schedule changes after QC/buffer edits", () => {
     const frozen = sampleResult();
+    frozen.tasks[0].status = "Testing";
     const fresh = sampleResult();
+    fresh.tasks[0].status = "Testing";
     fresh.tasks[0].releaseDate = new Date("2026-05-20T16:00:00.000Z");
     fresh.tasks[0].uatReleaseDate = new Date("2026-05-20T16:00:00.000Z");
 
     const merged = mergeFrozenScheduleWithFresh(frozen, fresh, new Set(["task-a"]));
     expect(merged.tasks[0].releaseDate?.toISOString()).toBe("2026-05-10T13:00:00.000Z");
-    expect(merged.tasks[0].status).toBe("UAT");
+    expect(merged.tasks[0].status).toBe("Testing");
+  });
+
+  it("clears frozen release dates when status is UAT or later pending on PM", () => {
+    const frozen = sampleResult();
+    const fresh = sampleResult();
+    fresh.tasks[0].status = "Ready for Production";
+
+    const merged = mergeFrozenScheduleWithFresh(frozen, fresh, new Set(["task-a"]));
+    expect(merged.tasks[0].releaseDate).toBeNull();
+    expect(merged.tasks[0].uatReleaseDate).toBeNull();
+    expect(merged.tasks[0].productionReleaseDate).toBeNull();
+    expect(merged.tasks[0].status).toBe("Ready for Production");
   });
 
   it("flags task ids marked since last Mark Progress Now", () => {
