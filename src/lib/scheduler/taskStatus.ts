@@ -75,13 +75,29 @@ export const isBufferPhaseTaskStatus = (status: string): boolean => {
 
 export const isUatTaskStatus = (status: string): boolean => normalize(status) === "uat";
 
-/**
- * UAT / STAGING / Ready for Production — engineering schedule no longer owns
- * go-live; UAT and Production dates are pending on the PM.
- */
+/** UAT / STAGING — go-live dates pending on the PM. */
 export const isReleasePendingOnPmStatus = (status: string): boolean => {
   const value = normalize(status);
-  return value === "uat" || value === "staging" || value === "ready for production";
+  return value === "uat" || value === "staging";
+};
+
+/** Ready for Production — go-live dates pending on the EM. */
+export const isReleasePendingOnEmStatus = (status: string): boolean =>
+  normalize(status) === "ready for production";
+
+/** Scheduler no longer owns UAT/Production dates (PM or EM handoff). */
+export const isReleaseDateHandoffStatus = (status: string): boolean =>
+  isReleasePendingOnPmStatus(status) || isReleasePendingOnEmStatus(status);
+
+/** UI label for deferred UAT/Production dates, or null when the scheduler still owns them. */
+export const releaseDateHandoffLabel = (status: string): "Pending on PM" | "Pending on EM" | null => {
+  if (isReleasePendingOnEmStatus(status)) {
+    return "Pending on EM";
+  }
+  if (isReleasePendingOnPmStatus(status)) {
+    return "Pending on PM";
+  }
+  return null;
 };
 
 export const isTestingTaskStatus = (status: string): boolean => {

@@ -1,5 +1,5 @@
-import { clampReleaseDatesToWorkEnd, clearReleaseDatesPendingOnPm } from "@/lib/scheduler/releaseGroups";
-import { isReleasePendingOnPmStatus } from "@/lib/scheduler/taskStatus";
+import { clampReleaseDatesToWorkEnd, clearHandoffReleaseDates } from "@/lib/scheduler/releaseGroups";
+import { isReleaseDateHandoffStatus } from "@/lib/scheduler/taskStatus";
 import type { Config, ScheduleResult, ScheduledBlock, ScheduledTask } from "@/lib/scheduler/types";
 
 export type CurScheduleSnapshot = {
@@ -171,8 +171,8 @@ export const mergeFrozenScheduleWithFresh = (
   const merged: ScheduledTask[] = [];
 
   const finalize = (task: ScheduledTask): ScheduledTask => {
-    if (isReleasePendingOnPmStatus(task.status)) {
-      return clearReleaseDatesPendingOnPm(task);
+    if (isReleaseDateHandoffStatus(task.status)) {
+      return clearHandoffReleaseDates(task);
     }
     return config ? clampReleaseDatesToWorkEnd(task, config) : task;
   };

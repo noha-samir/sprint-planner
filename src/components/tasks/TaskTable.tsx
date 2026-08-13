@@ -55,7 +55,7 @@ import {
   isDiscopedTaskStatus,
   isExcludedFromSchedule,
   isHiddenByDefaultStatusFilter,
-  isReleasePendingOnPmStatus,
+  releaseDateHandoffLabel,
   statusChipClass,
   statusFilterClass,
   statusRowClass,
@@ -259,6 +259,9 @@ export function TaskTable() {
     () => (selectedTimelineTaskId ? taskResultMap.get(selectedTimelineTaskId) ?? null : null),
     [taskResultMap, selectedTimelineTaskId],
   );
+  const selectedTimelineHandoffLabel = selectedTimelineTask
+    ? releaseDateHandoffLabel(selectedTimelineTask.status)
+    : null;
   const modalCurrentPhase = useMemo(
     () =>
       selectedTimelineComputed && selectedTimelineTask
@@ -1738,7 +1741,7 @@ export function TaskTable() {
             ) : null}
             {orderedTasks.map((task, taskIndex) => {
               const computed = taskResultMap.get(task.id);
-              const releasePendingOnPm = isReleasePendingOnPmStatus(task.status);
+              const releaseHandoffLabel = releaseDateHandoffLabel(task.status);
               const productionReleaseDate = computed?.releaseDate
                 ? computed.productionReleaseDate ?? getProductionReleaseDateFrom(computed.releaseDate, config)
                 : null;
@@ -2699,9 +2702,9 @@ export function TaskTable() {
                     <div className="release-date-stack">
                       <div className="release-date-card">
                         <div className="release-date-label">UAT</div>
-                        {releasePendingOnPm ? (
-                          <span className="release-date-empty" title="Go-live timing is with the PM">
-                            Pending on PM
+                        {releaseHandoffLabel ? (
+                          <span className="release-date-empty" title={releaseHandoffLabel}>
+                            {releaseHandoffLabel}
                           </span>
                         ) : computed?.releaseDate ? (
                           <div className="release-date-value">
@@ -2719,12 +2722,12 @@ export function TaskTable() {
                       </div>
                       <div className="release-date-card release-date-card-production">
                         <div className="release-date-label release-date-label-production">Production</div>
-                        {releasePendingOnPm ? (
+                        {releaseHandoffLabel ? (
                           <span
                             className="release-date-empty release-date-line-production"
-                            title="Go-live timing is with the PM"
+                            title={releaseHandoffLabel}
                           >
-                            Pending on PM
+                            {releaseHandoffLabel}
                           </span>
                         ) : productionReleaseDate ? (
                           <div className="release-date-value">
@@ -2965,21 +2968,19 @@ export function TaskTable() {
                   Status: {selectedTimelineTask.status}
                   {" · "}
                   UAT release:{" "}
-                  {isReleasePendingOnPmStatus(selectedTimelineTask.status)
-                    ? "Pending on PM"
-                    : selectedTimelineComputed.releaseDate
+                  {selectedTimelineHandoffLabel ??
+                    (selectedTimelineComputed.releaseDate
                       ? fmt(selectedTimelineComputed.releaseDate)
-                      : "Pending schedule"}
-                  {!isReleasePendingOnPmStatus(selectedTimelineTask.status) &&
-                  selectedTimelineComputed.productionReleaseDate ? (
+                      : "Pending schedule")}
+                  {selectedTimelineHandoffLabel ? (
+                    <>
+                      {" · "}
+                      Production: {selectedTimelineHandoffLabel}
+                    </>
+                  ) : selectedTimelineComputed.productionReleaseDate ? (
                     <>
                       {" · "}
                       Production: {fmt(selectedTimelineComputed.productionReleaseDate)}
-                    </>
-                  ) : isReleasePendingOnPmStatus(selectedTimelineTask.status) ? (
-                    <>
-                      {" · "}
-                      Production: Pending on PM
                     </>
                   ) : null}
                 </p>

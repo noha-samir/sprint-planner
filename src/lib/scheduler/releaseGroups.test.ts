@@ -229,7 +229,7 @@ describe("clampReleaseDatesToWorkEnd", () => {
     expect(clamped.releaseDate!.getTime()).toBe(clamped.uatReleaseDate!.getTime());
   });
 
-  it("clears release dates when status is pending on PM", () => {
+  it("clears release dates when status is pending on EM", () => {
     const bufferEnd = new Date("2026-08-11T15:00:00.000Z");
     const clamped = clampReleaseDatesToWorkEnd(
       scheduled("story", bufferEnd, new Date("2026-08-12T10:00:00.000Z"), null, {

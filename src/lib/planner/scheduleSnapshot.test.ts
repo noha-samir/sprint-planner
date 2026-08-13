@@ -81,7 +81,7 @@ describe("scheduleSnapshot", () => {
     expect(merged.tasks[0].status).toBe("Testing");
   });
 
-  it("clears frozen release dates when status is UAT or later pending on PM", () => {
+  it("clears frozen release dates when status is Ready for Production pending on EM", () => {
     const frozen = sampleResult();
     const fresh = sampleResult();
     fresh.tasks[0].status = "Ready for Production";

@@ -1,5 +1,5 @@
 import { getProductionReleaseDateFrom, resolveUatReleaseDate } from "./calendar";
-import { isReleasePendingOnPmStatus } from "./taskStatus";
+import { isReleaseDateHandoffStatus } from "./taskStatus";
 import type { Config, ScheduledTask, Task, ThursdayReleaseScope } from "./types";
 
 const resolveThursdayReleaseScope = (
@@ -19,8 +19,8 @@ export const normalizeReleaseGroup = (value: string | null | undefined): string 
   return trimmed.length > 0 ? trimmed : null;
 };
 
-/** Clear computed release dates when go-live is pending on the PM. */
-export const clearReleaseDatesPendingOnPm = (task: ScheduledTask): ScheduledTask => ({
+/** Clear computed release dates when go-live is pending on PM or EM. */
+export const clearHandoffReleaseDates = (task: ScheduledTask): ScheduledTask => ({
   ...task,
   uatReleaseDate: null,
   productionReleaseDate: null,
@@ -33,10 +33,10 @@ export const clearReleaseDatesPendingOnPm = (task: ScheduledTask): ScheduledTask
 /**
  * Earliest moment this scheduled story is ready for UAT: buffer end, else QC end,
  * else its existing UAT date. Never invents an earlier optimistic estimate.
- * UAT+ statuses defer dates to the PM — no scheduler readiness gate.
+ * UAT / STAGING / Ready for Production defer dates to PM or EM.
  */
 export const scheduledReadyForUat = (member: ScheduledTask, config: Config): Date | null => {
-  if (isReleasePendingOnPmStatus(member.status)) {
+  if (isReleaseDateHandoffStatus(member.status)) {
     return null;
   }
   if (member.bufferEnd) {
@@ -53,8 +53,8 @@ export const scheduledReadyForUat = (member: ScheduledTask, config: Config): Dat
  * scheduled QC or buffer finish (fixes frozen snapshots and bad alignments).
  */
 export const clampReleaseDatesToWorkEnd = (task: ScheduledTask, config: Config): ScheduledTask => {
-  if (isReleasePendingOnPmStatus(task.status)) {
-    return clearReleaseDatesPendingOnPm(task);
+  if (isReleaseDateHandoffStatus(task.status)) {
+    return clearHandoffReleaseDates(task);
   }
   const ready = scheduledReadyForUat(task, config);
   if (!ready) {
@@ -129,8 +129,8 @@ export const alignReleaseGroups = (
     const isOverflow = sharedUat.getTime() > sprintEndDate.getTime();
 
     for (const member of members) {
-      if (isReleasePendingOnPmStatus(member.status)) {
-        alignedById.set(member.id, clearReleaseDatesPendingOnPm(member));
+      if (isReleaseDateHandoffStatus(member.status)) {
+        alignedById.set(member.id, clearHandoffReleaseDates(member));
         continue;
       }
       alignedById.set(member.id, {

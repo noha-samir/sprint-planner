@@ -5,7 +5,10 @@ import {
   isHiddenByDefaultStatusFilter,
   isInactiveTaskStatus,
   isReleasedTaskStatus,
+  isReleaseDateHandoffStatus,
+  isReleasePendingOnEmStatus,
   isReleasePendingOnPmStatus,
+  releaseDateHandoffLabel,
   normalizeTaskStatus,
   resourceInsightStatusBucket,
   resourceInsightStatusRank,
@@ -37,12 +40,19 @@ describe("taskStatus", () => {
     expect(isExcludedFromSchedule("In Progress")).toBe(false);
   });
 
-  it("marks UAT / STAGING / Ready for Production as release pending on PM", () => {
+  it("marks UAT / STAGING as pending on PM and Ready for Production as pending on EM", () => {
     expect(isReleasePendingOnPmStatus("UAT")).toBe(true);
     expect(isReleasePendingOnPmStatus("STAGING")).toBe(true);
-    expect(isReleasePendingOnPmStatus("Ready for Production")).toBe(true);
-    expect(isReleasePendingOnPmStatus("Testing")).toBe(false);
-    expect(isReleasePendingOnPmStatus("Production")).toBe(false);
+    expect(isReleasePendingOnPmStatus("Ready for Production")).toBe(false);
+    expect(isReleasePendingOnEmStatus("Ready for Production")).toBe(true);
+    expect(isReleasePendingOnEmStatus("UAT")).toBe(false);
+    expect(isReleaseDateHandoffStatus("UAT")).toBe(true);
+    expect(isReleaseDateHandoffStatus("Ready for Production")).toBe(true);
+    expect(isReleaseDateHandoffStatus("Testing")).toBe(false);
+    expect(releaseDateHandoffLabel("UAT")).toBe("Pending on PM");
+    expect(releaseDateHandoffLabel("STAGING")).toBe("Pending on PM");
+    expect(releaseDateHandoffLabel("Ready for Production")).toBe("Pending on EM");
+    expect(releaseDateHandoffLabel("Testing")).toBeNull();
   });
 
   it("hides only discoped/cancelled/closed/production in the default status filter", () => {
