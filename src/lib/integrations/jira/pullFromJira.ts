@@ -10,7 +10,7 @@ import {
 import { publicJiraErrorMessage } from "./jiraErrors";
 import { requireJiraApiCredentials } from "@/lib/authz/sessionJiraCredentials";
 import { buildJiraBasicAuthHeader, jiraRestApiBase, type JiraApiCredentials } from "./credentials";
-import { discoverFeBeSubtasks, listParentSubtasks } from "./discoverSubtasks";
+import { listParentSubtasks, matchAllRoleSubtasksFromSummaries } from "./discoverSubtasks";
 import {
   hoursFromJiraNumberField,
   hoursFromJiraTimetracking,
@@ -164,6 +164,39 @@ const readSubtaskDetails = async (
   };
 };
 
+const mapWithConcurrency = async <T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> => {
+  if (items.length === 0) {
+    return [];
+  }
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
+  return results;
+};
+
+const uniqueAssigneeNames = (names: string[]): string[] => {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const name of names) {
+    const trimmed = name.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    unique.push(trimmed);
+  }
+  return unique;
+};
+
 const toPlannerPeople = (
   peopleOrNames: PlannerPersonRef[] | string[] = [],
 ): PlannerPersonRef[] =>
@@ -269,128 +302,118 @@ export const syncTaskFromJira = async (
     }
   }
 
-  const discovered = await discoverFeBeSubtasks(
-    credentials,
-    parentIssueKey,
-    task.storyName,
-    task.jira,
-  );
   const children = await listParentSubtasks(credentials, parentIssueKey);
   const developmentEstimateFieldId = fieldIds.developmentEstimateHours;
+  const roleKeys = matchAllRoleSubtasksFromSummaries(children);
 
   const readRole = async (
     role: JiraSubtaskRole,
-    key: string | undefined,
+    key: string,
   ): Promise<JiraTaskSubtaskRef | null> => {
-    if (!key) {
+    try {
+      const details = await readSubtaskDetails(credentials, key, developmentEstimateFieldId);
+      const resolved = resolvePlannerNameFromJiraUser(
+        details.assignee,
+        squadConfig.assigneeMap,
+        people,
+      );
+      if (resolved?.warning) {
+        warnings.push(`${role.toUpperCase()} subtask ${key}: ${resolved.warning}`);
+      }
+      if (!details.assignee) {
+        warnings.push(`${role.toUpperCase()} subtask ${key} has no assignee in Jira`);
+      } else if (!resolved) {
+        const label = details.assignee.displayName?.trim() || details.assignee.accountId?.trim() || "unknown";
+        warnings.push(
+          `${role.toUpperCase()} subtask ${key}: Jira assignee "${label}" is not on the Resources roster (or assignee map)`,
+        );
+      }
+      return {
+        key,
+        role,
+        assigneeName: resolved?.name ?? "",
+        hours: details.hours,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : `Failed to load Jira subtask ${key}`;
+      warnings.push(`${role.toUpperCase()} subtask ${key}: ${message}`);
       return null;
     }
-    const details = await readSubtaskDetails(credentials, key, developmentEstimateFieldId);
-    const resolved = resolvePlannerNameFromJiraUser(
-      details.assignee,
-      squadConfig.assigneeMap,
-      people,
-    );
-    if (resolved?.warning) {
-      warnings.push(`${role.toUpperCase()} subtask ${key}: ${resolved.warning}`);
-    }
-    if (!details.assignee) {
-      warnings.push(`${role.toUpperCase()} subtask ${key} has no assignee in Jira`);
-    } else if (!resolved) {
-      const label = details.assignee.displayName?.trim() || details.assignee.accountId?.trim() || "unknown";
-      warnings.push(
-        `${role.toUpperCase()} subtask ${key}: Jira assignee "${label}" is not on the Resources roster (or assignee map)`,
-      );
-    }
-    return {
-      key,
-      role,
-      assigneeName: resolved?.name ?? "",
-      hours: details.hours,
-    };
   };
 
-  const feRef = await readRole("fe", discovered.feKey);
-  const beRef = await readRole("be", discovered.beKey);
-  const androidRef = await readRole("android", discovered.androidKey);
-  const iosRef = await readRole("ios", discovered.iosKey);
+  const applyRoleRefs = (
+    role: JiraSubtaskRole,
+    refs: JiraTaskSubtaskRef[],
+    hoursKey: "feHours" | "beHours" | "androidHours" | "iosHours",
+    assigneesKey: "feDevs" | "beDevs" | "androidDevs" | "iosDevs",
+    missingWarning: string | null,
+  ) => {
+    if (refs.length === 0) {
+      if (missingWarning) {
+        warnings.push(missingWarning);
+      }
+      return;
+    }
+    patch[hoursKey] = refs.reduce((sum, ref) => sum + ref.hours, 0);
+    const names = uniqueAssigneeNames(refs.map((ref) => ref.assigneeName));
+    if (names.length > 0) {
+      patch[assigneesKey] = names;
+    }
+    if (role === "ios") {
+      patch.needsIos = true;
+    }
+  };
 
-  if (!feRef) {
-    warnings.push("No [FE] subtask found under the Jira story");
-  } else {
-    patch.feHours = feRef.hours;
-    if (feRef.assigneeName) {
-      patch.feDevs = [feRef.assigneeName];
-    }
-  }
+  const feRefs = (await mapWithConcurrency(roleKeys.fe, 4, (key) => readRole("fe", key))).filter(
+    (item): item is JiraTaskSubtaskRef => item !== null,
+  );
+  const beRefs = (await mapWithConcurrency(roleKeys.be, 4, (key) => readRole("be", key))).filter(
+    (item): item is JiraTaskSubtaskRef => item !== null,
+  );
+  const androidRefs = (await mapWithConcurrency(roleKeys.android, 4, (key) => readRole("android", key))).filter(
+    (item): item is JiraTaskSubtaskRef => item !== null,
+  );
+  const iosRefs = (await mapWithConcurrency(roleKeys.ios, 4, (key) => readRole("ios", key))).filter(
+    (item): item is JiraTaskSubtaskRef => item !== null,
+  );
 
-  if (!beRef) {
-    warnings.push("No [BE] subtask found under the Jira story");
-  } else {
-    patch.beHours = beRef.hours;
-    if (beRef.assigneeName) {
-      patch.beDevs = [beRef.assigneeName];
-    }
-  }
-
-  if (!androidRef) {
-    // Mobile is optional — warn only when the dashboard already has an Android assignee.
-    if ((task.androidDevs ?? []).some((name) => name.trim().length > 0)) {
-      warnings.push("No [Android] (or legacy [MO]) subtask found under the Jira story");
-    }
-  } else {
-    patch.androidHours = androidRef.hours;
-    if (androidRef.assigneeName) {
-      patch.androidDevs = [androidRef.assigneeName];
-    }
-  }
-
-  if (!iosRef) {
-    // Mobile is optional — warn only when the dashboard already has an IOS assignee.
-    if ((task.iosDevs ?? []).some((name) => name.trim().length > 0)) {
-      warnings.push("No [IOS] subtask found under the Jira story");
-    }
-  } else {
-    patch.needsIos = true;
-    patch.iosHours = iosRef.hours;
-    if (iosRef.assigneeName) {
-      patch.iosDevs = [iosRef.assigneeName];
-    }
-  }
+  applyRoleRefs("fe", feRefs, "feHours", "feDevs", "No [FE] subtask found under the Jira story");
+  applyRoleRefs("be", beRefs, "beHours", "beDevs", "No [BE] subtask found under the Jira story");
+  applyRoleRefs(
+    "android",
+    androidRefs,
+    "androidHours",
+    "androidDevs",
+    (task.androidDevs ?? []).some((name) => name.trim().length > 0)
+      ? "No [Android] (or legacy [MO]) subtask found under the Jira story"
+      : null,
+  );
+  applyRoleRefs(
+    "ios",
+    iosRefs,
+    "iosHours",
+    "iosDevs",
+    (task.iosDevs ?? []).some((name) => name.trim().length > 0)
+      ? "No [IOS] subtask found under the Jira story"
+      : null,
+  );
 
   const parentDevHours = hoursFromJiraNumberField(
     parentFields[fieldIds.developmentEstimateHours.trim()],
   );
-  if (parentDevHours != null && !feRef && !beRef && !androidRef && !iosRef) {
+  if (
+    parentDevHours != null &&
+    feRefs.length === 0 &&
+    beRefs.length === 0 &&
+    androidRefs.length === 0 &&
+    iosRefs.length === 0
+  ) {
     warnings.push(
       `Parent development estimate is ${parentDevHours}h but no [FE]/[BE]/[Android]/[IOS] subtasks were found to apply it`,
     );
   }
 
-  const unmatchedDev = children.filter((child) => {
-    if (
-      feRef?.key === child.key ||
-      beRef?.key === child.key ||
-      androidRef?.key === child.key ||
-      iosRef?.key === child.key
-    ) {
-      return false;
-    }
-    return /^\[(FE|BE|Android|IOS|MO)\]/i.test(child.summary);
-  });
-  if (unmatchedDev.length > 0) {
-    const extras = unmatchedDev
-      .slice(0, 5)
-      .map((child) => `${child.key} (${child.summary})`)
-      .join(", ");
-    warnings.push(
-      `Extra [FE]/[BE]/[Android]/[IOS] subtasks were not applied (planner keeps one of each): ${extras}`,
-    );
-  }
-
-  const subtasks = [feRef, beRef, androidRef, iosRef].filter(
-    (item): item is JiraTaskSubtaskRef => item !== null,
-  );
+  const subtasks = [...feRefs, ...beRefs, ...androidRefs, ...iosRefs];
   const jira: TaskJiraMeta = {
     parentIssueKey,
     lastPushedAt: task.jira?.lastPushedAt ?? null,

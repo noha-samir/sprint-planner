@@ -2,6 +2,7 @@ import type { JiraApiCredentials } from "./credentials";
 import { JiraApiError } from "./client";
 import { publicJiraErrorMessage } from "./jiraErrors";
 import { buildJiraBasicAuthHeader, jiraRestApiBase } from "./credentials";
+import { quoteJql, searchJqlIssues } from "./jiraSearch";
 import type { JiraSubtaskRole, TaskJiraMeta } from "./types";
 import { effectiveIosHours } from "@/lib/scheduler/mobilePlatform";
 
@@ -12,67 +13,104 @@ export interface DiscoveredFeBeKeys {
   iosKey?: string;
 }
 
+export type DiscoveredRoleKeys = {
+  fe: string[];
+  be: string[];
+  android: string[];
+  ios: string[];
+};
+
 interface JiraSubtaskRef {
   key: string;
   summary: string;
 }
 
+const SEARCH_PAGE_SIZE = 100;
+const KEY_LOOKUP_CHUNK = 40;
+
 const jiraFetch = async (
   credentials: JiraApiCredentials,
   path: string,
+  init?: RequestInit,
 ): Promise<Response> =>
   fetch(`${jiraRestApiBase(credentials.siteUrl)}${path}`, {
+    method: init?.method ?? "GET",
     headers: {
       Authorization: buildJiraBasicAuthHeader(credentials),
       Accept: "application/json",
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(init?.headers ?? {}),
     },
+    body: init?.body,
     cache: "no-store",
   });
 
+const refsFromSearchIssues = (issues: SearchJqlIssue[]): JiraSubtaskRef[] => {
+  const refs: JiraSubtaskRef[] = [];
+  const seen = new Set<string>();
+  for (const issue of issues) {
+    const key = issue.key?.trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    refs.push({ key, summary: issue.fields?.summary?.trim() ?? "" });
+  }
+  return refs;
+};
+
+/** Map a Jira subtask summary onto a planner role. Legacy [MO] is Android. */
+export const roleFromSubtaskSummary = (summary: string): JiraSubtaskRole | null => {
+  const value = summary.trim();
+  if (/^\[FE\]/i.test(value)) return "fe";
+  if (/^\[BE\]/i.test(value)) return "be";
+  if (/^\[IOS\]/i.test(value)) return "ios";
+  if (/^\[Android\]/i.test(value) || /^\[MO\]/i.test(value)) return "android";
+  return null;
+};
+
+export const emptyDiscoveredRoleKeys = (): DiscoveredRoleKeys => ({
+  fe: [],
+  be: [],
+  android: [],
+  ios: [],
+});
+
 /**
- * Match [FE]/[BE]/[Android]/[IOS] subtask summaries from Jira children (pure — for tests).
- * Legacy [MO] summaries map to Android.
+ * All [FE]/[BE]/[Android]/[IOS] children under the parent, in Jira order.
+ * Parent-scoped lists do not need the story title in the summary.
+ */
+export const matchAllRoleSubtasksFromSummaries = (children: JiraSubtaskRef[]): DiscoveredRoleKeys => {
+  const discovered = emptyDiscoveredRoleKeys();
+  for (const child of children) {
+    const role = roleFromSubtaskSummary(child.summary);
+    if (!role || discovered[role].includes(child.key)) continue;
+    discovered[role].push(child.key);
+  }
+  return discovered;
+};
+
+/**
+ * First matching [FE]/[BE]/[Android]/[IOS] subtask per role (push discovery).
+ * Prefers summaries that include the story title, then any role-prefixed child.
  */
 export const matchFeBeSubtasksFromSummaries = (
   children: JiraSubtaskRef[],
   storyName: string,
 ): DiscoveredFeBeKeys => {
   const title = storyName.trim().toLowerCase();
-  let feKey: string | undefined;
-  let beKey: string | undefined;
-  let androidKey: string | undefined;
-  let iosKey: string | undefined;
-
-  for (const child of children) {
-    const summary = child.summary.trim();
-    const summaryLower = summary.toLowerCase();
-    if (title && !summaryLower.includes(title)) {
-      continue;
-    }
-    if (!feKey && /^\[FE\]/i.test(summary)) {
-      feKey = child.key;
-      continue;
-    }
-    if (!beKey && /^\[BE\]/i.test(summary)) {
-      beKey = child.key;
-      continue;
-    }
-    if (!iosKey && /^\[IOS\]/i.test(summary)) {
-      iosKey = child.key;
-      continue;
-    }
-    if (!androidKey && (/^\[Android\]/i.test(summary) || /^\[MO\]/i.test(summary))) {
-      androidKey = child.key;
-    }
-  }
-
-  return { feKey, beKey, androidKey, iosKey };
+  const preferred = title
+    ? children.filter((child) => child.summary.trim().toLowerCase().includes(title))
+    : children;
+  const pool = preferred.length > 0 ? preferred : children;
+  const all = matchAllRoleSubtasksFromSummaries(pool);
+  return {
+    feKey: all.fe[0],
+    beKey: all.be[0],
+    androidKey: all.android[0],
+    iosKey: all.ios[0],
+  };
 };
 
-/**
- * List child subtasks under a parent Jira story.
- */
-export const listParentSubtasks = async (
+const listParentSubtasksFromIssue = async (
   credentials: JiraApiCredentials,
   parentIssueKey: string,
 ): Promise<JiraSubtaskRef[]> => {
@@ -102,9 +140,7 @@ export const listParentSubtasks = async (
   const missingSummaryKeys: string[] = [];
 
   for (const item of raw) {
-    if (!item.key) {
-      continue;
-    }
+    if (!item.key) continue;
     const summary = item.fields?.summary?.trim() ?? "";
     if (!summary) {
       missingSummaryKeys.push(item.key);
@@ -112,31 +148,39 @@ export const listParentSubtasks = async (
     refs.push({ key: item.key, summary });
   }
 
-  // One batched search instead of N sequential issue GETs when summaries are omitted.
-  if (missingSummaryKeys.length > 0) {
-    const jql = `key in (${missingSummaryKeys.map((key) => `"${key.replace(/"/g, '\\"')}"`).join(",")})`;
-    const search = await jiraFetch(
-      credentials,
-      `/search?jql=${encodeURIComponent(jql)}&fields=summary&maxResults=${missingSummaryKeys.length}`,
+  for (let offset = 0; offset < missingSummaryKeys.length; offset += KEY_LOOKUP_CHUNK) {
+    const chunk = missingSummaryKeys.slice(offset, offset + KEY_LOOKUP_CHUNK);
+    const jql = `key in (${chunk.map(quoteJql).join(",")})`;
+    const issues = await searchJqlIssues(credentials, jql, chunk.length);
+    if (!issues) continue;
+    const byKey = new Map(
+      issues
+        .filter((issue): issue is { key: string; fields?: { summary?: string } } => Boolean(issue.key))
+        .map((issue) => [issue.key, issue.fields?.summary?.trim() ?? ""] as const),
     );
-    if (search.ok) {
-      const searchBody = (await search.json()) as {
-        issues?: Array<{ key?: string; fields?: { summary?: string } }>;
-      };
-      const byKey = new Map(
-        (searchBody.issues ?? [])
-          .filter((issue): issue is { key: string; fields?: { summary?: string } } => Boolean(issue.key))
-          .map((issue) => [issue.key, issue.fields?.summary?.trim() ?? ""] as const),
-      );
-      for (const ref of refs) {
-        if (!ref.summary && byKey.has(ref.key)) {
-          ref.summary = byKey.get(ref.key) ?? "";
-        }
+    for (const ref of refs) {
+      if (!ref.summary && byKey.has(ref.key)) {
+        ref.summary = byKey.get(ref.key) ?? "";
       }
     }
   }
 
   return refs;
+};
+
+/**
+ * List child subtasks under a parent Jira story (paginated search, then issue-field fallback).
+ */
+export const listParentSubtasks = async (
+  credentials: JiraApiCredentials,
+  parentIssueKey: string,
+): Promise<JiraSubtaskRef[]> => {
+  const jql = `parent = ${quoteJql(parentIssueKey)} ORDER BY key ASC`;
+  const searched = await searchJqlIssues(credentials, jql, SEARCH_PAGE_SIZE);
+  if (searched) {
+    return refsFromSearchIssues(searched);
+  }
+  return listParentSubtasksFromIssue(credentials, parentIssueKey);
 };
 
 const keysFromPlannerMeta = (
@@ -225,37 +269,62 @@ const hoursForRole = (task: DiscoverTaskAssignees, role: JiraSubtaskRole): numbe
   return task.androidHours;
 };
 
+const isRoleKeyLists = (discovered: DiscoveredFeBeKeys | DiscoveredRoleKeys): discovered is DiscoveredRoleKeys =>
+  Array.isArray((discovered as DiscoveredRoleKeys).fe);
+
+const toRoleKeyLists = (discovered: DiscoveredFeBeKeys | DiscoveredRoleKeys): DiscoveredRoleKeys => {
+  if (isRoleKeyLists(discovered)) {
+    return discovered;
+  }
+  return {
+    fe: discovered.feKey ? [discovered.feKey] : [],
+    be: discovered.beKey ? [discovered.beKey] : [],
+    android: discovered.androidKey ? [discovered.androidKey] : [],
+    ios: discovered.iosKey ? [discovered.iosKey] : [],
+  };
+};
+
 /**
  * Merge discovered keys into jira metadata for subtask plan building.
+ * Keeps every [FE]/[BE]/[Android]/[IOS] child (multiple people of the same role).
  */
 export const mergeDiscoveredIntoJiraMeta = (
   parentIssueKey: string,
   task: DiscoverTaskAssignees,
   jiraMeta: TaskJiraMeta | undefined,
-  discovered: DiscoveredFeBeKeys,
+  discovered: DiscoveredFeBeKeys | DiscoveredRoleKeys,
 ): TaskJiraMeta => {
   const subtasks = [...(jiraMeta?.subtasks ?? [])].filter(
     (item) => (item.role as string) !== "mo",
   );
+  const keys = toRoleKeyLists(discovered);
 
-  const upsertKey = (role: JiraSubtaskRole, key: string | undefined) => {
-    if (!key) {
+  const upsertKey = (role: JiraSubtaskRole, key: string) => {
+    const byKey = subtasks.findIndex((item) => item.key === key);
+    if (byKey >= 0) {
+      subtasks[byKey] = { ...subtasks[byKey], role, key };
       return;
     }
-    const assigneeName = assigneesForRole(task, role).find((name) => name.trim().length > 0)?.trim() ?? "";
-    const hours = hoursForRole(task, role);
-    const index = subtasks.findIndex((item) => item.role === role);
-    if (index >= 0) {
-      subtasks[index] = { ...subtasks[index], key };
-      return;
-    }
-    subtasks.push({ key, role, assigneeName, hours });
+    const takenAssignees = new Set(
+      subtasks.filter((item) => item.role === role).map((item) => item.assigneeName.trim()).filter(Boolean),
+    );
+    const assigneeName =
+      assigneesForRole(task, role)
+        .map((name) => name.trim())
+        .find((name) => name && !takenAssignees.has(name)) ?? "";
+    subtasks.push({
+      key,
+      role,
+      assigneeName,
+      hours: hoursForRole(task, role),
+    });
   };
 
-  upsertKey("fe", discovered.feKey);
-  upsertKey("be", discovered.beKey);
-  upsertKey("android", discovered.androidKey);
-  upsertKey("ios", discovered.iosKey);
+  for (const role of ["fe", "be", "android", "ios"] as const) {
+    for (const key of keys[role]) {
+      upsertKey(role, key);
+    }
+  }
 
   return {
     parentIssueKey,

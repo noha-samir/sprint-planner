@@ -19,6 +19,7 @@ vi.mock("@/lib/db/prisma", () => ({
         productManagerFieldIsUser: true,
         subtaskSquadFieldId: null,
         subtaskSquadOptionId: "10001",
+        engineeringManagerFieldId: null,
         assigneesSyncedAt: null,
         assignees: [
           { resourceName: "Morgan", jiraAccountId: "acct-dev-1" },
@@ -50,6 +51,7 @@ describe("readSquadJiraConfig ventures", () => {
     expect(config.assigneeMap.Morgan).toBe("acct-dev-1");
     expect(config.productManagerName).toBe("Alex Rivera");
     expect(config.productManagerJiraAccountId).toBe("acct-pm-1");
+    expect(config.engineeringManagerFieldId).toBe("");
   });
 });
 

@@ -62,6 +62,7 @@ export const squadJiraConfigWriteSchema = z
     productManagerFieldIsUser: z.boolean().optional(),
     subtaskSquadFieldId: z.string().max(80).optional(),
     subtaskSquadOptionId: z.string().max(80).optional(),
+    engineeringManagerFieldId: z.string().max(80).optional(),
   })
   .passthrough();
 

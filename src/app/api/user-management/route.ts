@@ -11,6 +11,10 @@ import {
 } from "@/lib/authz/sessionRevocation";
 import { deleteSquadJiraConfig } from "@/lib/integrations/jira/configStore";
 import { sanitizeSquadKey } from "@/lib/authz/permissions";
+import {
+  allowedSquadIdsForUserManagement,
+  scopeAccessRegistry,
+} from "@/lib/access/userManagementScope";
 
 const hasSuperAdmin = (registry: AccessRegistry) =>
   registry.users.some((user) => user.role === "super_admin");
@@ -29,7 +33,8 @@ export async function GET() {
   }
   try {
     const registry = await readAccessRegistry();
-    return NextResponse.json(registry);
+    const allowedSquadIds = allowedSquadIdsForUserManagement(access);
+    return NextResponse.json(scopeAccessRegistry(registry, allowedSquadIds));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load access registry";
     return NextResponse.json({ error: message }, { status: 503 });

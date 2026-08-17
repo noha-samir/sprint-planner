@@ -48,7 +48,7 @@ export function JiraSyncBanner() {
   if (active) {
     return (
       <div
-        className="jira-sync-banner jira-sync-banner-active jira-sync-banner-sticky"
+        className="jira-sync-banner jira-sync-banner-active"
         role="status"
         aria-live="polite"
         aria-busy="true"
@@ -87,7 +87,7 @@ export function JiraSyncBanner() {
 
   return (
     <div
-      className={`jira-sync-banner jira-sync-banner-sticky ${
+      className={`jira-sync-banner ${
         summaryIsError
           ? "jira-sync-banner-error"
           : summaryIsWarning

@@ -136,9 +136,20 @@ Editors have no squad switcher; they stay on their assigned squad.
 | History | `/history` | Archived sprint snapshots |
 | People & Jira | `/resources` | Roster + Jira connection fields |
 | Sprint Settings | `/config` | Sprint window, holidays, hours |
-| User Management | `/user-management` | Squads & users |
+| User Management | `/user-management` | Squads & users (squad-scoped for non-admins) |
 | Help | `/docs` | In-app documentation |
 | (legacy) Jira settings | `/jira-settings` | Redirects to People & Jira |
+
+### Jira pull & push
+
+- **Pull** lists every `[FE]` / `[BE]` / `[Android]` / `[IOS]` child under the parent (`POST /search/jql`). Multiple people on one role keep all assignees; hours are **summed**. A failed child fetch is a warning, not a failed story.
+- **Push** writes **one Jira subtask per assignee** and splits hours across them.
+- **Pull from Jira** (no row select required) also imports parent stories under this EM that are not on the board (`POST /api/integrations/jira/tasks/discover-em`), using the Engineering Manager field and/or Squad field under **People & Jira → Jira fields**. New rows get tag **`Jira sync`**.
+- The pull/push result banner stays short and **scrolls inside** so the task table stays reachable.
+
+### Appearance
+
+The UI follows the laptop **light / dark** setting (`prefers-color-scheme`) so text, cards, and form controls stay readable on dark-mode machines.
 
 ### Sync workflow
 
@@ -180,13 +191,18 @@ sequenceDiagram
 
 ### Super Admin
 - Everything above on **all** squads  
-- Edit People (add from Jira), Sprint Settings, User Management, Jira fields  
+- Edit People (add from Jira), Sprint Settings, User Management, Jira fields (including Engineering Manager field for EM-story import)  
+- User Management: filter the users list by squad  
+
+### User Management (who sees whom)
+- **Squad leads / EM / Editor / Reviewer:** the Users list is limited to people on **their squad(s)**  
+- **Super Admin:** full registry; optional squad filter on Users
 
 ### Typical planning loop
 1. Set sprint window (super admin) and roster (super admin)  
 2. Add/import stories; assign people and hours  
 3. When the plan is ready to lock dates → **Mark Progress Now** (EM / super admin)  
-4. Push/pull Jira as needed  
+4. Push/pull Jira as needed (pull can import missing EM/squad stories and tags them **Jira sync**)  
 5. Archive via History when the sprint closes  
 
 ---

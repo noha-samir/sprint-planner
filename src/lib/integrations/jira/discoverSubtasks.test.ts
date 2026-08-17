@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { matchFeBeSubtasksFromSummaries, mergeDiscoveredIntoJiraMeta, reconcileFeBeSubtaskKeys } from "./discoverSubtasks";
+import {
+  matchAllRoleSubtasksFromSummaries,
+  matchFeBeSubtasksFromSummaries,
+  mergeDiscoveredIntoJiraMeta,
+  reconcileFeBeSubtaskKeys,
+} from "./discoverSubtasks";
 
 describe("matchFeBeSubtasksFromSummaries", () => {
   it("matches FE, BE, Android, and IOS subtasks by summary prefix and story title", () => {
@@ -29,12 +34,30 @@ describe("matchFeBeSubtasksFromSummaries", () => {
     expect(result).toEqual({ androidKey: "BR-3" });
   });
 
-  it("returns empty when story title does not match", () => {
+  it("falls back to role prefix when the story title is not in the summary", () => {
     const result = matchFeBeSubtasksFromSummaries(
       [{ key: "BR-1", summary: "[FE] Other Story" }],
       "Pricing Engine",
     );
-    expect(result).toEqual({});
+    expect(result).toEqual({ feKey: "BR-1" });
+  });
+});
+
+describe("matchAllRoleSubtasksFromSummaries", () => {
+  it("keeps every role-prefixed subtask including multiple BEs", () => {
+    expect(
+      matchAllRoleSubtasksFromSummaries([
+        { key: "BR-1", summary: "[FE] Pricing Engine" },
+        { key: "BR-2", summary: "[BE] Pricing Engine — Abbas" },
+        { key: "BR-3", summary: "[BE] Pricing Engine — kholaey" },
+        { key: "BR-4", summary: "QC only" },
+      ]),
+    ).toEqual({
+      fe: ["BR-1"],
+      be: ["BR-2", "BR-3"],
+      android: [],
+      ios: [],
+    });
   });
 });
 
@@ -65,6 +88,30 @@ describe("mergeDiscoveredIntoJiraMeta", () => {
         expect.objectContaining({ role: "ios", key: "BR-204" }),
       ]),
     );
+  });
+
+  it("keeps multiple BE keys instead of overwriting the first", () => {
+    const meta = mergeDiscoveredIntoJiraMeta(
+      "BR-100",
+      {
+        storyName: "Pricing Engine",
+        feDevs: [],
+        beDevs: ["Abbas", "kholaey"],
+        androidDevs: [],
+        iosDevs: [],
+        needsIos: false,
+        feHours: 0,
+        beHours: 10,
+        androidHours: 0,
+        iosHours: 0,
+      },
+      undefined,
+      { fe: [], be: ["BR-11", "BR-13"], android: [], ios: [] },
+    );
+    expect(meta.subtasks.filter((item) => item.role === "be")).toEqual([
+      expect.objectContaining({ key: "BR-11", assigneeName: "Abbas" }),
+      expect.objectContaining({ key: "BR-13", assigneeName: "kholaey" }),
+    ]);
   });
 });
 

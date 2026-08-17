@@ -33,9 +33,24 @@ export const formatBulkPullConfirmMessage = (
   eligibleCount: number,
   visibleCount: number,
   discopedCount = 0,
+  missingEmCount = 0,
 ): string => {
   const softLeftOut = Math.max(0, visibleCount - eligibleCount - discopedCount);
-  const parts: string[] = [`Pull ${storyCountLabel(eligibleCount)} from Jira?`];
+  const parts: string[] = [];
+  if (eligibleCount > 0) {
+    parts.push(`Pull ${storyCountLabel(eligibleCount)} from Jira?`);
+  } else if (missingEmCount > 0) {
+    parts.push(
+      `Add ${storyCountLabel(missingEmCount)} from Jira under this EM that ${missingEmCount === 1 ? "is" : "are"} not on the dashboard?`,
+    );
+  } else {
+    parts.push(`Pull ${storyCountLabel(0)} from Jira?`);
+  }
+  if (eligibleCount > 0 && missingEmCount > 0) {
+    parts.push(
+      `Also add ${storyCountLabel(missingEmCount)} under this EM that ${missingEmCount === 1 ? "is" : "are"} not on the dashboard.`,
+    );
+  }
   if (softLeftOut > 0) {
     parts.push(
       `${storyCountLabel(softLeftOut)} will be left out — no Jira link. ` +

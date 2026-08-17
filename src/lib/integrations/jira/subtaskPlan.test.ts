@@ -27,16 +27,17 @@ const baseTask = (): Task => ({
 });
 
 describe("buildSubtaskPlan", () => {
-  it("creates one FE and one BE subtask named after the main story", () => {
+  it("creates one FE subtask and one BE subtask per assignee", () => {
     const config = defaultSquadJiraConfig();
     config.assigneeMap = {
       Karim: "fe-1",
       Abbas: "be-1",
+      kholaey: "be-2",
       Hala: "qc-1",
     };
 
     const plan = buildSubtaskPlan(baseTask(), config);
-    expect(plan).toHaveLength(2);
+    expect(plan).toHaveLength(3);
     expect(plan[0]).toMatchObject({
       role: "fe",
       hours: 6,
@@ -44,9 +45,35 @@ describe("buildSubtaskPlan", () => {
     });
     expect(plan[1]).toMatchObject({
       role: "be",
-      hours: 10,
-      summary: "[BE] Pricing Engine",
+      assigneeName: "Abbas",
+      hours: 5,
+      summary: "[BE] Pricing Engine — Abbas",
+      jiraAccountId: "be-1",
     });
+    expect(plan[2]).toMatchObject({
+      role: "be",
+      assigneeName: "kholaey",
+      hours: 5,
+      summary: "[BE] Pricing Engine — kholaey",
+      jiraAccountId: "be-2",
+    });
+  });
+
+  it("reuses existing BE keys by assignee then leftover keys", () => {
+    const config = defaultSquadJiraConfig();
+    config.assigneeMap = { Karim: "fe-1", Abbas: "be-1", kholaey: "be-2" };
+    const plan = buildSubtaskPlan(baseTask(), config, {
+      parentIssueKey: "VEN-1",
+      lastPushedAt: null,
+      subtasks: [
+        { key: "VEN-90", role: "be", assigneeName: "kholaey", hours: 5 },
+        { key: "VEN-91", role: "be", assigneeName: "Abbas", hours: 5 },
+        { key: "VEN-80", role: "fe", assigneeName: "Karim", hours: 6 },
+      ],
+    });
+    expect(plan[0].existingKey).toBe("VEN-80");
+    expect(plan[1].existingKey).toBe("VEN-91");
+    expect(plan[2].existingKey).toBe("VEN-90");
   });
 
   it("creates an Android subtask when android assignee is present", () => {

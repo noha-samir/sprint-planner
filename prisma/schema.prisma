@@ -344,6 +344,7 @@ model SquadJiraConfig {
   productManagerFieldIsUser   Boolean?
   subtaskSquadFieldId         String?
   subtaskSquadOptionId        String?
+  engineeringManagerFieldId   String?
   assigneesSyncedAt           DateTime?
   createdAt                   DateTime  @default(now())
   updatedAt                   DateTime  @updatedAt

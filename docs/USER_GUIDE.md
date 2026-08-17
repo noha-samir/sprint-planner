@@ -56,7 +56,7 @@ Roster by team (BE/FE/MO/QC/PM/Other Squad). Super admins add people from Jira a
 Sprint start, hours/day, workday start, holidays. Edit: super admin only.
 
 ### User Management (`/user-management`)
-Squads and user roles. Edit: super admin only. Others can open read-only.
+Squads and user roles. Edit: super admin only. Squad leads only see users in their own squad(s). Super admins can filter the users list by squad.
 
 ### Help (`/docs`)
 This guide inside the app.
@@ -102,5 +102,12 @@ If stories show **Need remark**, an EM/Super Admin should run **Mark Progress No
 ## Jira tips
 
 - Story needs a Jira link (or prior sync) for push/pull.
+- **Pull from Jira** also adds parent stories under this EM that are not on the dashboard (Engineering Manager field and/or Squad field under People → Jira fields). Those new rows get a **Jira sync** tag.
 - Assignees must exist on People with a saved Jira account (mapped at Add time).
 - Parent PM/QC custom fields are configured under People → Jira fields (super admin).
+- Multiple `[BE]` (or FE/Android/IOS) subtasks under one story are all pulled: hours are summed, every mapped assignee is kept. Push creates one Jira subtask per person.
+- Long pull/push result banners **scroll inside** a short box so the dashboard table stays on screen.
+
+## Appearance
+
+The app follows the laptop **light / dark** theme so labels, tables, and inputs stay readable on dark-mode machines.

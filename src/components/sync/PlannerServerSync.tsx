@@ -4,6 +4,7 @@ import { useSession } from "next-auth/react";
 import { useEffect, useMemo, useRef } from "react";
 import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
 import { flushPlannerStateToServer } from "@/lib/planner/flushPlannerState";
+import { shouldSkipIncomingPlannerSnapshot } from "@/store/replanMerge";
 import { useJiraSyncStore } from "@/store/useJiraSyncStore";
 import { usePlannerSaveStore } from "@/store/usePlannerSaveStore";
 import { usePlannerStore } from "@/store/usePlannerStore";
@@ -24,16 +25,17 @@ const applyServerPlannerPayload = async (
     return false;
   }
 
-  const localMutationAt = usePlannerStore.getState().lastLocalMutationAt;
+  const planner = usePlannerStore.getState();
+  const localMutationAt = planner.lastLocalMutationAt;
   const serverUpdatedAt = typeof data.updatedAt === "string" ? data.updatedAt : null;
   if (
-    options?.canWrite &&
-    localMutationAt &&
-    serverUpdatedAt &&
-    Number.isFinite(Date.parse(localMutationAt)) &&
-    Number.isFinite(Date.parse(serverUpdatedAt)) &&
-    Date.parse(localMutationAt) > Date.parse(serverUpdatedAt)
+    shouldSkipIncomingPlannerSnapshot({
+      incomingUpdatedAt: serverUpdatedAt,
+      localMutationAt,
+      knownServerUpdatedAt: planner.lastServerUpdatedAt,
+    })
   ) {
+    if (!options?.canWrite || !localMutationAt) return true;
     // Don't race a long Jira pull/push with an opportunistic save.
     if (useJiraSyncStore.getState().active) return true;
     await flushPlannerStateToServer(activeSquadId);

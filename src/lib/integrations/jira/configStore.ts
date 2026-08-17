@@ -50,6 +50,10 @@ const normalizeConfig = (parsed: Record<string, unknown>): SquadJiraConfig => {
       typeof parsed.subtaskSquadFieldId === "string" ? parsed.subtaskSquadFieldId : defaults.subtaskSquadFieldId,
     subtaskSquadOptionId:
       typeof parsed.subtaskSquadOptionId === "string" ? parsed.subtaskSquadOptionId : defaults.subtaskSquadOptionId,
+    engineeringManagerFieldId:
+      typeof parsed.engineeringManagerFieldId === "string"
+        ? parsed.engineeringManagerFieldId
+        : defaults.engineeringManagerFieldId,
     assigneeMap:
       parsed.assigneeMap && typeof parsed.assigneeMap === "object"
         ? (parsed.assigneeMap as Record<string, string>)
@@ -91,6 +95,7 @@ const compactSquadJiraConfigForStorage = (config: SquadJiraConfig): Record<strin
     productManagerFieldIsUser: config.productManagerFieldIsUser,
     subtaskSquadFieldId: config.subtaskSquadFieldId.trim() || null,
     subtaskSquadOptionId: config.subtaskSquadOptionId.trim() || null,
+    engineeringManagerFieldId: config.engineeringManagerFieldId.trim() || null,
     assigneesSyncedAt: config.assigneesSyncedAt ? new Date(config.assigneesSyncedAt) : null,
   };
 
@@ -165,6 +170,7 @@ export async function readSquadJiraConfig(squadId: string): Promise<SquadJiraCon
     productManagerFieldIsUser: row.productManagerFieldIsUser ?? undefined,
     subtaskSquadFieldId: row.subtaskSquadFieldId ?? undefined,
     subtaskSquadOptionId: row.subtaskSquadOptionId ?? undefined,
+    engineeringManagerFieldId: row.engineeringManagerFieldId ?? undefined,
     assigneeMap,
     assigneesSyncedAt: row.assigneesSyncedAt ?? undefined,
   });
@@ -209,6 +215,8 @@ export async function writeSquadJiraConfig(squadId: string, config: SquadJiraCon
           typeof compact.subtaskSquadFieldId === "string" ? compact.subtaskSquadFieldId : null,
         subtaskSquadOptionId:
           typeof compact.subtaskSquadOptionId === "string" ? compact.subtaskSquadOptionId : null,
+        engineeringManagerFieldId:
+          typeof compact.engineeringManagerFieldId === "string" ? compact.engineeringManagerFieldId : null,
         assigneesSyncedAt:
           compact.assigneesSyncedAt instanceof Date ? compact.assigneesSyncedAt : null,
       },
@@ -235,6 +243,8 @@ export async function writeSquadJiraConfig(squadId: string, config: SquadJiraCon
           typeof compact.subtaskSquadFieldId === "string" ? compact.subtaskSquadFieldId : null,
         subtaskSquadOptionId:
           typeof compact.subtaskSquadOptionId === "string" ? compact.subtaskSquadOptionId : null,
+        engineeringManagerFieldId:
+          typeof compact.engineeringManagerFieldId === "string" ? compact.engineeringManagerFieldId : null,
         assigneesSyncedAt:
           compact.assigneesSyncedAt instanceof Date
             ? compact.assigneesSyncedAt

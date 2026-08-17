@@ -1,11 +1,13 @@
 @import "tailwindcss";
 
 :root {
+  color-scheme: light;
   --background: #eaf1ff;
   --foreground: #0f172a;
   --surface: #ffffff;
   --muted: #475569;
   --border: #bcd0ff;
+  --status-row-mix: #ffffff;
   --primary: #3b82f6;
   --status-discoped-bg: #e2e8f0;
   --status-discoped-text: #64748b;
@@ -79,13 +81,6 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
@@ -184,11 +179,7 @@ body {
   }
 
   .jira-sync-banner {
-    @apply mb-3 shrink-0 rounded-xl border px-3 py-2 text-sm shadow-sm;
-  }
-
-  .jira-sync-banner-sticky {
-    @apply sticky top-0 z-30;
+    @apply mb-3 flex max-h-[min(22vh,11rem)] min-h-0 w-full shrink flex-col overflow-hidden rounded-xl border px-3 py-2 text-sm shadow-sm;
   }
 
   .planner-save-chip {
@@ -228,7 +219,7 @@ body {
   }
 
   .jira-sync-banner-head {
-    @apply flex items-start justify-between gap-3;
+    @apply flex shrink-0 items-start justify-between gap-3;
   }
 
   .jira-sync-banner-title {
@@ -252,7 +243,8 @@ body {
   }
 
   .jira-sync-banner-summary {
-    @apply mt-1 whitespace-pre-line text-[12px] leading-snug;
+    @apply mt-1 min-h-0 flex-1 overflow-x-hidden overflow-y-auto whitespace-pre-line text-[12px] leading-snug;
+    overscroll-behavior: contain;
   }
 
   .jira-sync-banner-dismiss {
@@ -510,6 +502,11 @@ body {
     box-shadow: inset 3px 0 0 0 rgb(245 158 11);
   }
 
+  .task-row-focus {
+    box-shadow: inset 3px 0 0 0 rgb(37 99 235);
+    background-color: rgb(239 246 255);
+  }
+
   .task-flag-chip-thursday {
     @apply border-pink-200/90 bg-pink-50 text-pink-800;
   }
@@ -577,6 +574,7 @@ body {
 
   .field-input {
     @apply w-full rounded-xl border border-slate-400 bg-white px-3 py-2 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200;
+    color: var(--foreground);
   }
 
   .number-stepper {
@@ -619,7 +617,7 @@ body {
       color-mix(in srgb, var(--primary) 10%, white),
       color-mix(in srgb, var(--primary) 2%, white)
     );
-    color: #0f172a;
+    color: var(--foreground);
   }
 
   .squad-select:hover {
@@ -640,6 +638,7 @@ body {
     border-color: color-mix(in srgb, var(--sidebar-title) 28%, transparent);
     background: color-mix(in srgb, var(--sidebar-bg) 45%, white 55%);
     color: #0f172a;
+    color-scheme: light;
   }
 
   .squad-select-shell {
@@ -762,226 +761,226 @@ body {
   }
 
   .status-row-discoped {
-    background-color: color-mix(in srgb, var(--status-discoped-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-discoped-bg) 58%, var(--status-row-mix));
   }
   .status-row-todo {
-    background-color: color-mix(in srgb, var(--status-todo-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-todo-bg) 58%, var(--status-row-mix));
   }
   .status-row-in-progress {
-    background-color: color-mix(in srgb, var(--status-in-progress-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-in-progress-bg) 58%, var(--status-row-mix));
   }
   .status-row-blocked {
-    background-color: color-mix(in srgb, var(--status-blocked-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-blocked-bg) 58%, var(--status-row-mix));
   }
   .status-row-ready-for-review {
-    background-color: color-mix(in srgb, var(--status-ready-for-review-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-ready-for-review-bg) 58%, var(--status-row-mix));
   }
   .status-row-initial-review {
-    background-color: color-mix(in srgb, var(--status-initial-review-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-initial-review-bg) 58%, var(--status-row-mix));
   }
   .status-row-final-review {
-    background-color: color-mix(in srgb, var(--status-final-review-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-final-review-bg) 58%, var(--status-row-mix));
   }
   .status-row-ready-for-testing {
-    background-color: color-mix(in srgb, var(--status-ready-for-testing-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-ready-for-testing-bg) 58%, var(--status-row-mix));
   }
   .status-row-testing {
-    background-color: color-mix(in srgb, var(--status-testing-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-testing-bg) 58%, var(--status-row-mix));
   }
   .status-row-pending-bug-fixes {
-    background-color: color-mix(in srgb, var(--status-pending-bug-fixes-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-pending-bug-fixes-bg) 58%, var(--status-row-mix));
   }
   .status-row-uat {
-    background-color: color-mix(in srgb, var(--status-uat-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-uat-bg) 58%, var(--status-row-mix));
   }
   .status-row-staging {
-    background-color: color-mix(in srgb, var(--status-staging-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-staging-bg) 58%, var(--status-row-mix));
   }
   .status-row-ready-for-production {
-    background-color: color-mix(in srgb, var(--status-ready-for-production-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-ready-for-production-bg) 58%, var(--status-row-mix));
   }
   .status-row-production {
-    background-color: color-mix(in srgb, var(--status-production-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-production-bg) 58%, var(--status-row-mix));
   }
   .status-row-closed {
-    background-color: color-mix(in srgb, var(--status-closed-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-closed-bg) 58%, var(--status-row-mix));
   }
   .status-row-cancelled {
-    background-color: color-mix(in srgb, var(--status-cancelled-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-cancelled-bg) 58%, var(--status-row-mix));
   }
   .status-row-default {
-    background-color: color-mix(in srgb, var(--status-default-bg) 58%, white);
+    background-color: color-mix(in srgb, var(--status-default-bg) 58%, var(--status-row-mix));
   }
 
   .status-chip-discoped {
-    border-color: color-mix(in srgb, var(--status-discoped-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-discoped-text) 30%, var(--status-row-mix));
     background-color: var(--status-discoped-bg);
     color: var(--status-discoped-text);
   }
   .status-chip-todo {
-    border-color: color-mix(in srgb, var(--status-todo-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-todo-text) 30%, var(--status-row-mix));
     background-color: var(--status-todo-bg);
     color: var(--status-todo-text);
   }
   .status-chip-in-progress {
-    border-color: color-mix(in srgb, var(--status-in-progress-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-in-progress-text) 30%, var(--status-row-mix));
     background-color: var(--status-in-progress-bg);
     color: var(--status-in-progress-text);
   }
   .status-chip-blocked {
-    border-color: color-mix(in srgb, var(--status-blocked-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-blocked-text) 30%, var(--status-row-mix));
     background-color: var(--status-blocked-bg);
     color: var(--status-blocked-text);
   }
   .status-chip-ready-for-review {
-    border-color: color-mix(in srgb, var(--status-ready-for-review-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-ready-for-review-text) 30%, var(--status-row-mix));
     background-color: var(--status-ready-for-review-bg);
     color: var(--status-ready-for-review-text);
   }
   .status-chip-initial-review {
-    border-color: color-mix(in srgb, var(--status-initial-review-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-initial-review-text) 30%, var(--status-row-mix));
     background-color: var(--status-initial-review-bg);
     color: var(--status-initial-review-text);
   }
   .status-chip-final-review {
-    border-color: color-mix(in srgb, var(--status-final-review-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-final-review-text) 30%, var(--status-row-mix));
     background-color: var(--status-final-review-bg);
     color: var(--status-final-review-text);
   }
   .status-chip-ready-for-testing {
-    border-color: color-mix(in srgb, var(--status-ready-for-testing-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-ready-for-testing-text) 30%, var(--status-row-mix));
     background-color: var(--status-ready-for-testing-bg);
     color: var(--status-ready-for-testing-text);
   }
   .status-chip-testing {
-    border-color: color-mix(in srgb, var(--status-testing-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-testing-text) 30%, var(--status-row-mix));
     background-color: var(--status-testing-bg);
     color: var(--status-testing-text);
   }
   .status-chip-pending-bug-fixes {
-    border-color: color-mix(in srgb, var(--status-pending-bug-fixes-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-pending-bug-fixes-text) 30%, var(--status-row-mix));
     background-color: var(--status-pending-bug-fixes-bg);
     color: var(--status-pending-bug-fixes-text);
   }
   .status-chip-uat {
-    border-color: color-mix(in srgb, var(--status-uat-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-uat-text) 30%, var(--status-row-mix));
     background-color: var(--status-uat-bg);
     color: var(--status-uat-text);
   }
   .status-chip-staging {
-    border-color: color-mix(in srgb, var(--status-staging-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-staging-text) 30%, var(--status-row-mix));
     background-color: var(--status-staging-bg);
     color: var(--status-staging-text);
   }
   .status-chip-ready-for-production {
-    border-color: color-mix(in srgb, var(--status-ready-for-production-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-ready-for-production-text) 30%, var(--status-row-mix));
     background-color: var(--status-ready-for-production-bg);
     color: var(--status-ready-for-production-text);
   }
   .status-chip-production {
-    border-color: color-mix(in srgb, var(--status-production-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-production-text) 30%, var(--status-row-mix));
     background-color: var(--status-production-bg);
     color: var(--status-production-text);
   }
   .status-chip-closed {
-    border-color: color-mix(in srgb, var(--status-closed-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-closed-text) 30%, var(--status-row-mix));
     background-color: var(--status-closed-bg);
     color: var(--status-closed-text);
   }
   .status-chip-cancelled {
-    border-color: color-mix(in srgb, var(--status-cancelled-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-cancelled-text) 30%, var(--status-row-mix));
     background-color: var(--status-cancelled-bg);
     color: var(--status-cancelled-text);
   }
   .status-chip-default {
-    border-color: color-mix(in srgb, var(--status-default-text) 30%, white);
+    border-color: color-mix(in srgb, var(--status-default-text) 30%, var(--status-row-mix));
     background-color: var(--status-default-bg);
     color: var(--status-default-text);
   }
 
   .status-filter-row-discoped {
     border-left-color: var(--status-discoped-text);
-    background-color: color-mix(in srgb, var(--status-discoped-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-discoped-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-discoped-text) 90%, black 10%);
   }
   .status-filter-row-todo {
     border-left-color: var(--status-todo-text);
-    background-color: color-mix(in srgb, var(--status-todo-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-todo-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-todo-text) 90%, black 10%);
   }
   .status-filter-row-in-progress {
     border-left-color: var(--status-in-progress-text);
-    background-color: color-mix(in srgb, var(--status-in-progress-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-in-progress-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-in-progress-text) 90%, black 10%);
   }
   .status-filter-row-blocked {
     border-left-color: var(--status-blocked-text);
-    background-color: color-mix(in srgb, var(--status-blocked-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-blocked-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-blocked-text) 90%, black 10%);
   }
   .status-filter-row-ready-for-review {
     border-left-color: var(--status-ready-for-review-text);
-    background-color: color-mix(in srgb, var(--status-ready-for-review-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-ready-for-review-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-ready-for-review-text) 90%, black 10%);
   }
   .status-filter-row-initial-review {
     border-left-color: var(--status-initial-review-text);
-    background-color: color-mix(in srgb, var(--status-initial-review-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-initial-review-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-initial-review-text) 90%, black 10%);
   }
   .status-filter-row-final-review {
     border-left-color: var(--status-final-review-text);
-    background-color: color-mix(in srgb, var(--status-final-review-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-final-review-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-final-review-text) 90%, black 10%);
   }
   .status-filter-row-ready-for-testing {
     border-left-color: var(--status-ready-for-testing-text);
-    background-color: color-mix(in srgb, var(--status-ready-for-testing-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-ready-for-testing-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-ready-for-testing-text) 90%, black 10%);
   }
   .status-filter-row-testing {
     border-left-color: var(--status-testing-text);
-    background-color: color-mix(in srgb, var(--status-testing-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-testing-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-testing-text) 90%, black 10%);
   }
   .status-filter-row-pending-bug-fixes {
     border-left-color: var(--status-pending-bug-fixes-text);
-    background-color: color-mix(in srgb, var(--status-pending-bug-fixes-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-pending-bug-fixes-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-pending-bug-fixes-text) 90%, black 10%);
   }
   .status-filter-row-uat {
     border-left-color: var(--status-uat-text);
-    background-color: color-mix(in srgb, var(--status-uat-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-uat-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-uat-text) 90%, black 10%);
   }
   .status-filter-row-staging {
     border-left-color: var(--status-staging-text);
-    background-color: color-mix(in srgb, var(--status-staging-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-staging-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-staging-text) 90%, black 10%);
   }
   .status-filter-row-ready-for-production {
     border-left-color: var(--status-ready-for-production-text);
-    background-color: color-mix(in srgb, var(--status-ready-for-production-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-ready-for-production-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-ready-for-production-text) 90%, black 10%);
   }
   .status-filter-row-production {
     border-left-color: var(--status-production-text);
-    background-color: color-mix(in srgb, var(--status-production-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-production-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-production-text) 90%, black 10%);
   }
   .status-filter-row-closed {
     border-left-color: var(--status-closed-text);
-    background-color: color-mix(in srgb, var(--status-closed-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-closed-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-closed-text) 90%, black 10%);
   }
   .status-filter-row-cancelled {
     border-left-color: var(--status-cancelled-text);
-    background-color: color-mix(in srgb, var(--status-cancelled-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-cancelled-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-cancelled-text) 90%, black 10%);
   }
   .status-filter-row-default {
     border-left-color: var(--status-default-text);
-    background-color: color-mix(in srgb, var(--status-default-bg) 34%, white);
+    background-color: color-mix(in srgb, var(--status-default-bg) 34%, var(--status-row-mix));
     color: color-mix(in srgb, var(--status-default-text) 90%, black 10%);
   }
 
@@ -992,12 +991,12 @@ body {
   .release-date-card {
     @apply rounded-md border px-1.5 py-0.5;
     border-color: color-mix(in srgb, var(--primary) 18%, #cbd5e1);
-    background-color: color-mix(in srgb, var(--primary) 4%, white);
+    background-color: color-mix(in srgb, var(--primary) 4%, var(--status-row-mix));
   }
 
   .release-date-card-production {
     border-color: color-mix(in srgb, var(--status-production-text) 38%, #86efac);
-    background-color: color-mix(in srgb, var(--status-production-bg) 28%, white);
+    background-color: color-mix(in srgb, var(--status-production-bg) 28%, var(--status-row-mix));
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--status-production-text) 14%, transparent);
   }
 
@@ -1831,8 +1830,9 @@ body {
   }
 
   .sign-in-control {
-    @apply h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition;
+    @apply h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none transition;
     @apply placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100;
+    color: var(--foreground);
   }
 
   .sign-in-token-row {
@@ -1955,5 +1955,240 @@ body {
     border: 0;
     margin: -1px;
     padding: 0;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root,
+  .theme-sunset,
+  .theme-forest {
+    color-scheme: dark;
+    --background: #0b1220;
+    --foreground: #e8eef9;
+    --surface: #151d2e;
+    --muted: #94a3b8;
+    --border: #3d4c63;
+    --status-row-mix: #151d2e;
+    --primary: #60a5fa;
+    --status-discoped-bg: #334155;
+    --status-discoped-text: #cbd5e1;
+    --status-todo-bg: #0c4a6e;
+    --status-todo-text: #7dd3fc;
+    --status-in-progress-bg: #1e3a8a;
+    --status-in-progress-text: #93c5fd;
+    --status-blocked-bg: #7f1d1d;
+    --status-blocked-text: #fecaca;
+    --status-ready-for-review-bg: #4c1d95;
+    --status-ready-for-review-text: #ddd6fe;
+    --status-initial-review-bg: #581c87;
+    --status-initial-review-text: #e9d5ff;
+    --status-final-review-bg: #701a75;
+    --status-final-review-text: #f5d0fe;
+    --status-ready-for-testing-bg: #155e75;
+    --status-ready-for-testing-text: #a5f3fc;
+    --status-testing-bg: #115e59;
+    --status-testing-text: #99f6e4;
+    --status-pending-bug-fixes-bg: #9a3412;
+    --status-pending-bug-fixes-text: #fed7aa;
+    --status-uat-bg: #854d0e;
+    --status-uat-text: #fde68a;
+    --status-staging-bg: #312e81;
+    --status-staging-text: #c7d2fe;
+    --status-ready-for-production-bg: #3f6212;
+    --status-ready-for-production-text: #d9f99d;
+    --status-production-bg: #14532d;
+    --status-production-text: #86efac;
+    --status-closed-bg: #44403c;
+    --status-closed-text: #d6d3d1;
+    --status-cancelled-bg: #9f1239;
+    --status-cancelled-text: #fecdd3;
+    --status-default-bg: #1e293b;
+    --status-default-text: #cbd5e1;
+    --phase-be-bg: #312e81;
+    --phase-be-border: #818cf8;
+    --phase-be-text: #e0e7ff;
+    --phase-fe-bg: #713f12;
+    --phase-fe-border: #eab308;
+    --phase-fe-text: #fef08a;
+    --phase-mo-bg: #155e75;
+    --phase-mo-border: #22d3ee;
+    --phase-mo-text: #a5f3fc;
+    --phase-android-bg: #1e3a8a;
+    --phase-android-border: #3b82f6;
+    --phase-android-text: #dbeafe;
+    --phase-ios-bg: #0c4a6e;
+    --phase-ios-border: #0ea5e9;
+    --phase-ios-text: #e0f2fe;
+    --phase-int-bg: #4c1d95;
+    --phase-int-border: #8b5cf6;
+    --phase-int-text: #ddd6fe;
+    --phase-qc-bg: #14532d;
+    --phase-qc-border: #22c55e;
+    --phase-qc-text: #bbf7d0;
+    --phase-buffer-bg: #78350f;
+    --phase-buffer-border: #f59e0b;
+    --phase-buffer-text: #fde68a;
+    --color-slate-50: #1e293b;
+    --color-slate-100: #243044;
+    --color-slate-200: #334155;
+    --color-slate-300: #475569;
+    --color-slate-400: #94a3b8;
+    --color-slate-500: #94a3b8;
+    --color-slate-600: #cbd5e1;
+    --color-slate-700: #e2e8f0;
+    --color-slate-800: #f1f5f9;
+    --color-slate-900: #f8fafc;
+    --color-slate-950: #f8fafc;
+  }
+
+  .bg-white {
+    background-color: var(--surface);
+  }
+
+  .bg-white\/90,
+  .bg-white\/80,
+  .bg-white\/70,
+  .bg-white\/50,
+  .bg-white\/40 {
+    background-color: color-mix(in srgb, var(--surface) 88%, transparent);
+  }
+
+  .bg-slate-900,
+  .sign-in-primary,
+  .bg-slate-900\/50 {
+    --color-slate-50: #f8fafc;
+    --color-slate-100: #f1f5f9;
+    --color-slate-200: #e2e8f0;
+    --color-slate-800: #1e293b;
+    --color-slate-900: #0f172a;
+    --color-slate-950: #020617;
+  }
+
+  .bg-slate-900 {
+    background-color: #0f172a;
+  }
+
+  .bg-slate-900\/50 {
+    background-color: rgb(2 6 23 / 0.62);
+  }
+
+  .app-sidebar,
+  .sign-in-aside {
+    --color-slate-50: #f8fafc;
+    --color-slate-100: #f1f5f9;
+    --color-slate-200: #e2e8f0;
+    --color-slate-300: #cbd5e1;
+    --color-slate-400: #94a3b8;
+    --color-slate-500: #64748b;
+    --color-slate-800: #1e293b;
+    --color-slate-900: #0f172a;
+    --color-slate-950: #020617;
+  }
+
+  .page-card,
+  .table-shell,
+  .user-mgmt-squad-card,
+  .user-mgmt-user-card,
+  .sign-in-page,
+  .sign-in-panel,
+  .toolbar-dropdown-shell,
+  .number-stepper {
+    background-color: var(--surface);
+    border-color: var(--border);
+    color: var(--foreground);
+  }
+
+  .sign-in-main {
+    background: var(--background);
+  }
+
+  .field-input,
+  .sign-in-control,
+  .number-stepper-input,
+  .story-select-release-input,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]),
+  select,
+  textarea {
+    background-color: var(--surface);
+    color: var(--foreground);
+    border-color: var(--border);
+  }
+
+  .field-input::placeholder,
+  .sign-in-control::placeholder,
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--muted);
+  }
+
+  option {
+    background-color: var(--surface);
+    color: var(--foreground);
+  }
+
+  .squad-select {
+    color: var(--foreground);
+    border-color: var(--border);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--primary) 18%, var(--surface)),
+      var(--surface)
+    );
+  }
+
+  .squad-select-dark {
+    color: var(--sidebar-title);
+    border-color: color-mix(in srgb, var(--sidebar-title) 32%, transparent);
+    background: color-mix(in srgb, var(--sidebar-bg) 72%, #000);
+  }
+
+  .sign-in-error {
+    color: #fda4af;
+  }
+
+  .hover\:text-rose-700:hover {
+    color: #fb7185;
+  }
+
+  .table-head,
+  .table-shell thead.table-head th {
+    background-color: #243044;
+    color: #e2e8f0;
+    box-shadow: inset 0 -1px 0 0 #334155;
+  }
+
+  .user-mgmt-squad-group-title {
+    background-color: color-mix(in srgb, var(--surface) 92%, transparent);
+    color: var(--muted);
+  }
+
+  .jira-sync-banner-active {
+    border-color: #1e5a8a;
+    background-color: #0c3a5c;
+    color: #e0f2fe;
+  }
+
+  .jira-sync-banner-done {
+    border-color: #166534;
+    background-color: #14532d;
+    color: #dcfce7;
+  }
+
+  .jira-sync-banner-warning {
+    border-color: #a16207;
+    background-color: #713f12;
+    color: #fef3c7;
+  }
+
+  .jira-sync-banner-error {
+    border-color: #9f1239;
+    background-color: #881337;
+    color: #ffe4e6;
+  }
+
+  .order-input-field,
+  .order-input-btn {
+    color: #1e3a8a;
+    background-color: #dbeafe;
   }
 }

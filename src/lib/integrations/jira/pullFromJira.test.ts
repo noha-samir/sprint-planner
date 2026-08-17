@@ -9,7 +9,7 @@ import {
   syncTaskFromJira,
 } from "./pullFromJira";
 import { defaultSquadJiraConfig } from "./types";
-import { discoverFeBeSubtasks, listParentSubtasks } from "./discoverSubtasks";
+import { listParentSubtasks } from "./discoverSubtasks";
 
 vi.mock("@/lib/authz/sessionJiraCredentials", () => ({
   requireJiraApiCredentials: async () => ({
@@ -29,20 +29,18 @@ vi.mock("./client", () => ({
   },
 }));
 
-vi.mock("./discoverSubtasks", () => ({
-  listParentSubtasks: vi.fn(async () => [
-    { key: "BR-10", summary: "[FE] Pricing" },
-    { key: "BR-11", summary: "[BE] Pricing" },
-    { key: "BR-12", summary: "[MO] Pricing" },
-  ]),
-  discoverFeBeSubtasks: vi.fn(async () => ({
-    feKey: "BR-10",
-    beKey: "BR-11",
-    androidKey: "BR-12",
-  })),
-}));
+vi.mock("./discoverSubtasks", async () => {
+  const actual = await vi.importActual<typeof import("./discoverSubtasks")>("./discoverSubtasks");
+  return {
+    ...actual,
+    listParentSubtasks: vi.fn(async () => [
+      { key: "BR-10", summary: "[FE] Pricing" },
+      { key: "BR-11", summary: "[BE] Pricing" },
+      { key: "BR-12", summary: "[MO] Pricing" },
+    ]),
+  };
+});
 
-const mockedDiscoverFeBeSubtasks = vi.mocked(discoverFeBeSubtasks);
 const mockedListParentSubtasks = vi.mocked(listParentSubtasks);
 vi.mock("./credentials", async () => {
   const actual = await vi.importActual<typeof import("./credentials")>("./credentials");
@@ -200,10 +198,6 @@ describe("syncTaskFromJira", () => {
   });
 
   it("does not warn for missing Mobile when dashboard has no Android/IOS assignee", async () => {
-    mockedDiscoverFeBeSubtasks.mockResolvedValueOnce({
-      feKey: "BR-10",
-      beKey: "BR-11",
-    });
     mockedListParentSubtasks.mockResolvedValueOnce([
       { key: "BR-10", summary: "[FE] Pricing" },
       { key: "BR-11", summary: "[BE] Pricing" },
@@ -239,10 +233,6 @@ describe("syncTaskFromJira", () => {
   });
 
   it("warns for missing Mobile when dashboard already has Android/IOS assignees", async () => {
-    mockedDiscoverFeBeSubtasks.mockResolvedValueOnce({
-      feKey: "BR-10",
-      beKey: "BR-11",
-    });
     mockedListParentSubtasks.mockResolvedValueOnce([
       { key: "BR-10", summary: "[FE] Pricing" },
       { key: "BR-11", summary: "[BE] Pricing" },
@@ -280,7 +270,6 @@ describe("syncTaskFromJira", () => {
   });
 
   it("still warns for missing FE/BE even with empty dashboard assignees", async () => {
-    mockedDiscoverFeBeSubtasks.mockResolvedValueOnce({});
     mockedListParentSubtasks.mockResolvedValueOnce([]);
 
     const fetchMock = vi.fn(async (url: string) => {
@@ -299,6 +288,132 @@ describe("syncTaskFromJira", () => {
     expect(result.warnings).toContain("No [BE] subtask found under the Jira story");
     expect(result.warnings).not.toContain("No [Android] (or legacy [MO]) subtask found under the Jira story");
     expect(result.warnings).not.toContain("No [IOS] subtask found under the Jira story");
+    vi.unstubAllGlobals();
+  });
+
+  it("pulls every [BE] subtask and sums hours across assignees", async () => {
+    mockedListParentSubtasks.mockResolvedValueOnce([
+      { key: "BR-10", summary: "[FE] Pricing" },
+      { key: "BR-11", summary: "[BE] Pricing — Abbas" },
+      { key: "BR-13", summary: "[BE] Pricing — kholaey" },
+      { key: "BR-14", summary: "[BE] Pricing — extra" },
+    ]);
+
+    const config = defaultSquadJiraConfig();
+    config.assigneeMap = {
+      Casey: "acc-fe",
+      Abbas: "acc-be-1",
+      kholaey: "acc-be-2",
+      Morgan: "acc-be-3",
+    };
+
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/issue/BR-1?")) {
+        return {
+          ok: true,
+          json: async () => ({ fields: { status: { name: "In Progress" } } }),
+        };
+      }
+      if (url.includes("/issue/BR-10?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            fields: {
+              assignee: { accountId: "acc-fe", displayName: "Casey" },
+              timetracking: { originalEstimateSeconds: 7200 },
+            },
+          }),
+        };
+      }
+      if (url.includes("/issue/BR-11?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            fields: {
+              assignee: { accountId: "acc-be-1", displayName: "Abbas" },
+              timetracking: { originalEstimateSeconds: 14400 },
+            },
+          }),
+        };
+      }
+      if (url.includes("/issue/BR-13?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            fields: {
+              assignee: { accountId: "acc-be-2", displayName: "kholaey" },
+              timetracking: { originalEstimateSeconds: 10800 },
+            },
+          }),
+        };
+      }
+      if (url.includes("/issue/BR-14?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            fields: {
+              assignee: { accountId: "acc-be-3", displayName: "Morgan" },
+              timetracking: { originalEstimateSeconds: 3600 },
+            },
+          }),
+        };
+      }
+      return { ok: false, text: async () => "missing" };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await syncTaskFromJira(baseTask(), config, [
+      { name: "Casey" },
+      { name: "Abbas" },
+      { name: "kholaey" },
+      { name: "Morgan" },
+    ]);
+
+    expect(result.patch.feHours).toBe(2);
+    expect(result.patch.feDevs).toEqual(["Casey"]);
+    expect(result.patch.beHours).toBe(8);
+    expect(result.patch.beDevs).toEqual(["Abbas", "kholaey", "Morgan"]);
+    expect(result.jira.subtasks.filter((row) => row.role === "be")).toHaveLength(3);
+    expect(result.warnings.some((warning) => /keeps one|extra/i.test(warning))).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps other subtasks when one BE child fetch fails", async () => {
+    mockedListParentSubtasks.mockResolvedValueOnce([
+      { key: "BR-11", summary: "[BE] Pricing — Abbas" },
+      { key: "BR-13", summary: "[BE] Pricing — kholaey" },
+    ]);
+
+    const config = defaultSquadJiraConfig();
+    config.assigneeMap = { Abbas: "acc-be-1", kholaey: "acc-be-2" };
+
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/issue/BR-1?")) {
+        return {
+          ok: true,
+          json: async () => ({ fields: { status: { name: "To Do" } } }),
+        };
+      }
+      if (url.includes("/issue/BR-11?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            fields: {
+              assignee: { accountId: "acc-be-1", displayName: "Abbas" },
+              timetracking: { originalEstimateSeconds: 14400 },
+            },
+          }),
+        };
+      }
+      return { ok: false, text: async () => "gone" };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await syncTaskFromJira(baseTask(), config, [{ name: "Abbas" }, { name: "kholaey" }]);
+    expect(result.patch.beDevs).toEqual(["Abbas"]);
+    expect(result.patch.beHours).toBe(4);
+    expect(result.jira.subtasks).toHaveLength(1);
+    expect(result.warnings.some((warning) => warning.includes("BR-13"))).toBe(true);
     vi.unstubAllGlobals();
   });
 });
@@ -322,6 +437,13 @@ describe("formatBulkPull messages", () => {
   it("explains left-out and Discoped", () => {
     expect(formatBulkPullConfirmMessage(2, 4, 1)).toContain("Pull 2 stories from Jira?");
     expect(formatBulkPullConfirmMessage(2, 4, 1)).toContain("Discoped");
+    expect(formatBulkPullConfirmMessage(0, 0, 0, 3)).toContain("not on the dashboard");
+  });
+
+  it("mentions EM stories to add alongside a dashboard pull", () => {
+    const message = formatBulkPullConfirmMessage(2, 2, 0, 3);
+    expect(message).toContain("Pull 2 stories from Jira?");
+    expect(message).toContain("Also add 3 stories under this EM");
   });
 
   it("summarizes pull results", () => {

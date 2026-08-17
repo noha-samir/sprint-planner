@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import type { AccessRegistry, Squad, UserAccount } from "@/lib/access/registry";
 import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
+import { userMatchesSquadFilter, type UserSquadFilter } from "@/lib/access/userManagementScope";
 import { getSquadIcon } from "@/lib/ui/squadIcon";
 import { usePlannerStore } from "@/store/usePlannerStore";
 
@@ -97,6 +98,7 @@ export default function UserManagementPage() {
   const [savedSquads, setSavedSquads] = useState<DraftSquad[]>([]);
   const [squads, setSquads] = useState<DraftSquad[]>([]);
   const [users, setUsers] = useState<DraftUser[]>([]);
+  const [userSquadFilter, setUserSquadFilter] = useState<UserSquadFilter>("all");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -251,6 +253,23 @@ export default function UserManagementPage() {
     return map;
   }, [squads]);
 
+  const displayedUsers = useMemo(() => {
+    return users.filter((user) => {
+      if (!canManageUsers && caps && user.savedEmail) {
+        const inOwnSquads = squads.some(
+          (squad) =>
+            caps.canAccessSquad(squad.id) && userMatchesSquadFilter(user, squad.id, savedRegistry),
+        );
+        if (!inOwnSquads) {
+          return false;
+        }
+      }
+      return userMatchesSquadFilter(user, userSquadFilter, savedRegistry);
+    });
+  }, [users, canManageUsers, caps, squads, savedRegistry, userSquadFilter]);
+
+  const showUserSquadFilter = canManageUsers || visibleSquadIds.length > 1;
+
   const updateSquad = (squadId: string, patch: Partial<DraftSquad>) => {
     setSquads((current) => current.map((item) => (item.id === squadId ? { ...item, ...patch } : item)));
     setStatusMessage(null);
@@ -262,6 +281,13 @@ export default function UserManagementPage() {
     );
     setStatusMessage(null);
   };
+
+  useEffect(() => {
+    if (userSquadFilter === "all") return;
+    if (!squads.some((squad) => squad.id === userSquadFilter)) {
+      setUserSquadFilter("all");
+    }
+  }, [squads, userSquadFilter]);
 
   const saveSquad = async (squadId: string) => {
     const squad = squads.find((item) => item.id === squadId);
@@ -791,7 +817,35 @@ export default function UserManagementPage() {
             <div className="min-w-0">
               <h2 className="text-base font-semibold text-slate-900">Users</h2>
             </div>
-            {canManageUsers ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {showUserSquadFilter ? (
+                <label className="flex min-w-[11rem] items-center gap-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                    Squad
+                  </span>
+                  <div className="squad-select-shell min-w-0 flex-1">
+                    <select
+                      className="squad-select py-1 text-[13px]"
+                      value={userSquadFilter}
+                      aria-label="Filter users by squad"
+                      onChange={(event) =>
+                        setUserSquadFilter((event.target.value || "all") as UserSquadFilter)
+                      }
+                    >
+                      <option value="all">{canManageUsers ? "All squads" : "My squads"}</option>
+                      {squads
+                        .filter((squad) => !squad.hidden || squad.id === userSquadFilter)
+                        .map((squad) => (
+                          <option key={squad.id} value={squad.id}>
+                            {squadLabelById.get(squad.id) ?? squad.id}
+                            {squad.hidden ? " (hidden)" : ""}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </label>
+              ) : null}
+              {canManageUsers ? (
             <button
               type="button"
               className="btn-secondary px-3 py-1.5 text-xs"
@@ -803,7 +857,7 @@ export default function UserManagementPage() {
                     savedEmail: null,
                     email: "",
                     role: "reviewer",
-                    squadId: null,
+                    squadId: userSquadFilter === "all" ? null : userSquadFilter,
                   },
                 ]);
                 setStatusMessage({ tone: "info", text: "New user added — fill details, then Save on that card." });
@@ -812,15 +866,18 @@ export default function UserManagementPage() {
               Add user
             </button>
             ) : null}
+            </div>
           </div>
 
           <div className="user-mgmt-user-list">
-            {users.length === 0 ? (
+            {displayedUsers.length === 0 ? (
               <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                No users yet. Add someone to assign a role and squad.
+                {users.length === 0
+                  ? "No users yet. Add someone to assign a role and squad."
+                  : "No users in this squad."}
               </p>
             ) : null}
-            {users.map((user) => {
+            {displayedUsers.map((user) => {
               const dirty = isUserDirty(user);
               const busy = busyKey === `user-save-${user.draftId}` || busyKey === `user-delete-${user.draftId}`;
               return (

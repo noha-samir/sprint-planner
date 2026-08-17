@@ -15,6 +15,10 @@ describe("splitHoursAcrossAssignees", () => {
   it("returns empty array when no assignees", () => {
     expect(splitHoursAcrossAssignees(8, 0)).toEqual([]);
   });
+
+  it("puts the remainder on the last assignee", () => {
+    expect(splitHoursAcrossAssignees(10, 3)).toEqual([3.33, 3.33, 3.34]);
+  });
 });
 
 describe("formatJiraTimeEstimate", () => {

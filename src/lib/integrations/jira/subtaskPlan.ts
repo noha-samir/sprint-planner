@@ -1,5 +1,6 @@
 import type { Task } from "@/lib/scheduler/types";
 import { effectiveIosHours, effectiveMobileHours, mobileAppLabel } from "@/lib/scheduler/mobilePlatform";
+import { splitHoursAcrossAssignees } from "./hours";
 import type { JiraSubtaskRole, PlannedJiraSubtask, PlannedJiraParentUpdate, SquadJiraConfig, TaskJiraMeta } from "./types";
 import { buildBranchName } from "./parentFields";
 
@@ -17,30 +18,52 @@ const resolveAccountId = (config: SquadJiraConfig, assigneeName: string): string
   return mapped || null;
 };
 
-const primaryAssignee = (assignees: string[] | undefined): string | null => {
-  const first = (assignees ?? []).find((name) => name.trim().length > 0);
-  return first?.trim() ?? null;
+const namedAssignees = (assignees: string[] | undefined): string[] => {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const raw of assignees ?? []) {
+    const name = raw.trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+  }
+  return names;
 };
+
+const primaryAssignee = (assignees: string[] | undefined): string | null =>
+  namedAssignees(assignees)[0] ?? null;
 
 const storyTitle = (task: Task): string => task.storyName.trim() || "Story";
 
 const findExistingSubtaskKey = (
   jiraMeta: TaskJiraMeta | undefined,
   role: JiraSubtaskRole,
-): string | undefined => jiraMeta?.subtasks.find((item) => item.role === role)?.key;
+  assigneeName: string,
+  usedKeys: Set<string>,
+): string | undefined => {
+  const rows = jiraMeta?.subtasks.filter((item) => item.role === role) ?? [];
+  const byAssignee = rows.find(
+    (item) => item.assigneeName.trim() === assigneeName && item.key && !usedKeys.has(item.key),
+  );
+  if (byAssignee?.key) {
+    return byAssignee.key;
+  }
+  return rows.find((item) => item.key && !usedKeys.has(item.key))?.key;
+};
 
 const roleLabel = (role: JiraSubtaskRole) => ROLE_SUMMARY_LABEL[role];
 
-const mobileRoleSummary = (role: JiraSubtaskRole, task: Task): string => {
-  const label = roleLabel(role);
-  if (role !== "android" && role !== "ios") {
-    return `[${label}] ${storyTitle(task)}`;
+const roleSummary = (role: JiraSubtaskRole, task: Task, assigneeName: string, assigneeCount: number): string => {
+  const title = storyTitle(task);
+  const app = role === "android" || role === "ios" ? mobileAppLabel(task.mobileApp) : "";
+  const withApp = app ? `[${roleLabel(role)}] [${app}] ${title}` : `[${roleLabel(role)}] ${title}`;
+  if (assigneeCount <= 1) {
+    return withApp;
   }
-  const app = mobileAppLabel(task.mobileApp);
-  return app ? `[${label}] [${app}] ${storyTitle(task)}` : `[${label}] ${storyTitle(task)}`;
+  return `${withApp} — ${assigneeName}`;
 };
 
-const pushDevSubtask = (
+const pushDevSubtasks = (
   rows: PlannedJiraSubtask[],
   task: Task,
   config: SquadJiraConfig,
@@ -49,18 +72,25 @@ const pushDevSubtask = (
   assignees: string[],
   hours: number,
 ) => {
-  const assigneeName = primaryAssignee(assignees);
-  // Hours without a person are reported as plan errors — no subtask row.
-  if (!assigneeName) {
+  const names = namedAssignees(assignees);
+  if (names.length === 0) {
     return;
   }
-  rows.push({
-    role,
-    assigneeName,
-    jiraAccountId: resolveAccountId(config, assigneeName),
-    hours: Math.max(0, hours),
-    summary: mobileRoleSummary(role, task),
-    existingKey: findExistingSubtaskKey(jiraMeta, role),
+  const hourChunks = splitHoursAcrossAssignees(Math.max(0, hours), names.length);
+  const usedKeys = new Set<string>();
+  names.forEach((assigneeName, index) => {
+    const existingKey = findExistingSubtaskKey(jiraMeta, role, assigneeName, usedKeys);
+    if (existingKey) {
+      usedKeys.add(existingKey);
+    }
+    rows.push({
+      role,
+      assigneeName,
+      jiraAccountId: resolveAccountId(config, assigneeName),
+      hours: hourChunks[index] ?? 0,
+      summary: roleSummary(role, task, assigneeName, names.length),
+      existingKey,
+    });
   });
 };
 
@@ -75,11 +105,11 @@ export const buildSubtaskPlan = (
   jiraMeta?: TaskJiraMeta,
 ): PlannedJiraSubtask[] => {
   const rows: PlannedJiraSubtask[] = [];
-  pushDevSubtask(rows, task, config, jiraMeta, "fe", task.feDevs, task.feHours);
-  pushDevSubtask(rows, task, config, jiraMeta, "be", task.beDevs, task.beHours);
-  pushDevSubtask(rows, task, config, jiraMeta, "android", task.androidDevs ?? [], task.androidHours ?? 0);
+  pushDevSubtasks(rows, task, config, jiraMeta, "fe", task.feDevs, task.feHours);
+  pushDevSubtasks(rows, task, config, jiraMeta, "be", task.beDevs, task.beHours);
+  pushDevSubtasks(rows, task, config, jiraMeta, "android", task.androidDevs ?? [], task.androidHours ?? 0);
   if (task.needsIos) {
-    pushDevSubtask(rows, task, config, jiraMeta, "ios", task.iosDevs ?? [], task.iosHours ?? 0);
+    pushDevSubtasks(rows, task, config, jiraMeta, "ios", task.iosDevs ?? [], task.iosHours ?? 0);
   }
   return rows;
 };

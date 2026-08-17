@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { format } from "date-fns";
 import { useSession } from "next-auth/react";
@@ -14,6 +14,7 @@ import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
 import { isJiraStoryLink, buildJiraIssueBrowseUrl, parseJiraIssueKey } from "@/lib/integrations/jira/issueKey";
 import { safeStoryHref } from "@/lib/ui/safeStoryHref";
 import { isTaskEligibleForJiraPull, isTaskEligibleForJiraSync, resolveTaskForJiraSync } from "@/lib/integrations/jira/syncEligibility";
+import { JIRA_SYNC_ADDED_TAG } from "@/lib/integrations/jira/jiraSyncTag";
 import { formatBulkSyncConfirmMessage, formatBulkSyncSummary, bulkSyncHasPartialWarnings, type BulkSyncTaskResult } from "@/lib/integrations/jira/bulkSyncMessages";
 import {
   formatBulkPullConfirmMessage,
@@ -52,6 +53,7 @@ import { activeSprintTasks } from "@/store/taskRules";
 import { taskStatuses, usePlannerStore } from "@/store/usePlannerStore";
 import { useJiraSyncStore } from "@/store/useJiraSyncStore";
 import {
+  DEFAULT_TASK_STATUS,
   isDiscopedTaskStatus,
   isExcludedFromSchedule,
   isHiddenByDefaultStatusFilter,
@@ -178,6 +180,7 @@ export function TaskTable() {
   const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false);
   const linkInputsRef = useRef<Record<string, HTMLInputElement | null>>({});
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const sprintFilterRef = useRef<HTMLDivElement | null>(null);
   const statusFilterRef = useRef<HTMLDivElement | null>(null);
   const jiraSyncActive = useJiraSyncStore((state) => state.active);
@@ -199,7 +202,10 @@ export function TaskTable() {
   const [mobileOptionsPos, setMobileOptionsPos] = useState({ top: 0, left: 0, width: 260 });
   const [storyFieldsOpen, setStoryFieldsOpen] = useState<{ taskId: string; trigger: HTMLElement } | null>(null);
   const [storyFieldsDraft, setStoryFieldsDraft] = useState({ storyName: "", storyLink: "" });
-  const storyFieldsMenuRef = useRef<HTMLDivElement | null>(null);
+  const storyFieldsDraftRef = useRef(storyFieldsDraft);
+  storyFieldsDraftRef.current = storyFieldsDraft;
+  const [focusTaskId, setFocusTaskId] = useState<string | null>(null);
+  const storyFieldsMenuRef = useRef<HTMLFormElement | null>(null);
   const [storyFieldsMenuPos, setStoryFieldsMenuPos] = useState({ top: 0, left: 0, width: 248 });
   const [isBulkStoryMenuOpen, setIsBulkStoryMenuOpen] = useState(false);
   const bulkStoryMenuRef = useRef<HTMLDivElement | null>(null);
@@ -405,6 +411,31 @@ export function TaskTable() {
     return () => document.removeEventListener("mousedown", onPointerDown);
   }, [isBulkStoryMenuOpen]);
 
+  const commitOpenStoryFields = useCallback(
+    (close: boolean) => {
+      const openId = storyFieldsOpen?.taskId;
+      if (!openId) return;
+      const task = usePlannerStore.getState().tasks.find((item) => item.id === openId);
+      const draft = storyFieldsDraftRef.current;
+      if (task) {
+        const patch: Partial<Task> = {};
+        if ((task.storyName ?? "") !== draft.storyName) {
+          patch.storyName = draft.storyName;
+        }
+        if (task.storyLink !== draft.storyLink) {
+          patch.storyLink = draft.storyLink;
+        }
+        if (Object.keys(patch).length > 0) {
+          updateTask(task.id, patch);
+        }
+      }
+      if (close) {
+        setStoryFieldsOpen(null);
+      }
+    },
+    [storyFieldsOpen, updateTask],
+  );
+
   useEffect(() => {
     if (!storyFieldsOpen) return;
     const onPointerDown = (event: MouseEvent) => {
@@ -415,11 +446,20 @@ export function TaskTable() {
       if (storyFieldsOpen.trigger?.isConnected && storyFieldsOpen.trigger.contains(target)) {
         return;
       }
-      setStoryFieldsOpen(null);
+      commitOpenStoryFields(true);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setStoryFieldsOpen(null);
+      }
     };
     document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [storyFieldsOpen]);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [storyFieldsOpen, commitOpenStoryFields]);
 
   useEffect(() => {
     if (!storyFieldsOpen?.trigger) {
@@ -732,33 +772,115 @@ export function TaskTable() {
       const eligibleTasks = selectedTasksForSync.filter(isTaskEligibleForJiraPull);
       const discopedTasks = selectedTasksForSync.filter((task) => isDiscopedTaskStatus(task.status));
 
-      if (selectedTasksForSync.length === 0) {
-        window.alert("Select one or more stories to pull from Jira.");
-        return;
+      let missingStories: Array<{ key: string; summary: string; storyLink: string }> = [];
+      let discoverWarning: string | null = null;
+      try {
+        const dashboardTasks = usePlannerStore.getState().tasks;
+        const response = await fetch("/api/integrations/jira/tasks/discover-em", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-squad-id": activeSquadId,
+          },
+          body: JSON.stringify({
+            existingStoryLinks: dashboardTasks.map((task) => task.storyLink),
+          }),
+        });
+        const body = (await response.json()) as {
+          error?: string;
+          stories?: Array<{ key: string; summary: string; storyLink: string }>;
+          warning?: string | null;
+          truncated?: boolean;
+        };
+        if (!response.ok) {
+          if (eligibleTasks.length === 0) {
+            window.alert(body.error ?? "Failed to search Jira for EM stories.");
+            return;
+          }
+          discoverWarning = body.error ?? "Could not search Jira for missing EM stories.";
+        } else {
+          missingStories = body.stories ?? [];
+          discoverWarning = body.warning ?? null;
+          if (body.truncated) {
+            discoverWarning = [discoverWarning, "Jira returned more than 200 matching stories — imported the first 200."]
+              .filter(Boolean)
+              .join(" ");
+          }
+        }
+      } catch {
+        if (eligibleTasks.length === 0) {
+          window.alert("Failed to search Jira for EM stories.");
+          return;
+        }
+        discoverWarning = "Could not search Jira for missing EM stories.";
       }
-      if (eligibleTasks.length === 0) {
+
+      if (eligibleTasks.length === 0 && missingStories.length === 0) {
         window.alert(
           discopedTasks.length > 0
             ? "Discoped stories are not synced from Jira."
-            : "No selected stories with a Jira link to pull.",
+            : discoverWarning ||
+                (selectedTasksForSync.length > 0
+                  ? "No selected stories with a Jira link to pull."
+                  : "No Jira stories under this EM are missing from the dashboard."),
         );
         return;
       }
       if (
         !window.confirm(
-          formatBulkPullConfirmMessage(
-            eligibleTasks.length,
-            selectedTasksForSync.length,
-            discopedTasks.length,
-          ),
+          [
+            formatBulkPullConfirmMessage(
+              eligibleTasks.length,
+              selectedTasksForSync.length,
+              discopedTasks.length,
+              missingStories.length,
+            ),
+            discoverWarning,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
         )
       ) {
         return;
       }
 
+      if (missingStories.length > 0) {
+        if (!visibleStatuses.includes(DEFAULT_TASK_STATUS)) {
+          setVisibleStatuses((current) => [...current, DEFAULT_TASK_STATUS]);
+        }
+        if (sprintFilter === "nextSprint") {
+          setSprintFilter("currentSprint");
+        }
+        const newIds = addTasks(
+          missingStories.map((story) => ({
+            storyName: story.summary,
+            storyLink: story.storyLink,
+            beDevs: [],
+            feDevs: [],
+            androidDevs: [],
+            iosDevs: [],
+            qcs: [],
+            productManagers: [],
+            tags: [JIRA_SYNC_ADDED_TAG],
+            warnings: [],
+            isValid: true,
+          })),
+        );
+        if (newIds[0]) {
+          setFocusTaskId(newIds[0]);
+        }
+      }
+
+      const importedTasks = missingStories
+        .map((story) =>
+          usePlannerStore.getState().tasks.find((task) => parseJiraIssueKey(task.storyLink) === story.key),
+        )
+        .filter((task): task is Task => task != null && isTaskEligibleForJiraPull(task));
+      const tasksToPull = [...eligibleTasks, ...importedTasks];
+
       startJiraSync({
         mode: "pull",
-        tasks: eligibleTasks.map((task) => ({ taskId: task.id, storyName: storyLabelForSync(task) })),
+        tasks: tasksToPull.map((task) => ({ taskId: task.id, storyName: storyLabelForSync(task) })),
       });
 
       const results: BulkPullTaskResult[] = [];
@@ -766,7 +888,7 @@ export function TaskTable() {
       let failed = 0;
       const plannerPeople = plannerPeopleForJira();
 
-      for (const task of eligibleTasks) {
+      for (const task of tasksToPull) {
         markJiraRunning(task.id);
         try {
           const response = await fetch(`/api/integrations/jira/tasks/${encodeURIComponent(task.id)}/pull`, {
@@ -821,13 +943,19 @@ export function TaskTable() {
         }
       }
 
-      const summary = formatBulkPullSummary({
+      const importedLine =
+        missingStories.length > 0
+          ? `Added ${missingStories.length === 1 ? "1 story" : `${missingStories.length} stories`} from Jira that ${missingStories.length === 1 ? "was" : "were"} not on the dashboard.`
+          : "";
+      const summary = [importedLine, formatBulkPullSummary({
         results,
         synced,
         failed,
         skipped: Math.max(0, selectedTasksForSync.length - eligibleTasks.length),
-      });
-      if (synced > 0) {
+      })]
+        .filter(Boolean)
+        .join("\n\n");
+      if (synced > 0 || missingStories.length > 0) {
         setJiraSyncPhase("saving");
         const saved = await flushPlannerStateToServer(activeSquadId);
         if (!saved) {
@@ -843,7 +971,7 @@ export function TaskTable() {
         isError: failed > 0,
         isWarning:
           failed === 0 &&
-          results.some((row) => (row.warnings?.length ?? 0) > 0),
+          (Boolean(discoverWarning) || results.some((row) => (row.warnings?.length ?? 0) > 0)),
       });
     });
   };
@@ -866,6 +994,17 @@ export function TaskTable() {
     return sortTasksForDashboard(filtered, releaseDateById, pinnedOrder);
   }, [tasks, safeResult.tasks, visibleStatuses, sprintFilter, isUatTrackingEnabled, plannerMeta.dashboardTaskOrder]);
 
+  useEffect(() => {
+    if (!focusTaskId) return;
+    if (!orderedTasks.some((task) => task.id === focusTaskId)) return;
+    const row = tableScrollRef.current?.querySelector(`[data-task-id="${CSS.escape(focusTaskId)}"]`);
+    if (row instanceof HTMLElement) {
+      row.scrollIntoView({ block: "center", behavior: "smooth", inline: "nearest" });
+    }
+    const timer = window.setTimeout(() => setFocusTaskId(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [focusTaskId, orderedTasks]);
+
   const releaseGroupColorMap = useMemo(
     () => buildReleaseGroupColorMap(orderedTasks.map((task) => task.releaseGroup)),
     // eslint-disable-next-line react-hooks/preserve-manual-memoization -- orderedTasks is derived each render
@@ -885,10 +1024,6 @@ export function TaskTable() {
   );
   const selectedJiraPushEligibleCount = useMemo(
     () => selectedTasks.filter((task) => isTaskEligibleForJiraSync(task)).length,
-    [selectedTasks],
-  );
-  const selectedJiraPullEligibleCount = useMemo(
-    () => selectedTasks.filter((task) => isTaskEligibleForJiraPull(task)).length,
     [selectedTasks],
   );
 
@@ -1388,7 +1523,21 @@ export function TaskTable() {
               Bulk Insertion
             </button>
           ) : null}
-          <button type="button" className="btn-primary" disabled={!isEditor} onClick={addTask}>
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={!isEditor}
+            onClick={() => {
+              if (!visibleStatuses.includes(DEFAULT_TASK_STATUS)) {
+                setVisibleStatuses((current) => [...current, DEFAULT_TASK_STATUS]);
+              }
+              if (sprintFilter === "nextSprint") {
+                setSprintFilter("currentSprint");
+              }
+              const id = addTask();
+              setFocusTaskId(id);
+            }}
+          >
             Add Task
           </button>
         </div>
@@ -1447,7 +1596,7 @@ export function TaskTable() {
           </button>
         </div>
       ) : null}
-      <div className="table-shell task-table-scroll">
+      <div ref={tableScrollRef} className="table-shell task-table-scroll">
         <table className="task-table-fit text-[13px]">
           <thead className="table-head">
               <tr>
@@ -1572,14 +1721,8 @@ export function TaskTable() {
                                 type="button"
                                 role="menuitem"
                                 className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-sky-900 hover:bg-sky-50 disabled:opacity-45"
-                                disabled={visibleSelectedCount === 0 || jiraSyncInProgress || selectedJiraPullEligibleCount === 0}
-                                title={
-                                  visibleSelectedCount === 0
-                                    ? "Select stories first"
-                                    : selectedJiraPullEligibleCount === 0
-                                      ? "No selected stories with a Jira link to pull"
-                                      : `Pull ${selectedJiraPullEligibleCount} selected ${selectedJiraPullEligibleCount === 1 ? "story" : "stories"} from Jira`
-                                }
+                                disabled={jiraSyncInProgress}
+                                title="Pull selected stories and add Jira stories under this EM that are not on the dashboard"
                                 onClick={bulkPullFromJira}
                               >
                                 <span className="jira-sync-glyph jira-sync-glyph-pull" aria-hidden>
@@ -1756,7 +1899,8 @@ export function TaskTable() {
               return (
                 <tr
                   key={task.id}
-                  className={`task-row border-t border-slate-200 ${statusRowClass(task.status)}${needsMarkProgress ? " task-row-pending-mark-progress" : ""}`}
+                  data-task-id={task.id}
+                  className={`task-row border-t border-slate-200 ${statusRowClass(task.status)}${needsMarkProgress ? " task-row-pending-mark-progress" : ""}${focusTaskId === task.id ? " task-row-focus" : ""}`}
                 >
                   <td className="story-select-col">
                       <div className="story-select-cell-stack">
@@ -3290,10 +3434,9 @@ export function TaskTable() {
       ) : null}
       {storyFieldsOpen && storyFieldsTask && typeof document !== "undefined"
         ? createPortal(
-            <div
+            <form
               ref={storyFieldsMenuRef}
               className="story-fields-menu-panel story-fields-menu-panel-portal"
-              role="group"
               aria-label="Story name and link"
               style={{
                 position: "fixed",
@@ -3301,6 +3444,10 @@ export function TaskTable() {
                 left: storyFieldsMenuPos.left,
                 width: storyFieldsMenuPos.width,
                 zIndex: 1000,
+              }}
+              onSubmit={(event) => {
+                event.preventDefault();
+                commitOpenStoryFields(true);
               }}
             >
               <label className="story-fields-field">
@@ -3314,11 +3461,6 @@ export function TaskTable() {
                   onChange={(event) =>
                     setStoryFieldsDraft((current) => ({ ...current, storyName: event.target.value }))
                   }
-                  onBlur={() => {
-                    if ((storyFieldsTask.storyName ?? "") !== storyFieldsDraft.storyName) {
-                      updateTask(storyFieldsTask.id, { storyName: storyFieldsDraft.storyName });
-                    }
-                  }}
                   autoFocus
                 />
               </label>
@@ -3336,14 +3478,23 @@ export function TaskTable() {
                   onChange={(event) =>
                     setStoryFieldsDraft((current) => ({ ...current, storyLink: event.target.value }))
                   }
-                  onBlur={() => {
-                    if (storyFieldsTask.storyLink !== storyFieldsDraft.storyLink) {
-                      updateTask(storyFieldsTask.id, { storyLink: storyFieldsDraft.storyLink });
-                    }
-                  }}
                 />
               </label>
-            </div>,
+              {isEditor ? (
+                <div className="flex justify-end gap-1.5 pt-0.5">
+                  <button
+                    type="button"
+                    className="rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+                    onClick={() => setStoryFieldsOpen(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn-primary px-2.5 py-1 text-[11px]">
+                    Save
+                  </button>
+                </div>
+              ) : null}
+            </form>,
             document.body,
           )
         : null}

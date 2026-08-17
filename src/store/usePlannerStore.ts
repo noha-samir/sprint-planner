@@ -55,7 +55,11 @@ import {
   isReleasedTaskStatus,
   normalizeTaskStatus,
 } from "@/lib/scheduler/taskStatus";
-import { mergeIncomingTasksWithCurrent, normalizeReplanStep } from "./replanMerge";
+import {
+  mergeIncomingTasksWithCurrent,
+  normalizeReplanStep,
+  shouldSkipIncomingPlannerSnapshot,
+} from "./replanMerge";
 
 export { activeSprintTasks } from "./taskRules";
 
@@ -74,8 +78,8 @@ interface PlannerState {
   result: ScheduleResult;
   remainingUtilization: ResourceUtilization[];
   sprintUtilization: SprintTaskUtilization;
-  addTask: () => void;
-  addTasks: (drafts: BulkPasteRow[]) => void;
+  addTask: () => string;
+  addTasks: (drafts: BulkPasteRow[]) => string[];
   updateTask: (id: string, patch: Partial<Task>) => void;
   removeTask: (id: string) => void;
   addResource: (type: Resource["type"]) => void;
@@ -544,12 +548,13 @@ export const usePlannerStore = create<PlannerState>()(
           ...buildWithPlannerMeta([...tasks, newTask], resources, config, plannerMeta),
           ...touchMutation(),
         });
+        return newTask.id;
       },
       addTasks: (drafts) => {
         const { tasks, resources, config, plannerMeta } = get();
         const validDrafts = drafts.filter((draft) => draft.isValid);
         if (validDrafts.length === 0) {
-          return;
+          return [];
         }
 
         const newTasks = validDrafts.map((draft) =>
@@ -571,6 +576,7 @@ export const usePlannerStore = create<PlannerState>()(
             mobileApp: draft.mobileApp ?? "none",
             moStartDate: draft.moStartDate ?? null,
             qcHours: draft.qcHours ?? 0,
+            tags: Array.isArray(draft.tags) ? [...new Set(draft.tags.map((tag) => tag.trim()).filter(Boolean))] : [],
           }),
         );
 
@@ -584,6 +590,7 @@ export const usePlannerStore = create<PlannerState>()(
           ),
           ...touchMutation(),
         });
+        return newTasks.map((task) => task.id);
       },
       updateTask: (id, patch) => {
         const { tasks, resources, config, plannerMeta, result: currentResult } = get();
@@ -850,17 +857,19 @@ export const usePlannerStore = create<PlannerState>()(
         const serverUpdatedAt =
           typeof data.serverUpdatedAt === "string" ? data.serverUpdatedAt : null;
         if (
-          localMutationAt &&
-          serverUpdatedAt &&
-          Number.isFinite(Date.parse(localMutationAt)) &&
-          Number.isFinite(Date.parse(serverUpdatedAt)) &&
-          Date.parse(localMutationAt) > Date.parse(serverUpdatedAt)
+          shouldSkipIncomingPlannerSnapshot({
+            incomingUpdatedAt: serverUpdatedAt,
+            localMutationAt,
+            knownServerUpdatedAt: get().lastServerUpdatedAt,
+          })
         ) {
-          // Local pull/edits are newer than the server file — keep local and let sync flush.
+          // Stale GET or unsynced local edits — keep the in-memory board (including new rows).
           return;
         }
         const mergedMeta = mergePlannerMetaPatch(data.plannerMeta);
-        const mergedTasks = mergeIncomingTasksWithCurrent(data.tasks, get().tasks);
+        const mergedTasks = mergeIncomingTasksWithCurrent(data.tasks, get().tasks, {
+          keepLocalOnly: Boolean(localMutationAt),
+        });
         const normalizedConfig = normalizeConfig(data.config);
         const built = buildState(
           mergedTasks.map((t) => normalizeTask(t)),
@@ -872,8 +881,8 @@ export const usePlannerStore = create<PlannerState>()(
           ...finalized,
           timelineStartDate:
             typeof data.timelineStartDate === "string" ? data.timelineStartDate : null,
-          lastLocalMutationAt: null,
-          lastServerUpdatedAt: serverUpdatedAt,
+          lastLocalMutationAt: localMutationAt,
+          lastServerUpdatedAt: serverUpdatedAt ?? get().lastServerUpdatedAt,
         });
       },
       markProgressNow: () => {

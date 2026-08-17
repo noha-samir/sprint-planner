@@ -7,7 +7,8 @@ import {
 } from "./client";
 import { requireJiraApiCredentials } from "@/lib/authz/sessionJiraCredentials";
 import {
-  discoverFeBeSubtasks,
+  listParentSubtasks,
+  matchAllRoleSubtasksFromSummaries,
   mergeDiscoveredIntoJiraMeta,
 } from "./discoverSubtasks";
 import { isJiraStoryLink, parseJiraIssueKey, projectKeyFromIssueKey } from "./issueKey";
@@ -64,12 +65,8 @@ export const syncTaskToJira = async (
   }
 
   const credentials = await requireJiraApiCredentials();
-  const discovered = await discoverFeBeSubtasks(
-    credentials,
-    parentIssueKey,
-    task.storyName,
-    task.jira,
-  );
+  const children = await listParentSubtasks(credentials, parentIssueKey);
+  const discovered = matchAllRoleSubtasksFromSummaries(children);
   const jiraMeta = mergeDiscoveredIntoJiraMeta(parentIssueKey, task, task.jira, discovered);
 
   const plan = buildSubtaskPlan(task, squadConfig, jiraMeta);

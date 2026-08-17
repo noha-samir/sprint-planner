@@ -30,7 +30,9 @@ export const flushPlannerStateToServer = async (squadId: string | null | undefin
     }
     if (!response.ok) return false;
     const body = (await response.json().catch(() => null)) as { updatedAt?: string } | null;
-    usePlannerStore.getState().markPlannerSyncedToServer(body?.updatedAt ?? null);
+    usePlannerStore.getState().markPlannerSyncedToServer(
+      typeof body?.updatedAt === "string" ? body.updatedAt : undefined,
+    );
     return true;
   } catch {
     return false;

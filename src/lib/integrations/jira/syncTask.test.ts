@@ -27,7 +27,8 @@ vi.mock("./client", () => ({
 }));
 
 vi.mock("./discoverSubtasks", () => ({
-  discoverFeBeSubtasks: vi.fn(async () => ({ feKey: "BR-FE", beKey: undefined })),
+  listParentSubtasks: vi.fn(async () => [{ key: "BR-FE", summary: "[FE] Pricing Engine" }]),
+  matchAllRoleSubtasksFromSummaries: vi.fn(() => ({ fe: ["BR-FE"], be: [], android: [], ios: [] })),
   mergeDiscoveredIntoJiraMeta: vi.fn(() => ({
     parentIssueKey: "BR-1",
     lastPushedAt: null,

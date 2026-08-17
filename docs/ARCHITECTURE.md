@@ -40,7 +40,7 @@ flowchart TB
 4. UI capabilities from [src/lib/access/control.ts](../src/lib/access/control.ts): `canWrite`, `canManageSprintLifecycle`, `canManageUsers`, `canEditOpsTabs`, `canAccessOpsTabs`, `canViewUserManagement`.
 5. APIs use [src/lib/access/server.ts](../src/lib/access/server.ts) (`getSessionAccess`, `canReadFromSession`, `canWriteFromSession`, `resolveRequestedSquadId`).
 
-Registry tables: `Squad`, `User`, `SquadAccount` (managed via User Management API for writes by super admin only; GET allowed for EM/editor/reviewer view).
+Registry tables: `Squad`, `User`, `SquadAccount` (writes: super admin only). GET is allowed for EM/editor/reviewer view and **scopes** the payload to the viewer’s squads (`src/lib/access/userManagementScope.ts`).
 
 ## Planner sync
 
@@ -63,6 +63,8 @@ Phase order: FE/BE/Mobile (parallel) → Integration → QC → Buffer → UAT �
 - Config + assignee map in DB (`SquadJiraConfig`, `JiraAssigneeMap`)
 - Personal API token encrypted in `JiraAccount`
 - Push/pull under `src/app/api/integrations/jira/*` and `src/lib/integrations/jira/*`
+- Child listing uses paginated `POST /search/jql` so every `[FE]/[BE]/[Android]/[IOS]` subtask is kept
+- Missing EM/squad parents: `POST /api/integrations/jira/tasks/discover-em` (`engineeringManagerFieldId` on `SquadJiraConfig`)
 - Super admin configures fields on People & Jira; writers with squad write can sync eligible tasks
 
 ## API surface (summary)
@@ -74,7 +76,7 @@ Phase order: FE/BE/Mobile (parallel) → Integration → QC → Buffer → UAT �
 | `/api/squads` | Squad list for switcher |
 | `/api/user-management` | Registry GET (view) / PUT·DELETE (super admin) |
 | `/api/history` | Sprint archives |
-| `/api/integrations/jira/*` | Config, search, create-resource, push/pull, bulk |
+| `/api/integrations/jira/*` | Config, search, create-resource, push/pull, discover-em, bulk |
 
 Squad scoping: session + `x-squad-id` / query `squadId`, sanitized via `sanitizeSquadKey`.
 

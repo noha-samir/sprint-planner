@@ -17,6 +17,7 @@ export interface BulkPasteRow {
   mobileApp?: "none" | "star" | "hubs";
   moStartDate?: string | null;
   qcHours?: number;
+  tags?: string[];
   warnings: string[];
   isValid: boolean;
 }

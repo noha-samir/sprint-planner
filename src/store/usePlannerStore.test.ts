@@ -6,7 +6,7 @@ import {
   compactPrioritiesAfterRelease,
   enforceUniquePoPriorities,
 } from "./taskRules";
-import { mergeIncomingTasksWithCurrent } from "./replanMerge";
+import { mergeIncomingTasksWithCurrent, shouldSkipIncomingPlannerSnapshot } from "./replanMerge";
 
 const makeTask = (id: string, poPriority: number | null, carryToNextSprint = false): Task => ({
   id,
@@ -106,5 +106,39 @@ describe("store task helpers", () => {
     const currentTasks: Task[] = [{ ...makeTask("a", 1), replanFromStep: "QC" }];
     const merged = mergeIncomingTasksWithCurrent(incomingTasks, currentTasks);
     expect(merged[0].replanFromStep).toBe("QC");
+  });
+
+  it("keeps a newly added local task when hydrating an older server list", () => {
+    const incomingTasks: Task[] = [makeTask("a", 1)];
+    const currentTasks: Task[] = [makeTask("a", 1), makeTask("new-row", null)];
+    const merged = mergeIncomingTasksWithCurrent(incomingTasks, currentTasks, { keepLocalOnly: true });
+    expect(merged.map((task) => task.id)).toEqual(["a", "new-row"]);
+  });
+
+  it("does not keep local-only tasks after a clean server hydrate", () => {
+    const incomingTasks: Task[] = [makeTask("a", 1)];
+    const currentTasks: Task[] = [makeTask("a", 1), makeTask("gone", null)];
+    const merged = mergeIncomingTasksWithCurrent(incomingTasks, currentTasks);
+    expect(merged.map((task) => task.id)).toEqual(["a"]);
+  });
+
+  it("skips a stale GET that is older than a save already applied", () => {
+    expect(
+      shouldSkipIncomingPlannerSnapshot({
+        incomingUpdatedAt: "2026-08-17T08:00:00.000Z",
+        localMutationAt: null,
+        knownServerUpdatedAt: "2026-08-17T08:00:05.000Z",
+      }),
+    ).toBe(true);
+  });
+
+  it("skips hydrate while unsynced local edits are newer than the snapshot", () => {
+    expect(
+      shouldSkipIncomingPlannerSnapshot({
+        incomingUpdatedAt: "2026-08-17T08:00:00.000Z",
+        localMutationAt: "2026-08-17T08:00:10.000Z",
+        knownServerUpdatedAt: "2026-08-17T08:00:00.000Z",
+      }),
+    ).toBe(true);
   });
 });
