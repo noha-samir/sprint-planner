@@ -32,6 +32,7 @@ npm run dev                  # http://localhost:3000
 | `npm run prisma:deploy` | Apply migrations |
 | `npm run db:seed` | Optional one-time import from `data/*.json` (needs `ALLOW_DB_SEED=1` or `--confirm-seed`) |
 | `npm test` / `npm run lint` / `npm run typecheck` | Quality checks |
+| git commit | Husky pre-commit runs `npm run build` so Vercel type errors fail locally |
 
 Required env (see [`.env.example`](.env.example)): `DATABASE_URL`, `DIRECT_URL`, `AUTH_SECRET`, `AUTH_SUPER_ADMIN_EMAIL`, email domain gates. Jira **product** settings (site URL, fields, assignee map) live in the DB under **People & Jira → Jira fields** (super admin), not in `.env`.
 

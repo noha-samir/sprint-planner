@@ -2,7 +2,7 @@ import type { JiraApiCredentials } from "./credentials";
 import { JiraApiError } from "./client";
 import { publicJiraErrorMessage } from "./jiraErrors";
 import { buildJiraBasicAuthHeader, jiraRestApiBase } from "./credentials";
-import { quoteJql, searchJqlIssues } from "./jiraSearch";
+import { quoteJql, searchJqlIssues, type SearchJqlIssue } from "./jiraSearch";
 import type { JiraSubtaskRole, TaskJiraMeta } from "./types";
 import { effectiveIosHours } from "@/lib/scheduler/mobilePlatform";
 
