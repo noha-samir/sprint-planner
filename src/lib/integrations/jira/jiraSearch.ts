@@ -6,6 +6,8 @@ export type SearchJqlIssue = {
   fields?: {
     summary?: string;
     issuetype?: { name?: string; subtask?: boolean };
+    assignee?: { accountId?: string; displayName?: string } | null;
+    timeoriginalestimate?: number | null;
   };
 };
 

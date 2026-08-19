@@ -73,6 +73,55 @@ const reverseAssigneeMap = (assigneeMap: Record<string, string>): Map<string, st
   return reversed;
 };
 
+type ResourceRef = { name: string; type: string };
+
+/**
+ * Resolve pre-filled hours and assignee arrays for a discovered standalone task/bug.
+ * Reverse-looks up the assignee account ID in the assigneeMap to find the planner resource,
+ * then maps their type (FE/BE/QC/MO/PM) to the correct role field.
+ * Falls back to feHours when the assignee cannot be resolved.
+ */
+export const resolveHoursForDiscoveredTask = (
+  assigneeAccountId: string | null,
+  estimateSeconds: number | null,
+  assigneeMap: Record<string, string>,
+  resources: ResourceRef[],
+): {
+  feHours: number; beHours: number; qcHours: number; androidHours: number; iosHours: number;
+  feDevs: string[]; beDevs: string[]; qcs: string[]; androidDevs: string[]; iosDevs: string[];
+} => {
+  const hours = estimateSeconds != null && estimateSeconds > 0
+    ? Math.round((estimateSeconds / 3600) * 10) / 10
+    : 0;
+
+  const empty = {
+    feHours: 0, beHours: 0, qcHours: 0, androidHours: 0, iosHours: 0,
+    feDevs: [] as string[], beDevs: [] as string[], qcs: [] as string[],
+    androidDevs: [] as string[], iosDevs: [] as string[],
+  };
+
+  if (!assigneeAccountId) {
+    return { ...empty, feHours: hours };
+  }
+
+  const reversed = reverseAssigneeMap(assigneeMap);
+  const plannerName = reversed.get(assigneeAccountId.trim());
+  if (!plannerName) {
+    return { ...empty, feHours: hours };
+  }
+
+  const resource = resources.find(
+    (r) => r.name.trim().toLowerCase() === plannerName.toLowerCase(),
+  );
+  const type = resource?.type?.toUpperCase() ?? "FE";
+
+  if (type === "BE") return { ...empty, beHours: hours, beDevs: [plannerName] };
+  if (type === "QC") return { ...empty, qcHours: hours, qcs: [plannerName] };
+  if (type === "MO") return { ...empty, androidHours: hours, androidDevs: [plannerName] };
+  // FE and PM both go to feHours/feDevs as default
+  return { ...empty, feHours: hours, feDevs: [plannerName] };
+};
+
 /**
  * Map a Jira user onto a planner resource canonical name.
  * Order: assigneeMap → roster name/nickname fuzzy match. Never stores unmapped Jira display names.
@@ -206,11 +255,13 @@ const toPlannerPeople = (
 
 /**
  * Pull parent status, QC/hours, and FE/BE/MO subtask assignees/hours into a planner patch.
+ * emAccountId: resolved EM Jira account ID used to set isEmStory on the task.
  */
 export const syncTaskFromJira = async (
   task: Task,
   squadConfig: SquadJiraConfig,
   plannerPeople: PlannerPersonRef[] | string[] = [],
+  emAccountId?: string | null,
 ): Promise<SyncTaskFromJiraResult> => {
   if (isDiscopedTaskStatus(task.status)) {
     throw new JiraApiError("Discoped stories are not synced from Jira", 400);
@@ -227,6 +278,8 @@ export const syncTaskFromJira = async (
   const parentFieldList = [
     "summary",
     "status",
+    "issuetype",
+    "assignee",
     fieldIds.developmentEstimateHours,
     fieldIds.testingEstimateHours,
     fieldIds.qcEngineer,
@@ -245,6 +298,16 @@ export const syncTaskFromJira = async (
   const patch: Partial<Task> = {};
   if (status) {
     patch.status = status;
+  }
+
+  const issueTypeName = (parentFields.issuetype as { name?: string } | null | undefined)?.name?.trim();
+  if (issueTypeName) {
+    patch.issueType = issueTypeName;
+  }
+
+  const assigneeAccountId = (parentFields.assignee as { accountId?: string } | null | undefined)?.accountId?.trim();
+  if (emAccountId != null) {
+    patch.isEmStory = Boolean(assigneeAccountId && assigneeAccountId === emAccountId);
   }
 
   const qcHours = hoursFromJiraNumberField(parentFields[fieldIds.testingEstimateHours.trim()]);
@@ -427,11 +490,13 @@ export const syncTaskFromJira = async (
 
 /**
  * Pull many stories from Jira sequentially.
+ * emAccountId: if provided, sets isEmStory on each task based on Jira assignee comparison.
  */
 export const bulkPullTasksFromJira = async (
   tasks: Task[],
   squadConfig: SquadJiraConfig,
   plannerPeople: PlannerPersonRef[] | string[] = [],
+  emAccountId?: string | null,
 ): Promise<BulkPullFromJiraResult> => {
   const results: BulkPullTaskResult[] = [];
   let synced = 0;
@@ -462,7 +527,7 @@ export const bulkPullTasksFromJira = async (
     }
 
     try {
-      const result = await syncTaskFromJira(task, squadConfig, plannerPeople);
+      const result = await syncTaskFromJira(task, squadConfig, plannerPeople, emAccountId);
       synced += 1;
       results.push({
         taskId: task.id,

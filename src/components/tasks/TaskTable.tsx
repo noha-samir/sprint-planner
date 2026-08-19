@@ -13,6 +13,7 @@ import {
 import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
 import { isJiraStoryLink, buildJiraIssueBrowseUrl, parseJiraIssueKey } from "@/lib/integrations/jira/issueKey";
 import { safeStoryHref } from "@/lib/ui/safeStoryHref";
+import { issueTypeChipClass } from "@/lib/ui/issueTypeChip";
 import { isTaskEligibleForJiraPull, isTaskEligibleForJiraSync, resolveTaskForJiraSync } from "@/lib/integrations/jira/syncEligibility";
 import { JIRA_SYNC_ADDED_TAG } from "@/lib/integrations/jira/jiraSyncTag";
 import { formatBulkSyncConfirmMessage, formatBulkSyncSummary, bulkSyncHasPartialWarnings, type BulkSyncTaskResult } from "@/lib/integrations/jira/bulkSyncMessages";
@@ -228,6 +229,11 @@ export function TaskTable() {
   });
   const [visibleStatuses, setVisibleStatuses] = useState<(typeof taskStatuses)[number][]>(defaultVisibleStatuses);
   const [sprintFilter, setSprintFilter] = useState<"all" | "currentSprint" | "nextSprint">("currentSprint");
+  const [emFilter, setEmFilter] = useState<"all" | "em" | "non-em">("all");
+  const [typeFilter, setTypeFilter] = useState<string[]>([]);
+  const [parentlessFilter, setParentlessFilter] = useState(false);
+  const [typeFilterOpen, setTypeFilterOpen] = useState(false);
+  const typeFilterRef = useRef<HTMLDivElement | null>(null);
   const [isSprintFilterOpen, setIsSprintFilterOpen] = useState(false);
   const [isStatusFilterOpen, setIsStatusFilterOpen] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
@@ -314,6 +320,9 @@ export function TaskTable() {
       }
       if (statusFilterRef.current && !statusFilterRef.current.contains(target)) {
         setIsStatusFilterOpen(false);
+      }
+      if (typeFilterRef.current && !typeFilterRef.current.contains(target)) {
+        setTypeFilterOpen(false);
       }
     };
     document.addEventListener("mousedown", onPointerDown);
@@ -772,7 +781,15 @@ export function TaskTable() {
       const eligibleTasks = selectedTasksForSync.filter(isTaskEligibleForJiraPull);
       const discopedTasks = selectedTasksForSync.filter((task) => isDiscopedTaskStatus(task.status));
 
-      let missingStories: Array<{ key: string; summary: string; storyLink: string }> = [];
+      let missingStories: Array<{
+        key: string;
+        summary: string;
+        storyLink: string;
+        issueType?: string | null;
+        isEmStory?: boolean;
+        feHours?: number; beHours?: number; qcHours?: number; androidHours?: number; iosHours?: number;
+        feDevs?: string[]; beDevs?: string[]; qcs?: string[]; androidDevs?: string[]; iosDevs?: string[];
+      }> = [];
       let discoverWarning: string | null = null;
       try {
         const dashboardTasks = usePlannerStore.getState().tasks;
@@ -784,11 +801,31 @@ export function TaskTable() {
           },
           body: JSON.stringify({
             existingStoryLinks: dashboardTasks.map((task) => task.storyLink),
+            plannerResources: usePlannerStore.getState().resources.map((r) => ({
+              name: r.name,
+              type: r.type,
+            })),
           }),
         });
         const body = (await response.json()) as {
           error?: string;
-          stories?: Array<{ key: string; summary: string; storyLink: string }>;
+          stories?: Array<{
+            key: string;
+            summary: string;
+            storyLink: string;
+            issueType?: string | null;
+            isEmStory?: boolean;
+            feHours?: number;
+            beHours?: number;
+            qcHours?: number;
+            androidHours?: number;
+            iosHours?: number;
+            feDevs?: string[];
+            beDevs?: string[];
+            qcs?: string[];
+            androidDevs?: string[];
+            iosDevs?: string[];
+          }>;
           warning?: string | null;
           truncated?: boolean;
         };
@@ -855,12 +892,19 @@ export function TaskTable() {
           missingStories.map((story) => ({
             storyName: story.summary,
             storyLink: story.storyLink,
-            beDevs: [],
-            feDevs: [],
-            androidDevs: [],
-            iosDevs: [],
-            qcs: [],
+            feDevs: story.feDevs ?? [],
+            beDevs: story.beDevs ?? [],
+            androidDevs: story.androidDevs ?? [],
+            iosDevs: story.iosDevs ?? [],
+            qcs: story.qcs ?? [],
             productManagers: [],
+            feHours: story.feHours ?? 0,
+            beHours: story.beHours ?? 0,
+            androidHours: story.androidHours ?? 0,
+            iosHours: story.iosHours ?? 0,
+            qcHours: story.qcHours ?? 0,
+            issueType: story.issueType ?? undefined,
+            isEmStory: story.isEmStory ?? false,
             tags: [JIRA_SYNC_ADDED_TAG],
             warnings: [],
             isValid: true,
@@ -983,6 +1027,12 @@ export function TaskTable() {
       if (sprintFilter === "nextSprint") return !!task.carryToNextSprint;
       if (sprintFilter === "currentSprint") return !task.carryToNextSprint;
       return true;
+    }).filter((task) => {
+      if (emFilter === "em" && !task.isEmStory) return false;
+      if (emFilter === "non-em" && task.isEmStory) return false;
+      if (typeFilter.length > 0 && !typeFilter.includes(task.issueType ?? "")) return false;
+      if (parentlessFilter && task.storyLink) return false;
+      return true;
     });
     const releaseDateById = new Map(
       safeResult.tasks.map((item) => [item.id, item.releaseDate] as const),
@@ -992,7 +1042,7 @@ export function TaskTable() {
         ? plannerMeta.dashboardTaskOrder
         : null;
     return sortTasksForDashboard(filtered, releaseDateById, pinnedOrder);
-  }, [tasks, safeResult.tasks, visibleStatuses, sprintFilter, isUatTrackingEnabled, plannerMeta.dashboardTaskOrder]);
+  }, [tasks, safeResult.tasks, visibleStatuses, sprintFilter, emFilter, typeFilter, parentlessFilter, isUatTrackingEnabled, plannerMeta.dashboardTaskOrder]);
 
   useEffect(() => {
     if (!focusTaskId) return;
@@ -1440,6 +1490,93 @@ export function TaskTable() {
               </div>
             ) : null}
           </div>
+
+          {/* EM filter — 3-way segmented */}
+          <div className="inline-flex rounded-lg border border-slate-300 bg-white shadow-sm">
+            {(["all", "em", "non-em"] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setEmFilter(value)}
+                className={`px-2.5 py-1 text-[12px] font-semibold first:rounded-l-lg last:rounded-r-lg transition ${
+                  emFilter === value
+                    ? "bg-blue-600 text-white"
+                    : "text-slate-600 hover:bg-slate-50"
+                }`}
+                title={value === "all" ? "Show all tasks" : value === "em" ? "Show only EM-assigned tasks" : "Show tasks not assigned to EM"}
+              >
+                {value === "all" ? "All" : value === "em" ? "Under EM" : "Not EM"}
+              </button>
+            ))}
+          </div>
+
+          {/* Type filter — multi-checkbox dropdown */}
+          <div className="relative" ref={typeFilterRef}>
+            <button
+              type="button"
+              className={`toolbar-strip-btn inline-flex items-center gap-1.5 ${typeFilterOpen || typeFilter.length > 0 ? "border-blue-400 bg-blue-50 text-blue-950 ring-2 ring-blue-200/70" : ""}`}
+              aria-expanded={typeFilterOpen}
+              onClick={() => setTypeFilterOpen((v) => !v)}
+            >
+              Type
+              {typeFilter.length > 0 ? ` (${typeFilter.length})` : ""}
+              {typeFilterOpen ? " ▴" : " ▾"}
+            </button>
+            {typeFilterOpen ? (() => {
+              const allTypes = [...new Set(tasks.map((t) => t.issueType).filter(Boolean))] as string[];
+              return (
+                <div
+                  className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,14rem)]"
+                  aria-label="Filter tasks by type"
+                >
+                  <div className="toolbar-dropdown-header">
+                    <span className="text-[13px] font-bold uppercase tracking-wide text-slate-500">Issue type</span>
+                  </div>
+                  <div className="max-h-[min(14rem,calc(100vh-12rem))] space-y-1 overflow-y-auto px-2 py-2">
+                    {allTypes.length === 0 ? (
+                      <p className="px-1 py-2 text-[12px] text-slate-400">No types set — pull from Jira to populate.</p>
+                    ) : allTypes.map((type) => {
+                      const on = typeFilter.includes(type);
+                      return (
+                        <label key={type} className="flex cursor-pointer items-center gap-2.5 rounded-lg border px-2.5 py-2 text-[13px] font-semibold shadow-sm transition hover:bg-slate-50">
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            onChange={() =>
+                              setTypeFilter((prev) =>
+                                on ? prev.filter((t) => t !== type) : [...prev, type],
+                              )
+                            }
+                          />
+                          <span className="min-w-0 flex-1 leading-snug">{type}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <div className="toolbar-dropdown-footer">
+                    <button
+                      type="button"
+                      className="toolbar-dropdown-footer-btn"
+                      onClick={() => { setTypeFilter([]); setTypeFilterOpen(false); }}
+                    >
+                      Show all
+                    </button>
+                  </div>
+                </div>
+              );
+            })() : null}
+          </div>
+
+          {/* Parentless toggle */}
+          <button
+            type="button"
+            className={`toolbar-strip-btn inline-flex items-center gap-1.5 ${parentlessFilter ? "border-blue-400 bg-blue-50 text-blue-950 ring-2 ring-blue-200/70" : ""}`}
+            onClick={() => setParentlessFilter((v) => !v)}
+            title="Show only tasks without a Jira story link"
+          >
+            No parent
+          </button>
+
           {isEditor ? (
             <>
               <input
@@ -2891,6 +3028,22 @@ export function TaskTable() {
                   </td>
                   <td className="align-top">
                     <div className="flex w-full min-w-0 flex-wrap content-start gap-0.5">
+                      {task.issueType ? (
+                        <span
+                          className={`task-flag-chip ${issueTypeChipClass(task.issueType)}`}
+                          title={`Issue type: ${task.issueType}`}
+                        >
+                          <span className="task-flag-chip-label">{task.issueType}</span>
+                        </span>
+                      ) : null}
+                      {task.isEmStory ? (
+                        <span
+                          className="task-flag-chip task-flag-chip-type-em"
+                          title="Assigned to the Engineering Manager"
+                        >
+                          <span className="task-flag-chip-label">EM</span>
+                        </span>
+                      ) : null}
                       {(task.tags ?? []).map((tag) =>
                         isEditor ? (
                           <span

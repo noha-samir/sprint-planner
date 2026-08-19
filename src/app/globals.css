@@ -223,7 +223,11 @@ body {
   }
 
   .jira-sync-banner-title {
-    @apply text-[13px] font-bold;
+    @apply min-w-0 flex-1 text-[13px] font-bold leading-snug;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .jira-sync-banner-meta {
@@ -239,7 +243,11 @@ body {
   }
 
   .jira-sync-banner-current {
-    @apply mt-1 truncate text-[12px] font-medium opacity-90;
+    @apply mt-1 text-[12px] font-medium opacity-90 leading-snug;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .jira-sync-banner-summary {
@@ -517,6 +525,31 @@ body {
 
   .task-flag-chip-todo {
     @apply cursor-pointer border-indigo-200/90 bg-indigo-50 text-indigo-950 transition hover:border-indigo-300 hover:bg-indigo-100 hover:shadow;
+  }
+
+  /* Issue type badges */
+  .task-flag-chip-type-story {
+    @apply border-blue-200/90 bg-blue-50 text-blue-800;
+  }
+
+  .task-flag-chip-type-bug {
+    @apply border-red-200/90 bg-red-50 text-red-800;
+  }
+
+  .task-flag-chip-type-task {
+    @apply border-slate-200/90 bg-slate-50 text-slate-700;
+  }
+
+  .task-flag-chip-type-technical {
+    @apply border-amber-300/90 bg-amber-50 text-amber-900;
+  }
+
+  .task-flag-chip-type-epic {
+    @apply border-purple-200/90 bg-purple-50 text-purple-800;
+  }
+
+  .task-flag-chip-type-em {
+    @apply border-teal-200/90 bg-teal-50 text-teal-800;
   }
 
   .task-action-feedback {

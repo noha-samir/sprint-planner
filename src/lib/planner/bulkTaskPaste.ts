@@ -18,6 +18,8 @@ export interface BulkPasteRow {
   moStartDate?: string | null;
   qcHours?: number;
   tags?: string[];
+  issueType?: string;
+  isEmStory?: boolean;
   warnings: string[];
   isValid: boolean;
 }

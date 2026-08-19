@@ -577,6 +577,8 @@ export const usePlannerStore = create<PlannerState>()(
             moStartDate: draft.moStartDate ?? null,
             qcHours: draft.qcHours ?? 0,
             tags: Array.isArray(draft.tags) ? [...new Set(draft.tags.map((tag) => tag.trim()).filter(Boolean))] : [],
+            issueType: draft.issueType,
+            isEmStory: draft.isEmStory,
           }),
         );
 

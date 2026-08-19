@@ -50,6 +50,10 @@ export interface Task {
   /** Stories with the same group name release together (latest date in the group). */
   releaseGroup?: string | null;
   status: TaskWorkflowStatus;
+  /** Jira issue type label e.g. "Story", "Bug", "Task", "Technical Task". */
+  issueType?: string;
+  /** True when the Jira story assignee is the squad's Engineering Manager. */
+  isEmStory?: boolean;
   /** Sync metadata after pushing subtasks to Jira. */
   jira?: {
     parentIssueKey: string;

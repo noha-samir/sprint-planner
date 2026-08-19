@@ -8,13 +8,20 @@ import { readSquadJiraConfig } from "@/lib/integrations/jira/configStore";
 import { JiraApiError } from "@/lib/integrations/jira/client";
 import {
   discoverEmStoriesFromJira,
+  discoverStandaloneTasksFromJira,
   existingIssueKeySet,
   resolveEmJiraAccountId,
+  type DiscoveredEmStory,
 } from "@/lib/integrations/jira/discoverEmStories";
+import { resolveHoursForDiscoveredTask } from "@/lib/integrations/jira/pullFromJira";
 
 const discoverEmStoriesSchema = z.object({
   existingIssueKeys: z.array(z.string().max(80)).max(500).optional(),
   existingStoryLinks: z.array(z.string().max(2000)).max(500).optional(),
+  plannerResources: z
+    .array(z.object({ name: z.string(), type: z.string() }))
+    .max(200)
+    .optional(),
 });
 
 export async function POST(request: Request) {
@@ -56,11 +63,39 @@ export async function POST(request: Request) {
         emAccountId = null;
       }
     }
-    const result = await discoverEmStoriesFromJira(credentials, squadConfig, existingKeys, emAccountId);
+
+    const [storiesResult, standaloneTasks] = await Promise.all([
+      discoverEmStoriesFromJira(credentials, squadConfig, existingKeys, emAccountId),
+      discoverStandaloneTasksFromJira(credentials, squadConfig, existingKeys, emAccountId),
+    ]);
+
+    // Merge story and standalone task results, dedup by key (stories take precedence)
+    const seenKeys = new Set(storiesResult.stories.map((s) => s.key));
+    const mergedExtra: DiscoveredEmStory[] = standaloneTasks.filter((t) => !seenKeys.has(t.key));
+    const allDiscovered = [...storiesResult.stories, ...mergedExtra];
+
+    const plannerResources = body.plannerResources ?? [];
+
     return NextResponse.json({
-      stories: result.stories,
-      truncated: result.truncated,
-      warning: result.warning,
+      stories: allDiscovered.map((item) => {
+        const isEmStory = emAccountId != null && item.assigneeAccountId === emAccountId;
+        const hours = resolveHoursForDiscoveredTask(
+          item.assigneeAccountId ?? null,
+          item.estimateSeconds ?? null,
+          squadConfig.assigneeMap,
+          plannerResources,
+        );
+        return {
+          key: item.key,
+          summary: item.summary,
+          storyLink: item.storyLink,
+          issueType: item.issueType ?? null,
+          isEmStory,
+          ...hours,
+        };
+      }),
+      truncated: storiesResult.truncated,
+      warning: storiesResult.warning,
     });
   } catch (error) {
     if (error instanceof JiraApiError) {

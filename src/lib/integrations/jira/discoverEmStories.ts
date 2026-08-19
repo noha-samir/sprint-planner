@@ -38,6 +38,9 @@ export interface DiscoveredEmStory {
   key: string;
   summary: string;
   storyLink: string;
+  issueType?: string;
+  assigneeAccountId?: string | null;
+  estimateSeconds?: number | null;
 }
 
 export interface DiscoverEmStoriesResult {
@@ -141,7 +144,7 @@ export const discoverEmStoriesFromJira = async (
   }
 
   const searched = await searchJqlIssues(credentials, jql, 100, {
-    fields: ["summary", "issuetype"],
+    fields: ["summary", "issuetype", "assignee", "timeoriginalestimate"],
     maxIssues: EM_STORY_DISCOVERY_LIMIT + 1,
   });
   if (!searched) {
@@ -162,6 +165,9 @@ export const discoverEmStoriesFromJira = async (
       key,
       summary: issue.fields?.summary?.trim() || key,
       storyLink: storyLinkForKey(credentials.siteUrl, key),
+      issueType: issue.fields?.issuetype?.name ?? undefined,
+      assigneeAccountId: issue.fields?.assignee?.accountId ?? null,
+      estimateSeconds: issue.fields?.timeoriginalestimate ?? null,
     });
     if (stories.length >= EM_STORY_DISCOVERY_LIMIT) {
       break;
@@ -174,6 +180,97 @@ export const discoverEmStoriesFromJira = async (
     warning: null,
     jql,
   };
+};
+
+/** Jira issue types treated as standalone tasks (not stories, not epics, not subtasks). */
+export const STANDALONE_TASK_ISSUE_TYPES = ["Bug", "Task", "Technical Task"] as const;
+
+/**
+ * Build JQL for standalone bugs/tasks/technical tasks owned by this EM/squad.
+ * Same sprint and status filters as EM story discovery.
+ */
+export const buildStandaloneTaskDiscoveryJql = (input: EmStoryDiscoveryInput): string | null => {
+  const projectKey = input.projectKey.trim().toUpperCase();
+  if (!/^[A-Z][A-Z0-9]+$/.test(projectKey)) {
+    return null;
+  }
+
+  const emField = jqlFieldRef(input.engineeringManagerFieldId);
+  const emAccountId = input.emAccountId?.trim() ?? "";
+  let emClause: string | null = null;
+  if (emField) {
+    const matches = [`${emField} = currentUser()`];
+    if (emAccountId) {
+      matches.push(`${emField} = ${quoteJql(emAccountId)}`);
+    }
+    emClause = matches.length === 1 ? matches[0]! : `(${matches.join(" OR ")})`;
+  }
+
+  const squadField = jqlFieldRef(input.squadFieldId);
+  const squadOptionId = input.squadOptionId.trim();
+  const squadClause =
+    squadField && squadOptionId ? `${squadField} = ${quoteJql(squadOptionId)}` : null;
+
+  if (!emClause && !squadClause) {
+    return null;
+  }
+
+  const typeList = STANDALONE_TASK_ISSUE_TYPES.map((t) => quoteJql(t)).join(", ");
+  const parts = [
+    `project = ${quoteJql(projectKey)}`,
+    `issuetype in (${typeList})`,
+    "issuetype not in subTaskIssueTypes()",
+    "status != Discoped",
+    emSprintAwareStoryClause(),
+  ];
+  if (emClause) parts.push(emClause);
+  if (squadClause) parts.push(squadClause);
+  return `${parts.join(" AND ")} ORDER BY key ASC`;
+};
+
+/**
+ * Search Jira for standalone bugs/tasks/technical tasks for this squad/EM,
+ * skipping keys already on the dashboard.
+ */
+export const discoverStandaloneTasksFromJira = async (
+  credentials: JiraApiCredentials,
+  config: SquadJiraConfig,
+  existingKeys: Set<string>,
+  emAccountId?: string | null,
+): Promise<DiscoveredEmStory[]> => {
+  const jql = buildStandaloneTaskDiscoveryJql({
+    projectKey: config.projectKey,
+    engineeringManagerFieldId: config.engineeringManagerFieldId,
+    emAccountId,
+    squadFieldId: config.subtaskSquadFieldId,
+    squadOptionId: config.subtaskSquadOptionId,
+  });
+  if (!jql) return [];
+
+  const searched = await searchJqlIssues(credentials, jql, 100, {
+    fields: ["summary", "issuetype", "assignee", "timeoriginalestimate"],
+    maxIssues: EM_STORY_DISCOVERY_LIMIT + 1,
+  });
+  if (!searched) return [];
+
+  const tasks: DiscoveredEmStory[] = [];
+  const seen = new Set<string>();
+  for (const issue of searched) {
+    const key = issue.key?.trim().toUpperCase();
+    if (!key || seen.has(key) || existingKeys.has(key)) continue;
+    if (issue.fields?.issuetype?.subtask) continue;
+    seen.add(key);
+    tasks.push({
+      key,
+      summary: issue.fields?.summary?.trim() || key,
+      storyLink: storyLinkForKey(credentials.siteUrl, key),
+      issueType: issue.fields?.issuetype?.name ?? undefined,
+      assigneeAccountId: issue.fields?.assignee?.accountId ?? null,
+      estimateSeconds: issue.fields?.timeoriginalestimate ?? null,
+    });
+    if (tasks.length >= EM_STORY_DISCOVERY_LIMIT) break;
+  }
+  return tasks;
 };
 
 /**
