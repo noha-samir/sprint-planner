@@ -1722,7 +1722,7 @@ export function TaskTable() {
                                 role="menuitem"
                                 className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-sky-900 hover:bg-sky-50 disabled:opacity-45"
                                 disabled={jiraSyncInProgress}
-                                title="Pull selected stories and add Jira stories under this EM that are not on the dashboard"
+                                title="Pull selected stories and add this EM’s current-sprint stories plus leftover open work from closed sprints"
                                 onClick={bulkPullFromJira}
                               >
                                 <span className="jira-sync-glyph jira-sync-glyph-pull" aria-hidden>

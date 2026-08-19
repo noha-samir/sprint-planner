@@ -6,6 +6,7 @@ import { useState } from "react";
 import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
 import { getSprintWindowEnd } from "@/lib/scheduler/calendar";
 import type { ReleaseStrategy } from "@/lib/scheduler/types";
+import { AppearanceToggle } from "@/components/config/AppearanceToggle";
 import { usePlannerStore } from "@/store/usePlannerStore";
 
 const clampWorkdayStartHour = (value: number) => Math.max(0, Math.min(23, Math.trunc(value) || 0));
@@ -34,6 +35,7 @@ export function ConfigForm() {
 
   return (
     <div className="max-w-xl space-y-4">
+      <AppearanceToggle />
       <label className="block space-y-1">
         <span className="text-sm">Sprint Start Date</span>
         <input

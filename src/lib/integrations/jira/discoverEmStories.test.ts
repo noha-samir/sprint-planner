@@ -2,10 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildEmStoryDiscoveryJql,
   discoverEmStoriesFromJira,
+  EM_CARRYOVER_OPEN_STATUSES,
+  emSprintAwareStoryClause,
   existingIssueKeySet,
 } from "./discoverEmStories";
-import { jqlFieldRef } from "./jiraSearch";
+import { jqlFieldRef, quoteJql } from "./jiraSearch";
 import { defaultSquadJiraConfig } from "./types";
+
+const sprintAwareClause = emSprintAwareStoryClause();
 
 describe("jqlFieldRef", () => {
   it("maps customfield ids and names", () => {
@@ -26,6 +30,26 @@ describe("existingIssueKeySet", () => {
         "not-a-key",
       ]),
     ).toEqual(new Set(["BR-1", "BR-2"]));
+  });
+});
+
+describe("emSprintAwareStoryClause", () => {
+  it("includes the current open sprint without an open-status filter", () => {
+    const currentSprintSide = sprintAwareClause.slice(0, sprintAwareClause.indexOf(" OR "));
+    expect(currentSprintSide).toContain("sprint in openSprints()");
+    expect(currentSprintSide).not.toContain("status in");
+  });
+
+  it("limits closed-sprint leftovers to the open engineering statuses", () => {
+    expect(sprintAwareClause).toContain("sprint in closedSprints()");
+    for (const status of EM_CARRYOVER_OPEN_STATUSES) {
+      expect(sprintAwareClause).toContain(quoteJql(status));
+    }
+    expect(sprintAwareClause).not.toContain(quoteJql("Production"));
+    expect(sprintAwareClause).not.toContain(quoteJql("Done"));
+    expect(sprintAwareClause).not.toContain(quoteJql("In Design"));
+    expect(sprintAwareClause).not.toContain(quoteJql("Closed"));
+    expect(sprintAwareClause).not.toContain(quoteJql("Cancelled"));
   });
 });
 
@@ -59,7 +83,7 @@ describe("buildEmStoryDiscoveryJql", () => {
         squadOptionId: "10001",
       }),
     ).toBe(
-      'project = "BR" AND issuetype not in subTaskIssueTypes() AND issuetype != Epic AND status != Discoped AND (cf[10200] = currentUser() OR cf[10200] = "acct-em") AND cf[10001] = "10001" ORDER BY key ASC',
+      `project = "BR" AND issuetype not in subTaskIssueTypes() AND issuetype != Epic AND status != Discoped AND ${sprintAwareClause} AND (cf[10200] = currentUser() OR cf[10200] = "acct-em") AND cf[10001] = "10001" ORDER BY key ASC`,
     );
   });
 
@@ -72,7 +96,7 @@ describe("buildEmStoryDiscoveryJql", () => {
         squadOptionId: "10001",
       }),
     ).toBe(
-      'project = "BR" AND issuetype not in subTaskIssueTypes() AND issuetype != Epic AND status != Discoped AND cf[10001] = "10001" ORDER BY key ASC',
+      `project = "BR" AND issuetype not in subTaskIssueTypes() AND issuetype != Epic AND status != Discoped AND ${sprintAwareClause} AND cf[10001] = "10001" ORDER BY key ASC`,
     );
   });
 });

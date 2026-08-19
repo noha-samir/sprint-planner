@@ -145,12 +145,12 @@ Editors have no squad switcher; they stay on their assigned squad.
 
 - **Pull** lists every `[FE]` / `[BE]` / `[Android]` / `[IOS]` child under the parent (`POST /search/jql`). Multiple people on one role keep all assignees; hours are **summed**. A failed child fetch is a warning, not a failed story.
 - **Push** writes **one Jira subtask per assignee** and splits hours across them.
-- **Pull from Jira** (no row select required) also imports parent stories under this EM that are not on the board (`POST /api/integrations/jira/tasks/discover-em`), using the Engineering Manager field and/or Squad field under **People & Jira → Jira fields**. New rows get tag **`Jira sync`**.
+- **Pull from Jira** (no row select required) also imports parent stories under this EM that are not on the board (`POST /api/integrations/jira/tasks/discover-em`): **current open Jira sprint**, plus **unfinished** stories from closed sprints (To Do / In Progress / Blocked / Review / Testing / UAT — not Done, Production, or In Design). Uses the Engineering Manager field and/or Squad field under **People & Jira → Jira fields**. New rows get tag **`Jira sync`**.
 - The pull/push result banner stays short and **scrolls inside** so the task table stays reachable.
 
 ### Appearance
 
-The UI follows the laptop **light / dark** setting (`prefers-color-scheme`) so text, cards, and form controls stay readable on dark-mode machines.
+Choose **Light** or **Dark** on **Sprint Settings**. The choice is stored on this device. Dark chrome is charcoal gray; status chips keep their usual (muted) colors. If you have not chosen yet, the laptop light/dark setting is used.
 
 ### Sync workflow
 

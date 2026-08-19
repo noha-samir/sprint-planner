@@ -254,7 +254,7 @@ export function JiraConnectionFields({ squadHeaders }: Props) {
               <label className="block text-sm md:col-span-2">
                 <span className="font-medium text-slate-800">Engineering Manager field</span>
                 <span className="mt-0.5 block text-xs text-slate-500">
-                  Parent-story user field. Pull from Jira also adds stories for this EM (and this squad) that are not on the dashboard.
+                  Parent-story user field. Pull from Jira also adds this EM’s current-sprint stories and leftover open stories from closed sprints.
                 </span>
                 <input
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs"

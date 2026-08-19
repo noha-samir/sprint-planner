@@ -93,7 +93,7 @@ export function HelpDocs() {
             { name: "Timeline", desc: "Phase view of the schedule" },
             { name: "History", desc: "Archived sprint snapshots" },
             { name: "People & Jira", desc: "Roster + Jira fields (edit: super admin)" },
-            { name: "Sprint Settings", desc: "Window, hours, holidays (edit: super admin)" },
+            { name: "Sprint Settings", desc: "Window, hours, holidays, appearance (calendar edit: super admin)" },
             { name: "User Management", desc: "Squads & roles (edit: super admin; others see only their squad)" },
           ].map((item) => (
             <li
@@ -114,7 +114,7 @@ export function HelpDocs() {
           <li>Add or import stories; set hours and assignees.</li>
           <li>Check Timeline for overload.</li>
           <li>EM / Super Admin: Mark Progress Now when locking Cur dates.</li>
-          <li>Push / pull Jira as needed. Pull can add missing EM/squad stories (tagged Jira sync).</li>
+          <li>Push / pull Jira as needed. Pull can add current-sprint EM/squad stories plus leftover open work from closed sprints (tagged Jira sync).</li>
         </ol>
         <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-[13px] text-blue-950">
           <strong>Editors:</strong> you can plan the board on your squad, but you cannot run New Sprint,

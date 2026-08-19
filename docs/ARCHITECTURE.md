@@ -64,7 +64,7 @@ Phase order: FE/BE/Mobile (parallel) → Integration → QC → Buffer → UAT �
 - Personal API token encrypted in `JiraAccount`
 - Push/pull under `src/app/api/integrations/jira/*` and `src/lib/integrations/jira/*`
 - Child listing uses paginated `POST /search/jql` so every `[FE]/[BE]/[Android]/[IOS]` subtask is kept
-- Missing EM/squad parents: `POST /api/integrations/jira/tasks/discover-em` (`engineeringManagerFieldId` on `SquadJiraConfig`)
+- Missing EM/squad parents: `POST /api/integrations/jira/tasks/discover-em` — current `openSprints()` plus leftover open statuses from `closedSprints()` (`engineeringManagerFieldId` on `SquadJiraConfig`)
 - Super admin configures fields on People & Jira; writers with squad write can sync eligible tasks
 
 ## API surface (summary)

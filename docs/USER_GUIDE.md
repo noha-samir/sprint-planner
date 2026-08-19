@@ -102,7 +102,7 @@ If stories show **Need remark**, an EM/Super Admin should run **Mark Progress No
 ## Jira tips
 
 - Story needs a Jira link (or prior sync) for push/pull.
-- **Pull from Jira** also adds parent stories under this EM that are not on the dashboard (Engineering Manager field and/or Squad field under People → Jira fields). Those new rows get a **Jira sync** tag.
+- **Pull from Jira** also adds parent stories under this EM that are not on the dashboard: the **current open sprint**, plus leftover **open** stories from closed sprints (not Done / Production / In Design). Configure the Engineering Manager field and/or Squad field under People → Jira fields. Those new rows get a **Jira sync** tag.
 - Assignees must exist on People with a saved Jira account (mapped at Add time).
 - Parent PM/QC custom fields are configured under People → Jira fields (super admin).
 - Multiple `[BE]` (or FE/Android/IOS) subtasks under one story are all pulled: hours are summed, every mapped assignee is kept. Push creates one Jira subtask per person.
@@ -110,4 +110,4 @@ If stories show **Need remark**, an EM/Super Admin should run **Mark Progress No
 
 ## Appearance
 
-The app follows the laptop **light / dark** theme so labels, tables, and inputs stay readable on dark-mode machines.
+On **Sprint Settings**, use **Light** / **Dark**. That is personal to this browser. Dark mode uses a quiet charcoal theme rather than following the laptop automatically after you pick one.

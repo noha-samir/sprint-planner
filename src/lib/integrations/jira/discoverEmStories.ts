@@ -8,6 +8,32 @@ import { searchJiraUsers } from "./userSearch";
 
 export const EM_STORY_DISCOVERY_LIMIT = 200;
 
+/** Open engineering statuses imported from closed sprints (not Done / Production / In Design). */
+export const EM_CARRYOVER_OPEN_STATUSES = [
+  "To Do",
+  "In Progress",
+  "Blocked",
+  "Ready for Review",
+  "Initial Review",
+  "Final Review",
+  "Ready for Testing",
+  "Testing",
+  "Pending Bug Fixes",
+  "UAT",
+  "STAGING",
+  "Ready for Production",
+] as const;
+
+const emCarryoverOpenStatusClause = (): string =>
+  `status in (${EM_CARRYOVER_OPEN_STATUSES.map((status) => quoteJql(status)).join(", ")})`;
+
+/**
+ * Current open sprint, or leftover open work from closed sprints.
+ * Backlog (no sprint) and finished/design statuses on old sprints are excluded.
+ */
+export const emSprintAwareStoryClause = (): string =>
+  `(sprint in openSprints() OR (sprint in closedSprints() AND ${emCarryoverOpenStatusClause()}))`;
+
 export interface DiscoveredEmStory {
   key: string;
   summary: string;
@@ -43,6 +69,7 @@ export const existingIssueKeySet = (storyLinks: string[]): Set<string> => {
 
 /**
  * Build JQL for parent stories owned by this EM / squad (not subtasks or epics).
+ * Limited to the current open sprint, plus unfinished stories from closed sprints.
  */
 export const buildEmStoryDiscoveryJql = (input: EmStoryDiscoveryInput): string | null => {
   const projectKey = input.projectKey.trim().toUpperCase();
@@ -75,6 +102,7 @@ export const buildEmStoryDiscoveryJql = (input: EmStoryDiscoveryInput): string |
     "issuetype not in subTaskIssueTypes()",
     "issuetype != Epic",
     "status != Discoped",
+    emSprintAwareStoryClause(),
   ];
   if (emClause) parts.push(emClause);
   if (squadClause) parts.push(squadClause);
@@ -85,7 +113,8 @@ const storyLinkForKey = (siteUrl: string, key: string): string =>
   `${normalizeJiraSiteUrl(siteUrl) || "https://atlassian.net"}/browse/${key}`;
 
 /**
- * Search Jira for parent stories under this EM (and squad when configured),
+ * Search Jira for parent stories under this EM (and squad when configured)
+ * in the current sprint or leftover open from closed sprints,
  * skipping keys already on the dashboard.
  */
 export const discoverEmStoriesFromJira = async (
