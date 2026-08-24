@@ -965,4 +965,50 @@ describe("scheduler behavior", () => {
     expect(scheduled.iosStart).toBeNull();
     expect(scheduled.androidBlocks.reduce((sum, block) => sum + block.hours, 0)).toBeCloseTo(8, 5);
   });
+
+  it("schedules large todo boards quickly without O(n^2) greedy search", () => {
+    const resources: Resource[] = [
+      { name: "BE-1", type: "BE" },
+      { name: "FE-1", type: "FE" },
+      { name: "QC-1", type: "QC" },
+    ];
+    const flags = {
+      needsDevOps: false,
+      needsCdc: false,
+      needsDbSync: false,
+      needsOtherSquad: false,
+      needsThirdParty: false,
+    };
+    const tasks: Task[] = Array.from({ length: 80 }, (_, index) => ({
+      id: `todo-${index}`,
+      storyName: `Todo ${index}`,
+      storyLink: "",
+      poPriority: null,
+      feDevs: ["FE-1"],
+      feHours: 4 + (index % 5),
+      beDevs: ["BE-1"],
+      beHours: 4 + (index % 7),
+      androidDevs: [],
+      androidHours: 0,
+      iosDevs: [],
+      iosHours: 0,
+      needsIos: false,
+      integrationHours: 0,
+      integrationFlags: flags,
+      qcs: ["QC-1"],
+      qcHours: 4,
+      bufferHours: 0,
+      status: "TODO",
+    }));
+
+    const started = performance.now();
+    const result = schedule(tasks, resources, {
+      ...config,
+      releaseStrategy: "earliestStoriesFirst",
+    });
+    const elapsedMs = performance.now() - started;
+
+    expect(result.tasks).toHaveLength(80);
+    expect(elapsedMs).toBeLessThan(2_000);
+  });
 });

@@ -64,6 +64,7 @@ describe("taskStatus", () => {
     expect(isHiddenByDefaultStatusFilter("Production")).toBe(true);
     expect(isHiddenByDefaultStatusFilter("Done")).toBe(true);
     expect(isHiddenByDefaultStatusFilter("Released")).toBe(true);
+    expect(isHiddenByDefaultStatusFilter("Backlog")).toBe(true);
     expect(isHiddenByDefaultStatusFilter("STAGING")).toBe(false);
     expect(isHiddenByDefaultStatusFilter("Ready for Production")).toBe(false);
     expect(isHiddenByDefaultStatusFilter("UAT")).toBe(false);

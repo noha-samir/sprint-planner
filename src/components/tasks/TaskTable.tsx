@@ -198,6 +198,7 @@ export function TaskTable() {
   const addTask = usePlannerStore((state) => state.addTask);
   const addTasks = usePlannerStore((state) => state.addTasks);
   const updateTask = usePlannerStore((state) => state.updateTask);
+  const updateTasks = usePlannerStore((state) => state.updateTasks);
   const removeTask = usePlannerStore((state) => state.removeTask);
   const markProgressNow = usePlannerStore((state) => state.markProgressNow);
   const [insightResourceName, setInsightResourceName] = useState<string | null>(null);
@@ -1289,7 +1290,10 @@ export function TaskTable() {
     if (targets.length === 0) {
       return;
     }
-    targets.forEach((task) => updateTask(task.id, { carryToNextSprint: true }));
+    updateTasks(
+      targets.map((task) => task.id),
+      { carryToNextSprint: true },
+    );
     setSprintFilter("nextSprint");
     setActionFeedback(
       targets.length === 1
@@ -1305,7 +1309,10 @@ export function TaskTable() {
     if (targets.length === 0) {
       return;
     }
-    targets.forEach((task) => updateTask(task.id, { carryToNextSprint: false }));
+    updateTasks(
+      targets.map((task) => task.id),
+      { carryToNextSprint: false },
+    );
     setSprintFilter("currentSprint");
     setActionFeedback(
       targets.length === 1
@@ -1337,7 +1344,7 @@ export function TaskTable() {
         return;
       }
       const next = clampHours(Number(raw));
-      ids.forEach((id) => updateTask(id, { bufferHours: next }));
+      updateTasks(ids, { bufferHours: next });
       setActionFeedback(
         ids.length === 1
           ? `Buffer set to ${next}h for 1 story.`

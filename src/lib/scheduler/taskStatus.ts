@@ -128,8 +128,12 @@ export const isExcludedFromSchedule = (status: string): boolean =>
   isInactiveTaskStatus(status) || isReleasedTaskStatus(status);
 
 /** Statuses hidden in the dashboard filter by default. */
-export const isHiddenByDefaultStatusFilter = (status: string): boolean =>
-  isInactiveTaskStatus(status) || isReleasedTaskStatus(status);
+export const isHiddenByDefaultStatusFilter = (status: string): boolean => {
+  if (isInactiveTaskStatus(status) || isReleasedTaskStatus(status)) {
+    return true;
+  }
+  return normalize(status) === "backlog";
+};
 
 /**
  * Status filter options: known planner list first, then any extra statuses already on tasks.

@@ -80,6 +80,8 @@ interface PlannerState {
   addTask: () => string;
   addTasks: (drafts: BulkPasteRow[]) => string[];
   updateTask: (id: string, patch: Partial<Task>) => void;
+  /** Apply the same patch to many tasks in one reschedule / save. */
+  updateTasks: (ids: string[], patch: Partial<Task>) => void;
   removeTask: (id: string) => void;
   addResource: (type: Resource["type"]) => void;
   /** Append a Jira-validated roster person (exact display name). */
@@ -651,6 +653,52 @@ export const usePlannerStore = create<PlannerState>()(
             config,
             applyPlannerMetaForTaskPatch(metaBeforeEdit, id, effectivePatch, previous),
           ),
+          ...touchMutation(),
+        });
+      },
+      updateTasks: (ids, patch) => {
+        const idSet = new Set(ids);
+        if (idSet.size === 0 || Object.keys(patch).length === 0) {
+          return;
+        }
+
+        const { tasks, resources, config, plannerMeta, result: currentResult } = get();
+        const previousById = new Map(tasks.map((task) => [task.id, task]));
+        const changedIds: string[] = [];
+        const updated = tasks.map((task) => {
+          if (!idSet.has(task.id)) {
+            return task;
+          }
+          const effectivePatch = filterTaskPatchToActualChanges(task, patch);
+          if (Object.keys(effectivePatch).length === 0) {
+            return task;
+          }
+          changedIds.push(task.id);
+          return normalizeTask({ ...task, ...effectivePatch });
+        });
+        if (changedIds.length === 0) {
+          return;
+        }
+
+        let nextMeta = plannerMeta;
+        if (patchRequiresReschedule(patch)) {
+          nextMeta = seedCurScheduleFreeze(plannerMeta, currentResult);
+        }
+        for (const id of changedIds) {
+          nextMeta = applyPlannerMetaForTaskPatch(nextMeta, id, patch, previousById.get(id));
+        }
+
+        if (!patchRequiresReschedule(patch)) {
+          set({
+            tasks: updated,
+            plannerMeta: nextMeta,
+            ...touchMutation(),
+          });
+          return;
+        }
+
+        set({
+          ...buildWithPlannerMeta(updated, resources, config, nextMeta),
           ...touchMutation(),
         });
       },

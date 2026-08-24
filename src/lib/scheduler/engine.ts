@@ -315,6 +315,14 @@ const mergeNonPoOrder = (nonPo: Task[], chosenTodoPrefix: Task[], tailTodosSorte
   return nonPo.map((task) => (isTodoTaskStatus(task.status) ? (queue.shift() as Task) : task));
 };
 
+/**
+ * Greedy next-story search is O(n²) full schedule estimates. Above this size, fall back to
+ * weight sort so status/hour edits stay responsive on large boards.
+ */
+const MAX_GREEDY_ORDER_SEARCH = 12;
+
+const byScheduleWeightAsc = (a: Task, b: Task) => weightTask(a) - weightTask(b);
+
 const buildPlannedOrder = (tasks: Task[], resources: Resource[], config: Config): Task[] => {
   const strategy = resolveReleaseStrategy(config);
   const replannedFront = tasks.filter(
@@ -336,15 +344,18 @@ const buildPlannedOrder = (tasks: Task[], resources: Resource[], config: Config)
   const orderedPrefix = [...replannedFront, ...prioritized];
 
   if (strategy === "latestReleaseOnly") {
-    const orderedOut = [...orderedPrefix];
     let remaining = [...nonPo];
+    if (remaining.length > MAX_GREEDY_ORDER_SEARCH) {
+      return [...orderedPrefix, ...remaining.sort(byScheduleWeightAsc)];
+    }
+    const orderedOut = [...orderedPrefix];
     while (remaining.length > 0) {
       let bestIndex = 0;
       let bestMetrics = estimateScheduleMetrics(
         [
           ...orderedOut,
           remaining[0],
-          ...remaining.slice(1).sort((a, b) => weightTask(a) - weightTask(b)),
+          ...remaining.slice(1).sort(byScheduleWeightAsc),
         ],
         resources,
         config,
@@ -352,7 +363,7 @@ const buildPlannedOrder = (tasks: Task[], resources: Resource[], config: Config)
       remaining.forEach((candidate, index) => {
         const tail = remaining
           .filter((_, idx) => idx !== index)
-          .sort((a, b) => weightTask(a) - weightTask(b));
+          .sort(byScheduleWeightAsc);
         const metrics = estimateScheduleMetrics([...orderedOut, candidate, ...tail], resources, config);
         if (compareScheduleEstimates(metrics, bestMetrics, "latestReleaseOnly") < 0) {
           bestMetrics = metrics;
@@ -366,6 +377,13 @@ const buildPlannedOrder = (tasks: Task[], resources: Resource[], config: Config)
   }
 
   const todoReorderable = nonPo.filter((task) => isTodoTaskStatus(task.status));
+  if (todoReorderable.length > MAX_GREEDY_ORDER_SEARCH) {
+    return [
+      ...orderedPrefix,
+      ...mergeNonPoOrder(nonPo, [...todoReorderable].sort(byScheduleWeightAsc), []),
+    ];
+  }
+
   const chosenTodoSequence: Task[] = [];
   let remainingTodos = [...todoReorderable];
 
@@ -377,7 +395,7 @@ const buildPlannedOrder = (tasks: Task[], resources: Resource[], config: Config)
         ...mergeNonPoOrder(
           nonPo,
           [...chosenTodoSequence, remainingTodos[0]],
-          remainingTodos.slice(1).sort((a, b) => weightTask(a) - weightTask(b)),
+          remainingTodos.slice(1).sort(byScheduleWeightAsc),
         ),
       ],
       resources,
@@ -386,7 +404,7 @@ const buildPlannedOrder = (tasks: Task[], resources: Resource[], config: Config)
     remainingTodos.forEach((candidate, index) => {
       const tail = remainingTodos
         .filter((_, idx) => idx !== index)
-        .sort((a, b) => weightTask(a) - weightTask(b));
+        .sort(byScheduleWeightAsc);
       const merged = mergeNonPoOrder(nonPo, [...chosenTodoSequence, candidate], tail);
       const metrics = estimateScheduleMetrics([...orderedPrefix, ...merged], resources, config);
       if (compareScheduleEstimates(metrics, bestMetrics, strategy) < 0) {
