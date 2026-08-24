@@ -14,7 +14,11 @@ import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
 import { isJiraStoryLink, buildJiraIssueBrowseUrl, parseJiraIssueKey } from "@/lib/integrations/jira/issueKey";
 import { safeStoryHref } from "@/lib/ui/safeStoryHref";
 import { issueTypeChipClass } from "@/lib/ui/issueTypeChip";
-import { isParentlessPlannerTask } from "@/lib/planner/taskIssueFilters";
+import {
+  buildIssueTypeFilterOptions,
+  isParentlessPlannerTask,
+  taskMatchesIssueTypeFilter,
+} from "@/lib/planner/taskIssueFilters";
 import { isTaskEligibleForJiraPull, isTaskEligibleForJiraSync, resolveTaskForJiraSync } from "@/lib/integrations/jira/syncEligibility";
 import { JIRA_SYNC_ADDED_TAG } from "@/lib/integrations/jira/jiraSyncTag";
 import { formatBulkSyncConfirmMessage, formatBulkSyncSummary, bulkSyncHasPartialWarnings, type BulkSyncTaskResult } from "@/lib/integrations/jira/bulkSyncMessages";
@@ -48,6 +52,7 @@ import { ResourceInsightModal } from "@/components/resources/ResourceInsightModa
 import { NumberStepper } from "@/components/common/NumberStepper";
 import { OrderInput } from "@/components/common/OrderInput";
 import { BulkAddTasksModal } from "@/components/tasks/BulkAddTasksModal";
+import { StoryLinkWithPreview } from "@/components/tasks/StoryLinkWithPreview";
 import { MobileStartDateModal } from "@/components/tasks/MobileStartDateModal";
 import { ReleaseGroupInput } from "@/components/tasks/ReleaseGroupInput";
 import { JiraSyncBanner } from "@/components/sync/JiraSyncBanner";
@@ -290,6 +295,7 @@ export function TaskTable() {
     () => getTasksNeedingRemark(plannerMeta, activeTasks.map((task) => task.id)),
     [plannerMeta, activeTasks],
   );
+  const anyEmStoryMarked = useMemo(() => tasks.some((task) => Boolean(task.isEmStory)), [tasks]);
   const [selectedTimelineTaskId, setSelectedTimelineTaskId] = useState<string | null>(null);
   const selectedTimelineTask = useMemo(
     () => (selectedTimelineTaskId ? tasks.find((task) => task.id === selectedTimelineTaskId) ?? null : null),
@@ -1115,7 +1121,7 @@ export function TaskTable() {
     }).filter((task) => {
       if (emFilter === "em" && !task.isEmStory) return false;
       if (emFilter === "non-em" && task.isEmStory) return false;
-      if (typeFilter.length > 0 && !typeFilter.includes(task.issueType ?? "")) return false;
+      if (!taskMatchesIssueTypeFilter(task, typeFilter)) return false;
       if (parentlessFilter && !isParentlessPlannerTask(task)) return false;
       return true;
     });
@@ -1613,7 +1619,7 @@ export function TaskTable() {
                 ) : null}
               </button>
               {typeFilterOpen ? (() => {
-                const allTypes = [...new Set(tasks.map((t) => t.issueType).filter(Boolean))] as string[];
+                const allTypes = buildIssueTypeFilterOptions(tasks.map((t) => t.issueType));
                 return (
                   <div
                     className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,15rem)]"
@@ -1621,12 +1627,10 @@ export function TaskTable() {
                   >
                     <ToolbarDropdownHeader
                       title="Issue type"
-                      subtitle="Show only stories matching selected Jira issue types."
+                      subtitle="Show only matching issue types. Rows without a type count as Story."
                     />
                     <div className="max-h-[min(14rem,calc(100vh-12rem))] space-y-1 overflow-y-auto px-2 py-2">
-                      {allTypes.length === 0 ? (
-                        <p className="px-1 py-2 text-[12px] text-slate-400">No types set — pull from Jira to populate.</p>
-                      ) : allTypes.map((type) => {
+                      {allTypes.map((type) => {
                         const on = typeFilter.includes(type);
                         return (
                           <label
@@ -1693,7 +1697,7 @@ export function TaskTable() {
                 >
                   <ToolbarDropdownHeader
                     title="Story filter"
-                    subtitle="Narrow the table to EM stories, team stories, or standalone Jira items."
+                    subtitle="EM marks come from Jira Assignee (or EM field). Pull once to set them — refresh keeps them."
                   />
                   <div className="space-y-1 px-2 py-2">
                     {(
@@ -1706,12 +1710,12 @@ export function TaskTable() {
                         {
                           value: "em" as const,
                           label: "EM stories only",
-                          hint: "Assigned to the Engineering Manager",
+                          hint: "Jira assignee (or EM field) is this squad’s EM. Pull from Jira once to mark; refresh keeps marks.",
                         },
                         {
                           value: "non-em" as const,
                           label: "Team stories only",
-                          hint: "Not assigned to the EM",
+                          hint: "Not marked as EM (after pull). Stories never pulled stay here.",
                         },
                       ] as const
                     ).map((option) => {
@@ -2235,13 +2239,20 @@ export function TaskTable() {
               <tr>
                 <td colSpan={12} className="p-4 text-center text-sm text-slate-600">
                   <div className="flex flex-col items-center gap-2">
-                    <span>No tasks match the current filters.</span>
+                    <span>
+                      {emFilter === "em" && !anyEmStoryMarked
+                        ? "No EM stories marked yet. Pull from Jira once to mark stories whose Jira assignee (or EM field) is this squad’s EM — refresh keeps those marks."
+                        : "No tasks match the current filters."}
+                    </span>
                     <button
                       type="button"
                       className="btn-secondary px-3 py-1.5 text-[13px]"
                       onClick={() => {
                         setVisibleStatuses(defaultVisibleStatuses);
                         setSprintFilter("all");
+                        setEmFilter("all");
+                        setTypeFilter([]);
+                        setParentlessFilter(false);
                       }}
                     >
                       Reset Filters
@@ -2338,15 +2349,13 @@ export function TaskTable() {
                           {(() => {
                             const href = storyHref(task.storyLink);
                             return href ? (
-                            <a
+                            <StoryLinkWithPreview
                               href={href}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                              label={storyLabel}
+                              storyLink={task.storyLink}
+                              squadId={activeSquadId}
                               className="story-title-link"
-                              title={storyLabel}
-                            >
-                              {storyLabel}
-                            </a>
+                            />
                             ) : (
                             <span className="story-title-text" title={storyLabel}>
                               {storyLabel}
@@ -2372,7 +2381,7 @@ export function TaskTable() {
                           {task.isEmStory ? (
                             <span
                               className="task-flag-chip task-story-type-chip task-flag-chip-type-em"
-                              title="Assigned to the Engineering Manager"
+                              title="Jira assignee (or EM field) matches this squad’s Engineering Manager"
                             >
                               <span className="task-flag-chip-label">EM</span>
                             </span>

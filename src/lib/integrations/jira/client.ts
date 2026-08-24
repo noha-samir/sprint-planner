@@ -77,6 +77,38 @@ export const getJiraIssue = async (credentials: JiraApiCredentials, issueKey: st
   return (await response.json()) as Record<string, unknown>;
 };
 
+/** Fields used by the dashboard story-link hover preview. */
+export const jiraFetchIssuePreviewFields = async (
+  credentials: JiraApiCredentials,
+  issueKey: string,
+): Promise<{
+  summary?: string;
+  assignee?: unknown;
+  reporter?: unknown;
+  description?: unknown;
+}> => {
+  const response = await jiraFetch(
+    credentials,
+    `/issue/${encodeURIComponent(issueKey)}?fields=${encodeURIComponent("summary,assignee,reporter,description")}`,
+  );
+  if (!response.ok) {
+    await response.text().catch(() => "");
+    throw new JiraApiError(
+      publicJiraErrorMessage(response.status, `Failed to load Jira issue ${issueKey}`),
+      response.status,
+    );
+  }
+  const body = (await response.json()) as {
+    fields?: {
+      summary?: string;
+      assignee?: unknown;
+      reporter?: unknown;
+      description?: unknown;
+    };
+  };
+  return body.fields ?? {};
+};
+
 export interface CreateSubtaskInput {
   projectKey: string;
   parentIssueKey: string;
