@@ -5,6 +5,7 @@ import {
   extractJiraUserField,
   formatBulkPullConfirmMessage,
   formatBulkPullSummary,
+  resolveHoursForDiscoveredTask,
   resolvePlannerNameFromJiraUser,
   syncTaskFromJira,
 } from "./pullFromJira";
@@ -93,6 +94,24 @@ describe("resolvePlannerNameFromJiraUser", () => {
 
   it("returns null when unmapped so roster identity is preserved", () => {
     expect(resolvePlannerNameFromJiraUser({ displayName: "Someone" }, {}, [])).toBeNull();
+  });
+});
+
+describe("resolveHoursForDiscoveredTask", () => {
+  it("imports estimate hours without auto-assigning the Jira assignee to FE/BE/QC", () => {
+    const result = resolveHoursForDiscoveredTask(
+      "acc-be",
+      7200,
+      { Morgan: "acc-be" },
+      [{ name: "Morgan", type: "BE" }],
+    );
+    expect(result.feHours).toBe(2);
+    expect(result.beHours).toBe(0);
+    expect(result.feDevs).toEqual([]);
+    expect(result.beDevs).toEqual([]);
+    expect(result.qcs).toEqual([]);
+    expect(result.androidDevs).toEqual([]);
+    expect(result.iosDevs).toEqual([]);
   });
 });
 

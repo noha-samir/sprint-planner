@@ -77,16 +77,15 @@ const reverseAssigneeMap = (assigneeMap: Record<string, string>): Map<string, st
 type ResourceRef = { name: string; type: string };
 
 /**
- * Resolve pre-filled hours and assignee arrays for a discovered standalone task/bug.
- * Reverse-looks up the assignee account ID in the assigneeMap to find the planner resource,
- * then maps their type (FE/BE/QC/MO/PM) to the correct role field.
- * Falls back to feHours when the assignee cannot be resolved.
+ * Hours (and empty assignee arrays) for a discovered Jira story/task/bug before Pull.
+ * Uses the issue estimate only — never auto-assigns FE/BE/QC/MO from the Jira assignee.
+ * Role assignees come later from Pull ([FE]/[BE]/QC fields) or manual edit.
  */
 export const resolveHoursForDiscoveredTask = (
-  assigneeAccountId: string | null,
+  _assigneeAccountId: string | null,
   estimateSeconds: number | null,
-  assigneeMap: Record<string, string>,
-  resources: ResourceRef[],
+  _assigneeMap: Record<string, string>,
+  _resources: ResourceRef[],
 ): {
   feHours: number; beHours: number; qcHours: number; androidHours: number; iosHours: number;
   feDevs: string[]; beDevs: string[]; qcs: string[]; androidDevs: string[]; iosDevs: string[];
@@ -95,32 +94,18 @@ export const resolveHoursForDiscoveredTask = (
     ? Math.round((estimateSeconds / 3600) * 10) / 10
     : 0;
 
-  const empty = {
-    feHours: 0, beHours: 0, qcHours: 0, androidHours: 0, iosHours: 0,
-    feDevs: [] as string[], beDevs: [] as string[], qcs: [] as string[],
-    androidDevs: [] as string[], iosDevs: [] as string[],
+  return {
+    feHours: hours,
+    beHours: 0,
+    qcHours: 0,
+    androidHours: 0,
+    iosHours: 0,
+    feDevs: [],
+    beDevs: [],
+    qcs: [],
+    androidDevs: [],
+    iosDevs: [],
   };
-
-  if (!assigneeAccountId) {
-    return { ...empty, feHours: hours };
-  }
-
-  const reversed = reverseAssigneeMap(assigneeMap);
-  const plannerName = reversed.get(assigneeAccountId.trim());
-  if (!plannerName) {
-    return { ...empty, feHours: hours };
-  }
-
-  const resource = resources.find(
-    (r) => r.name.trim().toLowerCase() === plannerName.toLowerCase(),
-  );
-  const type = resource?.type?.toUpperCase() ?? "FE";
-
-  if (type === "BE") return { ...empty, beHours: hours, beDevs: [plannerName] };
-  if (type === "QC") return { ...empty, qcHours: hours, qcs: [plannerName] };
-  if (type === "MO") return { ...empty, androidHours: hours, androidDevs: [plannerName] };
-  // FE and PM both go to feHours/feDevs as default
-  return { ...empty, feHours: hours, feDevs: [plannerName] };
 };
 
 /**
