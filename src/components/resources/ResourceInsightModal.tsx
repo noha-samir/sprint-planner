@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { getSprintWorkingDayCountInWindow, totalWorkingHoursForSprint } from "@/lib/scheduler/calendar";
 import { matchResourceByAssigneeLabel, resourceDisplayName } from "@/lib/planner/resourceIdentity";
+import { buildResourceInsightTaskRows } from "@/lib/planner/resourceInsightTasks";
 import { resolveOtherSquadsHours } from "@/lib/scheduler/utilization";
 import {
   RESOURCE_INSIGHT_BUCKET_LABELS,
@@ -12,7 +13,7 @@ import {
   statusChipClass,
   type ResourceInsightStatusBucket,
 } from "@/lib/scheduler/taskStatus";
-import { SQUAD_CAPACITY_HOURS_MAX, type Resource, type Task } from "@/lib/scheduler/types";
+import { SQUAD_CAPACITY_HOURS_MAX, type Resource } from "@/lib/scheduler/types";
 import { usePlannerStore } from "@/store/usePlannerStore";
 import { safeStoryHref } from "@/lib/ui/safeStoryHref";
 
@@ -38,46 +39,6 @@ const phaseCardClass = (resource: Resource | null) => {
   if (resource.type === "QC") return "phase-qc";
   if (resource.type === "PM") return "phase-pm";
   return "phase-int";
-};
-
-const hoursForResourceOnTask = (task: Task, resource: Resource): number => {
-  if (resource.type === "BE") {
-    const assignees = task.beDevs?.length ? task.beDevs : [];
-    if (assignees.includes(resource.name) && assignees.length > 0) {
-      return task.beHours / assignees.length;
-    }
-    return 0;
-  }
-  if (resource.type === "FE") {
-    const assignees = task.feDevs?.length ? task.feDevs : [];
-    if (assignees.includes(resource.name) && assignees.length > 0) {
-      return task.feHours / assignees.length;
-    }
-    return 0;
-  }
-  if (resource.type === "MO") {
-    let total = 0;
-    const androidAssignees = task.androidDevs?.length ? task.androidDevs : [];
-    if (androidAssignees.includes(resource.name) && androidAssignees.length > 0) {
-      total += (task.androidHours ?? 0) / androidAssignees.length;
-    }
-    const iosAssignees = task.needsIos && task.iosDevs?.length ? task.iosDevs : [];
-    if (iosAssignees.includes(resource.name) && iosAssignees.length > 0) {
-      total += (task.needsIos ? Math.max(0, task.iosHours ?? 0) : 0) / iosAssignees.length;
-    }
-    return total;
-  }
-  if (resource.type === "QC") {
-    const assignees = task.qcs?.length ? task.qcs : [];
-    if (assignees.includes(resource.name) && assignees.length > 0) {
-      return task.qcHours / assignees.length;
-    }
-  }
-  if (resource.type === "PM") {
-    // PM has no scheduled hours — still surface assigned stories in the insight modal.
-    return task.productManagers?.includes(resource.name) ? 0.01 : 0;
-  }
-  return 0;
 };
 
 export function ResourceInsightModal({ resourceName, onClose }: Props) {
@@ -110,25 +71,11 @@ export function ResourceInsightModal({ resourceName, onClose }: Props) {
     devCapacityHours > 0 ? Math.min(999, Math.round((takenHours / devCapacityHours) * 100)) : 0;
 
   const assignedTasks: InsightTaskRow[] = resource
-    ? tasks
-        .filter((task) => !task.carryToNextSprint)
-        .map((task) => {
-          const totalHours = hoursForResourceOnTask(task, resource);
-          if (totalHours <= 0) return null;
-          return {
-            taskId: task.id,
-            storyLabel: task.storyName || task.storyLink || task.id,
-            storyLink: task.storyLink,
-            status: task.status,
-            totalHours,
-          } satisfies InsightTaskRow;
-        })
-        .filter((row): row is InsightTaskRow => row != null)
-        .sort((a, b) => {
-          const rankDiff = resourceInsightStatusRank(a.status) - resourceInsightStatusRank(b.status);
-          if (rankDiff !== 0) return rankDiff;
-          return b.totalHours - a.totalHours;
-        })
+    ? buildResourceInsightTaskRows(tasks, resource).sort((a, b) => {
+        const rankDiff = resourceInsightStatusRank(a.status) - resourceInsightStatusRank(b.status);
+        if (rankDiff !== 0) return rankDiff;
+        return b.totalHours - a.totalHours;
+      })
     : [];
 
   const tasksByBucket = assignedTasks.reduce(
@@ -272,7 +219,7 @@ export function ResourceInsightModal({ resourceName, onClose }: Props) {
                 </div>
                 <div className="max-h-72 space-y-2.5 overflow-y-auto pr-1">
                   {assignedTasks.length === 0 ? (
-                    <p className="text-[12px] text-slate-600">No assigned story hours for this resource.</p>
+                    <p className="text-[12px] text-slate-600">No assigned stories for this resource.</p>
                   ) : (
                     bucketOrder.map((bucket) => {
                       const rows = tasksByBucket[bucket];

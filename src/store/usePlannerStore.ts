@@ -34,6 +34,10 @@ import { archiveSprintSnapshot } from "@/lib/history/client";
 import type { BulkPasteRow } from "@/lib/planner/bulkTaskPaste";
 import { coerceAssigneeNamesToRoster } from "@/lib/planner/resourceIdentity";
 import {
+  collapseTasksByStoryLink,
+  filterDraftsSkippingExistingStoryLinks,
+} from "@/lib/planner/storyLinkIdentity";
+import {
   activeSprintTasks,
   buildCarryOverTasks,
   compactPrioritiesAfterRelease,
@@ -318,6 +322,22 @@ const normalizeConfig = (config: Config): Config => ({
   replanAsOf: config.replanAsOf ?? null,
 });
 
+const pruneRemovedTaskIdsFromPlannerMeta = (meta: PlannerMeta, removedIds: string[]): PlannerMeta => {
+  if (removedIds.length === 0) {
+    return meta;
+  }
+  const drop = new Set(removedIds);
+  let next = meta;
+  for (const id of removedIds) {
+    next = removeTaskIdFromNeedRemark(next, id);
+  }
+  const dashboardTaskOrder = next.dashboardTaskOrder.filter((id) => !drop.has(id));
+  if (dashboardTaskOrder.length === next.dashboardTaskOrder.length) {
+    return next;
+  }
+  return { ...next, dashboardTaskOrder };
+};
+
 const buildState = (tasks: Task[], resources: Resource[], config: Config) => {
   const normalizedResources = ensureDefaultMobileResources(normalizeResourceCapacities(resources));
   const normalizedTasks = tasks.map((task) => {
@@ -332,12 +352,14 @@ const buildState = (tasks: Task[], resources: Resource[], config: Config) => {
       productManagers: coerceAssigneeNamesToRoster(normalized.productManagers ?? [], normalizedResources),
     };
   });
+  const { tasks: uniqueTasks, removedIds } = collapseTasksByStoryLink(normalizedTasks);
   const cfg = normalizeConfig(config);
   return {
-    tasks: normalizedTasks,
+    tasks: uniqueTasks,
+    removedDuplicateTaskIds: removedIds,
     resources: normalizedResources,
     config: cfg,
-    ...derive(normalizedTasks, normalizedResources, cfg),
+    ...derive(uniqueTasks, normalizedResources, cfg),
   };
 };
 
@@ -430,12 +452,17 @@ const finalizePlannerBuild = (
   plannerMeta: PlannerMeta,
   options?: BuildPlannerOptions,
 ) => {
-  const migrated = runPlannerMetaMigration(mergePlannerMetaPatch(plannerMeta), built.result, built.config);
+  const { removedDuplicateTaskIds, ...builtState } = built;
+  const migrated = runPlannerMetaMigration(
+    pruneRemovedTaskIdsFromPlannerMeta(mergePlannerMetaPatch(plannerMeta), removedDuplicateTaskIds),
+    builtState.result,
+    builtState.config,
+  );
   // Seed Cur freeze when tracking is on but snapshot was never captured (e.g. baseline-only meta).
-  let nextMeta = seedCurScheduleFreeze(migrated.plannerMeta, built.result);
+  let nextMeta = seedCurScheduleFreeze(migrated.plannerMeta, builtState.result);
   const shouldRescheduleCur = options?.rescheduleCur ?? !nextMeta.uatTrackingEnabled;
-  let result = built.result;
-  let remainingUtilization = built.remainingUtilization;
+  let result = builtState.result;
+  let remainingUtilization = builtState.remainingUtilization;
 
   if (shouldRescheduleCur) {
     const takenAt = new Date().toISOString();
@@ -443,13 +470,13 @@ const finalizePlannerBuild = (
       nextMeta = captureCurScheduleMeta(nextMeta, result, takenAt);
     }
   } else {
-    const frozen = applyFrozenCurSchedule(built.tasks, built.resources, built, nextMeta);
+    const frozen = applyFrozenCurSchedule(builtState.tasks, builtState.resources, builtState, nextMeta);
     result = frozen.result;
     remainingUtilization = frozen.remainingUtilization;
   }
 
   return {
-    ...built,
+    ...builtState,
     config: migrated.config,
     result,
     remainingUtilization,
@@ -487,6 +514,7 @@ const mergePersistedWithDerived = (persistedState: unknown, currentState: Planne
   return {
     ...merged,
     ...finalized,
+    ...(built.removedDuplicateTaskIds.length > 0 ? touchMutation() : {}),
   };
 };
 
@@ -553,7 +581,10 @@ export const usePlannerStore = create<PlannerState>()(
       },
       addTasks: (drafts) => {
         const { tasks, resources, config, plannerMeta, result: currentResult } = get();
-        const validDrafts = drafts.filter((draft) => draft.isValid);
+        const validDrafts = filterDraftsSkippingExistingStoryLinks(
+          drafts.filter((draft) => draft.isValid),
+          tasks,
+        );
         if (validDrafts.length === 0) {
           return [];
         }
@@ -941,7 +972,10 @@ export const usePlannerStore = create<PlannerState>()(
           ...finalized,
           timelineStartDate:
             typeof data.timelineStartDate === "string" ? data.timelineStartDate : null,
-          lastLocalMutationAt: localMutationAt,
+          lastLocalMutationAt:
+            built.removedDuplicateTaskIds.length > 0
+              ? new Date().toISOString()
+              : localMutationAt,
           lastServerUpdatedAt: serverUpdatedAt ?? get().lastServerUpdatedAt,
         });
       },
