@@ -174,7 +174,7 @@ export default function HistoryPage() {
       !window.confirm(
         `Restore this archived sprint to the live dashboard?\n\n` +
           `Sprint start: ${selectedEntry.sprintStartDate}\n` +
-          `Stories: ${selectedEntry.tasks.length}\n\n` +
+          `Work items: ${selectedEntry.tasks.length}\n\n` +
           `This replaces the current live board. Save/sync will persist the restore.`,
       )
     ) {
@@ -185,9 +185,11 @@ export default function HistoryPage() {
       resources: selectedEntry.resources,
       config: selectedEntry.config,
     });
+    const liveCount = usePlannerStore.getState().tasks.length;
     setSelectedEntryId("__current_sprint__");
     setRestoreFeedback(
-      `Restored sprint from ${fmtDateTime(selectedEntry.archivedAt)} to the live board (${selectedEntry.tasks.length} stories).`,
+      `Restored sprint from ${fmtDateTime(selectedEntry.archivedAt)} to the live board ` +
+        `(archive ${selectedEntry.tasks.length} → live ${liveCount} stories).`,
     );
   };
 
@@ -226,11 +228,16 @@ export default function HistoryPage() {
             ))}
           </select>
           {canRestoreSprint && isArchivedSelection ? (
-            <button type="button" className="btn-primary" onClick={handleRestoreSelected} disabled={detailLoading}>
+            <button
+              type="button"
+              className="btn-primary px-2 py-1 text-sm"
+              onClick={handleRestoreSelected}
+              disabled={detailLoading}
+            >
               Restore to live board
             </button>
           ) : null}
-          <button type="button" className="btn-secondary" onClick={() => void loadHistory()}>
+          <button type="button" className="btn-secondary px-2 py-1 text-sm" onClick={() => void loadHistory()}>
             Refresh
           </button>
         </div>

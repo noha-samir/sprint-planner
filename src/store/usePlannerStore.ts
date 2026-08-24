@@ -205,6 +205,11 @@ const derive = (tasks: Task[], resources: Resource[], config: Config) => {
 type BuildPlannerOptions = {
   /** When true, recomputes Cur (UAT/Production) schedule. Defaults to false while UAT tracking is on. */
   rescheduleCur?: boolean;
+  /**
+   * Keep every row even when story links collide (History restore).
+   * Default collapses same-link duplicates on normal builds.
+   */
+  preserveDuplicateStoryLinks?: boolean;
 };
 
 const captureCurScheduleMeta = (meta: PlannerMeta, result: ScheduleResult, takenAt: string): PlannerMeta => ({
@@ -349,7 +354,12 @@ const pruneRemovedTaskIdsFromPlannerMeta = (meta: PlannerMeta, removedIds: strin
   return { ...next, dashboardTaskOrder };
 };
 
-const buildState = (tasks: Task[], resources: Resource[], config: Config) => {
+const buildState = (
+  tasks: Task[],
+  resources: Resource[],
+  config: Config,
+  options?: Pick<BuildPlannerOptions, "preserveDuplicateStoryLinks">,
+) => {
   const normalizedResources = ensureDefaultMobileResources(normalizeResourceCapacities(resources));
   const normalizedTasks = tasks.map((task) => {
     const normalized = normalizeTask(task);
@@ -363,14 +373,16 @@ const buildState = (tasks: Task[], resources: Resource[], config: Config) => {
       productManagers: coerceAssigneeNamesToRoster(normalized.productManagers ?? [], normalizedResources),
     };
   });
-  const { tasks: uniqueTasks, removedIds } = collapseTasksByStoryLink(normalizedTasks);
+  const { tasks: boardTasks, removedIds } = options?.preserveDuplicateStoryLinks
+    ? { tasks: normalizedTasks, removedIds: [] as string[] }
+    : collapseTasksByStoryLink(normalizedTasks);
   const cfg = normalizeConfig(config);
   return {
-    tasks: uniqueTasks,
+    tasks: boardTasks,
     removedDuplicateTaskIds: removedIds,
     resources: normalizedResources,
     config: cfg,
-    ...derive(uniqueTasks, normalizedResources, cfg),
+    ...derive(boardTasks, normalizedResources, cfg),
   };
 };
 
@@ -543,7 +555,14 @@ export const usePlannerStore = create<PlannerState>()(
         config: Config,
         plannerMeta: PlannerMeta,
         options?: BuildPlannerOptions,
-      ) => finalizePlannerBuild(buildState(tasks, resources, config), plannerMeta, options);
+      ) =>
+        finalizePlannerBuild(
+          buildState(tasks, resources, config, {
+            preserveDuplicateStoryLinks: options?.preserveDuplicateStoryLinks,
+          }),
+          plannerMeta,
+          options,
+        );
       return ({
       hasHydrated: false,
       activeSquadId: null,
@@ -990,7 +1009,7 @@ export const usePlannerStore = create<PlannerState>()(
           snapshot.resources,
           nextConfig,
           defaultPlannerMeta(),
-          { rescheduleCur: true },
+          { rescheduleCur: true, preserveDuplicateStoryLinks: true },
         );
         const dashboardTaskOrder = buildDashboardTaskOrder(
           activeSprintTasks(built.tasks),
