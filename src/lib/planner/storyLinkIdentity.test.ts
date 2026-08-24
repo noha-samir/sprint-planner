@@ -60,6 +60,17 @@ describe("storyLinkIdentity", () => {
     expect(tasks.find((row) => row.id === "b")?.storyName).toBe("Filled");
   });
 
+  it("keeps Next-sprint carry when collapsing a higher-effort duplicate without the flag", () => {
+    const { tasks } = collapseTasksByStoryLink([
+      task({ id: "carry", beHours: 0, carryToNextSprint: true, storyName: "Carry" }),
+      task({ id: "heavy", beHours: 10, carryToNextSprint: false, storyName: "Heavy" }),
+    ]);
+
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].id).toBe("heavy");
+    expect(tasks[0].carryToNextSprint).toBe(true);
+  });
+
   it("skips drafts that share a link with the board or earlier drafts", () => {
     const kept = filterDraftsSkippingExistingStoryLinks(
       [

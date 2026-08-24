@@ -201,6 +201,7 @@ export function TaskTable() {
   const updateTasks = usePlannerStore((state) => state.updateTasks);
   const removeTask = usePlannerStore((state) => state.removeTask);
   const markProgressNow = usePlannerStore((state) => state.markProgressNow);
+  const sprintBoardGeneration = usePlannerStore((state) => state.sprintBoardGeneration);
   const [insightResourceName, setInsightResourceName] = useState<string | null>(null);
   const [taskPendingDelete, setTaskPendingDelete] = useState<string | null>(null);
   const [taskTagModalId, setTaskTagModalId] = useState<string | null>(null);
@@ -275,6 +276,24 @@ export function TaskTable() {
   const [isSprintFilterOpen, setIsSprintFilterOpen] = useState(false);
   const [isStatusFilterOpen, setIsStatusFilterOpen] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
+  const lastHandledSprintBoardGeneration = useRef(0);
+
+  // Carry-overs become current-sprint rows; leave Next Sprint filter would look like an empty board.
+  useEffect(() => {
+    if (sprintBoardGeneration === 0 || sprintBoardGeneration === lastHandledSprintBoardGeneration.current) {
+      return;
+    }
+    lastHandledSprintBoardGeneration.current = sprintBoardGeneration;
+    setSprintFilter("currentSprint");
+    setVisibleStatuses((current) => {
+      const hasToDo = current.some((status) => status.trim().toLowerCase() === "to do");
+      return hasToDo ? current : [...current, DEFAULT_TASK_STATUS];
+    });
+    setActionFeedback(
+      "New sprint started. All stories stayed on the board; showing Current Sprint.",
+    );
+  }, [sprintBoardGeneration]);
+
   useEffect(() => {
     if (!actionFeedback) {
       return;

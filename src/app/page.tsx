@@ -1,14 +1,19 @@
 "use client";
 
+import { useState } from "react";
+import { useSession } from "next-auth/react";
+import { StartNewSprintModal } from "@/components/tasks/StartNewSprintModal";
 import { TaskTable } from "@/components/tasks/TaskTable";
 import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
-import { useSession } from "next-auth/react";
 import { usePlannerStore } from "@/store/usePlannerStore";
 
 function NewSprintButton() {
   const { data: session } = useSession();
   const startNewSprint = usePlannerStore((state) => state.startNewSprint);
+  const tasks = usePlannerStore((state) => state.tasks);
   const activeSquadId = usePlannerStore((state) => state.activeSquadId);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
   const role = session?.user?.role;
   const canManageSprintLifecycle =
     !!role &&
@@ -16,10 +21,47 @@ function NewSprintButton() {
   if (!canManageSprintLifecycle) {
     return null;
   }
+
+  const nextSprintStories = tasks.filter((task) => !!task.carryToNextSprint).length;
+
   return (
-    <button className="btn-danger disabled:opacity-50" onClick={() => void startNewSprint()}>
-      Start New Sprint
-    </button>
+    <>
+      <button
+        className="btn-danger disabled:opacity-50"
+        disabled={busy}
+        onClick={() => setModalOpen(true)}
+      >
+        Start New Sprint
+      </button>
+      <StartNewSprintModal
+        open={modalOpen}
+        totalStories={tasks.length}
+        nextSprintStories={nextSprintStories}
+        busy={busy}
+        onClose={() => {
+          if (!busy) {
+            setModalOpen(false);
+          }
+        }}
+        onConfirm={(sprintStartDate) => {
+          void (async () => {
+            setBusy(true);
+            try {
+              await startNewSprint({ sprintStartDate });
+              setModalOpen(false);
+            } catch (error) {
+              window.alert(
+                error instanceof Error
+                  ? error.message
+                  : "Could not archive the current sprint to History. The live board was left unchanged.",
+              );
+            } finally {
+              setBusy(false);
+            }
+          })();
+        }}
+      />
+    </>
   );
 }
 

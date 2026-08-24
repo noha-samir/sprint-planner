@@ -89,15 +89,20 @@ describe("store task helpers", () => {
     expect(updated.find((item) => item.id === "c")?.poPriority).toBe(2);
   });
 
-  it("builds carry-over tasks and resets status/flag", () => {
+  it("keeps the full board on Start New Sprint and only resets parked Next Sprint rows", () => {
     const tasks = [
       makeTask("a", 1, true),
       { ...makeTask("b", 2, true), status: "Testing" as const },
-      makeTask("c", 3, false),
+      { ...makeTask("c", 3, false), status: "In Progress" as const },
+      { ...makeTask("done", 4, false), status: "Production" as const },
+      { ...makeTask("closed", 5, false), status: "Closed" as const },
     ];
     const carry = buildCarryOverTasks(tasks);
-    expect(carry.map((item) => item.id)).toEqual(["a", "b"]);
-    expect(carry.every((item) => item.status === "To Do")).toBe(true);
+    expect(carry.map((item) => item.id)).toEqual(["a", "b", "c", "done", "closed"]);
+    expect(carry.find((item) => item.id === "a")?.status).toBe("To Do");
+    expect(carry.find((item) => item.id === "b")?.status).toBe("To Do");
+    expect(carry.find((item) => item.id === "c")?.status).toBe("In Progress");
+    expect(carry.find((item) => item.id === "done")?.status).toBe("Production");
     expect(carry.every((item) => item.carryToNextSprint === false)).toBe(true);
   });
 

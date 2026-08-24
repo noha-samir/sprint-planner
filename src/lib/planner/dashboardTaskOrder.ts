@@ -215,7 +215,7 @@ export const sortTasksForDashboard = (
 
   if (!pinnedOrder || pinnedOrder.length === 0) {
     sorted.sort((a, b) => compareTasksForDashboardOrder(a, b, releaseDateById, groupRankByName));
-    return floatNearReleaseStatusesToTop(sorted);
+    return floatNearReleaseStatusesToTop(clusterTasksByReleaseGroup(sorted));
   }
 
   const orderIndex = new Map(pinnedOrder.map((id, index) => [id, index]));

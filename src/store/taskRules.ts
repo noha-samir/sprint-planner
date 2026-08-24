@@ -52,15 +52,20 @@ export const enforceUniquePoPriorities = (tasks: Task[], changedTaskId: string, 
   });
 };
 
+/**
+ * Start New Sprint keeps the full live board (story count unchanged).
+ * History gets a snapshot first; Next Sprint flags clear; parked Next rows reset to To Do.
+ */
 export const buildCarryOverTasks = (tasks: Task[]) =>
-  tasks
-    .filter((task) => task.carryToNextSprint)
-    .map((task) => ({
+  tasks.map((task) => {
+    const wasParkedForNextSprint = Boolean(task.carryToNextSprint);
+    return {
       ...task,
       storyName: task.storyName ?? "",
       carryToNextSprint: false,
-      status: DEFAULT_TASK_STATUS,
-    }));
+      status: wasParkedForNextSprint ? DEFAULT_TASK_STATUS : task.status,
+    };
+  });
 
 export const compactPrioritiesAfterRelease = (tasks: Task[], releasedTaskId: string): Task[] => {
   const indexById = new Map(tasks.map((task, index) => [task.id, index]));

@@ -39,18 +39,40 @@ const taskEffortHours = (task: Task): number =>
   (task.integrationHours ?? 0) +
   (task.bufferHours ?? 0);
 
-/** Prefer the row with more planned effort, then a non-empty name. */
+/** Prefer higher effort, but always keep Next-sprint carry if either duplicate had it. */
 export const preferTaskForStoryLinkDedupe = (a: Task, b: Task): Task => {
   const effortDelta = taskEffortHours(a) - taskEffortHours(b);
+  let preferred: Task;
   if (effortDelta !== 0) {
-    return effortDelta > 0 ? a : b;
+    preferred = effortDelta > 0 ? a : b;
+  } else {
+    const aName = a.storyName.trim().length;
+    const bName = b.storyName.trim().length;
+    if (aName !== bName) {
+      preferred = aName > bName ? a : b;
+    } else if (a.carryToNextSprint && !b.carryToNextSprint) {
+      preferred = a;
+    } else if (b.carryToNextSprint && !a.carryToNextSprint) {
+      preferred = b;
+    } else {
+      preferred = a;
+    }
   }
-  const aName = a.storyName.trim().length;
-  const bName = b.storyName.trim().length;
-  if (aName !== bName) {
-    return aName > bName ? a : b;
+
+  const carryToNextSprint = Boolean(a.carryToNextSprint || b.carryToNextSprint);
+  const releaseGroup =
+    (preferred.releaseGroup?.trim() ? preferred.releaseGroup : null) ??
+    (a.releaseGroup?.trim() ? a.releaseGroup : null) ??
+    (b.releaseGroup?.trim() ? b.releaseGroup : null);
+
+  let next = preferred;
+  if (carryToNextSprint !== Boolean(preferred.carryToNextSprint)) {
+    next = { ...next, carryToNextSprint };
   }
-  return a;
+  if ((next.releaseGroup ?? null) !== (releaseGroup ?? null)) {
+    next = { ...next, releaseGroup };
+  }
+  return next;
 };
 
 export type CollapseTasksByStoryLinkResult = {

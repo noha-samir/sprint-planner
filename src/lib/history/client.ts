@@ -15,9 +15,19 @@ export const archiveSprintSnapshot = async (payload: ArchiveSprintPayload): Prom
     headers["x-squad-id"] = squadId;
   }
   headers["x-retention-mode"] = retentionMode;
-  await fetch("/api/history", {
+  const response = await fetch("/api/history", {
     method: "POST",
     headers,
     body: JSON.stringify(body),
   });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const data = (await response.json()) as { error?: string };
+      detail = data.error?.trim() ? `: ${data.error.trim()}` : "";
+    } catch {
+      /* ignore non-JSON error bodies */
+    }
+    throw new Error(`Failed to archive sprint to History (HTTP ${response.status})${detail}`);
+  }
 };

@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
+import { useSession } from "next-auth/react";
+import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
 import { effectiveMobileHours } from "@/lib/scheduler/mobilePlatform";
 import { getSprintWindowEnd, parseCalendarDate } from "@/lib/scheduler/calendar";
 import { getCurrentStoryPhase, getStatusPhase, type StoryPhase } from "@/lib/scheduler/currentPhase";
@@ -41,15 +43,21 @@ const canCalculateRelease = (task: Task) =>
 const storyHref = safeStoryHref;
 
 export default function HistoryPage() {
+  const { data: session } = useSession();
   const activeSquadId = usePlannerStore((state) => state.activeSquadId);
   const currentTasks = usePlannerStore((state) => state.tasks);
   const currentResources = usePlannerStore((state) => state.resources);
   const currentConfig = usePlannerStore((state) => state.config);
+  const restoreSprintFromHistory = usePlannerStore((state) => state.restoreSprintFromHistory);
+  const canRestoreSprint =
+    !!session?.user?.role &&
+    getCapabilities(plannerAccessContext(session, activeSquadId)).canManageSprintLifecycle;
   const [items, setItems] = useState<SprintHistoryListItem[]>([]);
   const [detailById, setDetailById] = useState<Record<string, SprintHistoryEntry>>({});
   const [selectedEntryId, setSelectedEntryId] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [restoreFeedback, setRestoreFeedback] = useState<string | null>(null);
 
   const fetchHistory = useCallback(async () => {
     const suffix = activeSquadId ? `?squadId=${encodeURIComponent(activeSquadId)}` : "";
@@ -155,6 +163,34 @@ export default function HistoryPage() {
     return detailById[selectedEntryId] ?? null;
   }, [currentEntry, detailById, selectedEntryId]);
 
+  const isArchivedSelection =
+    !!selectedEntry && selectedEntry.id !== "__current_sprint__" && selectedEntry.id !== currentEntry.id;
+
+  const handleRestoreSelected = () => {
+    if (!selectedEntry || !isArchivedSelection) {
+      return;
+    }
+    if (
+      !window.confirm(
+        `Restore this archived sprint to the live dashboard?\n\n` +
+          `Sprint start: ${selectedEntry.sprintStartDate}\n` +
+          `Stories: ${selectedEntry.tasks.length}\n\n` +
+          `This replaces the current live board. Save/sync will persist the restore.`,
+      )
+    ) {
+      return;
+    }
+    restoreSprintFromHistory({
+      tasks: selectedEntry.tasks,
+      resources: selectedEntry.resources,
+      config: selectedEntry.config,
+    });
+    setSelectedEntryId("__current_sprint__");
+    setRestoreFeedback(
+      `Restored sprint from ${fmtDateTime(selectedEntry.archivedAt)} to the live board (${selectedEntry.tasks.length} stories).`,
+    );
+  };
+
   const scheduled = useMemo(() => {
     if (!selectedEntry) return null;
     return schedule(activeSprintTasks(selectedEntry.tasks), selectedEntry.resources, selectedEntry.config);
@@ -170,7 +206,9 @@ export default function HistoryPage() {
       <div className="flex shrink-0 items-center justify-between">
         <div>
           <h1 className="section-title">History</h1>
-          <p className="mt-1 text-sm text-slate-500">Dashboard view of current + archived sprints (read-only).</p>
+          <p className="mt-1 text-sm text-slate-500">
+            Current sprint plus archived boards from Start New Sprint. Open an archive to review or restore it.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <select
@@ -187,11 +225,22 @@ export default function HistoryPage() {
               </option>
             ))}
           </select>
+          {canRestoreSprint && isArchivedSelection ? (
+            <button type="button" className="btn-primary" onClick={handleRestoreSelected} disabled={detailLoading}>
+              Restore to live board
+            </button>
+          ) : null}
           <button type="button" className="btn-secondary" onClick={() => void loadHistory()}>
             Refresh
           </button>
         </div>
       </div>
+
+      {restoreFeedback ? (
+        <p className="shrink-0 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+          {restoreFeedback}
+        </p>
+      ) : null}
 
       <section className="page-card flex min-h-0 flex-1 flex-col overflow-hidden p-4 md:p-5">
         {!loading && !detailLoading && selectedEntry ? (

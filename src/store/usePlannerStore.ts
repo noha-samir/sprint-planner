@@ -2,7 +2,7 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { todayDateKey, totalWorkingHoursForSprint } from "@/lib/scheduler/calendar";
+import { parseCalendarDate, todayDateKey, totalWorkingHoursForSprint } from "@/lib/scheduler/calendar";
 import { schedule } from "@/lib/scheduler/engine";
 import {
   computeSprintUtilizationFromTasks,
@@ -74,6 +74,11 @@ interface PlannerState {
   lastLocalMutationAt: string | null;
   /** Last known server updatedAt for optimistic concurrency on save. */
   lastServerUpdatedAt: string | null;
+  /**
+   * Bumped on Start New Sprint so the dashboard can reset filters
+   * (carry-overs become current-sprint rows).
+   */
+  sprintBoardGeneration: number;
   tasks: Task[];
   resources: Resource[];
   config: Config;
@@ -96,7 +101,13 @@ interface PlannerState {
   applyJiraResourceRenames: (renames: Array<{ from: string; to: string }>) => void;
   clearResourceNicknames: () => void;
   updateConfig: (patch: Partial<Config>) => void;
-  startNewSprint: () => Promise<void>;
+  startNewSprint: (options?: { sprintStartDate?: string }) => Promise<void>;
+  /** Replace the live board with an archived History snapshot (tasks / resources / config). */
+  restoreSprintFromHistory: (snapshot: {
+    tasks: Task[];
+    resources: Resource[];
+    config: Config;
+  }) => void;
   hydrateFromServer: (data: {
     tasks: Task[];
     resources: Resource[];
@@ -539,6 +550,7 @@ export const usePlannerStore = create<PlannerState>()(
       timelineStartDate: null,
       lastLocalMutationAt: null,
       lastServerUpdatedAt: null,
+      sprintBoardGeneration: 0,
       ...buildState([], [], createDefaultConfig()),
       plannerMeta: defaultPlannerMeta(),
       setHasHydrated: (value) => set({ hasHydrated: value }),
@@ -916,30 +928,82 @@ export const usePlannerStore = create<PlannerState>()(
           ),
         });
       },
-      startNewSprint: async () => {
-        const { tasks, resources, config } = get();
-        try {
-          await archiveSprintSnapshot({
-            tasks,
-            resources,
-            config,
-            squadId: get().activeSquadId,
-            retentionMode: "new_sprint",
-          });
-        } catch {
-          /* archive is best-effort; sprint reset continues */
-        }
+      startNewSprint: async (options) => {
+        const { tasks, resources, config, plannerMeta } = get();
+        const requestedStart = options?.sprintStartDate?.trim() ?? "";
+        const sprintStartDate =
+          /^\d{4}-\d{2}-\d{2}$/.test(requestedStart) &&
+          !Number.isNaN(parseCalendarDate(requestedStart).getTime())
+            ? requestedStart
+            : todayDateKey();
+        // Must succeed before changing the live board — otherwise the sprint is only in memory.
+        await archiveSprintSnapshot({
+          tasks,
+          resources,
+          config,
+          squadId: get().activeSquadId,
+          retentionMode: "new_sprint",
+        });
         const nextConfig = normalizeConfig({
           ...createDefaultConfig(),
           ...config,
-          sprintStartDate: todayDateKey(),
+          sprintStartDate,
+          planningSunday: sprintStartDate,
           extraHolidays: [],
           replanAsOf: null,
         });
-        nextConfig.planningSunday = nextConfig.sprintStartDate;
         const carryOverTasks = buildCarryOverTasks(tasks);
+        const keptIds = new Set(carryOverTasks.map((task) => task.id));
+        const preservedOrder = plannerMeta.dashboardTaskOrder.filter((id) => keptIds.has(id));
+        const seedMeta: PlannerMeta = {
+          ...defaultPlannerMeta(),
+          uatTrackingEnabled: plannerMeta.uatTrackingEnabled,
+          dashboardTaskOrder: preservedOrder,
+          estimatedBaselineCapturedAt: plannerMeta.estimatedBaselineCapturedAt,
+          snapshot1ReleaseByTaskId: Object.fromEntries(
+            Object.entries(plannerMeta.snapshot1ReleaseByTaskId).filter(([id]) => keptIds.has(id)),
+          ),
+          snapshot1TakenAt: plannerMeta.snapshot1TakenAt,
+        };
+        const built = buildWithPlannerMeta(carryOverTasks, resources, nextConfig, seedMeta, {
+          rescheduleCur: true,
+        });
+        const dashboardTaskOrder =
+          preservedOrder.length > 0
+            ? preservedOrder
+            : buildDashboardTaskOrder(activeSprintTasks(built.tasks), built.result);
         set({
-          ...buildWithPlannerMeta(carryOverTasks, resources, nextConfig, defaultPlannerMeta()),
+          ...built,
+          plannerMeta: {
+            ...built.plannerMeta,
+            uatTrackingEnabled: plannerMeta.uatTrackingEnabled,
+            dashboardTaskOrder,
+          },
+          sprintBoardGeneration: get().sprintBoardGeneration + 1,
+          ...touchMutation(),
+        });
+      },
+      restoreSprintFromHistory: (snapshot) => {
+        const nextConfig = normalizeConfig(snapshot.config);
+        const built = buildWithPlannerMeta(
+          snapshot.tasks,
+          snapshot.resources,
+          nextConfig,
+          defaultPlannerMeta(),
+          { rescheduleCur: true },
+        );
+        const dashboardTaskOrder = buildDashboardTaskOrder(
+          activeSprintTasks(built.tasks),
+          built.result,
+        );
+        set({
+          ...built,
+          plannerMeta: {
+            ...built.plannerMeta,
+            uatTrackingEnabled: true,
+            dashboardTaskOrder,
+          },
+          sprintBoardGeneration: get().sprintBoardGeneration + 1,
           ...touchMutation(),
         });
       },
