@@ -62,6 +62,8 @@ import { taskStatuses, usePlannerStore } from "@/store/usePlannerStore";
 import { useJiraSyncStore } from "@/store/useJiraSyncStore";
 import {
   DEFAULT_TASK_STATUS,
+  buildStatusFilterOptions,
+  defaultVisibleStatusFilter,
   isDiscopedTaskStatus,
   isExcludedFromSchedule,
   isHiddenByDefaultStatusFilter,
@@ -107,7 +109,7 @@ const canCalculateRelease = (task: Task) =>
     task.qcHours > 0 ||
     (task.bufferHours ?? 0) > 0);
 
-const defaultVisibleStatuses = taskStatuses.filter((status) => !isHiddenByDefaultStatusFilter(status));
+const defaultVisibleStatuses = defaultVisibleStatusFilter(taskStatuses);
 const developmentHours = (task: Task) =>
   task.beHours + task.feHours + effectiveMobileHours(task) + task.integrationHours;
 const replanStepOptions: { value: Exclude<TaskReplanStep, "Buffer">; label: string; hint: string }[] = [
@@ -256,16 +258,18 @@ export function TaskTable() {
     width: 180,
     maxHeight: 240,
   });
-  const [visibleStatuses, setVisibleStatuses] = useState<(typeof taskStatuses)[number][]>(defaultVisibleStatuses);
+  const [visibleStatuses, setVisibleStatuses] = useState<string[]>(defaultVisibleStatuses);
   const [sprintFilter, setSprintFilter] = useState<"all" | "currentSprint" | "nextSprint">("currentSprint");
   const [emFilter, setEmFilter] = useState<"all" | "em" | "non-em">("all");
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
-  const [parentlessFilter, setParentlessFilter] = useState(false);
+  const [kindFilter, setKindFilter] = useState<"all" | "stories" | "standalone">("all");
   const [typeFilterOpen, setTypeFilterOpen] = useState(false);
-  const [scopeFilterOpen, setScopeFilterOpen] = useState(false);
+  const [ownerFilterOpen, setOwnerFilterOpen] = useState(false);
+  const [kindFilterOpen, setKindFilterOpen] = useState(false);
   const [tasksMenuOpen, setTasksMenuOpen] = useState(false);
   const typeFilterRef = useRef<HTMLDivElement | null>(null);
-  const scopeFilterRef = useRef<HTMLDivElement | null>(null);
+  const ownerFilterRef = useRef<HTMLDivElement | null>(null);
+  const kindFilterRef = useRef<HTMLDivElement | null>(null);
   const tasksMenuRef = useRef<HTMLDivElement | null>(null);
   const [isSprintFilterOpen, setIsSprintFilterOpen] = useState(false);
   const [isStatusFilterOpen, setIsStatusFilterOpen] = useState(false);
@@ -340,6 +344,9 @@ export function TaskTable() {
         setAssigneePickerOpen(null);
         setIsBulkStoryMenuOpen(false);
         setStoryFieldsOpen(null);
+        setTypeFilterOpen(false);
+        setOwnerFilterOpen(false);
+        setKindFilterOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -358,8 +365,11 @@ export function TaskTable() {
       if (typeFilterRef.current && !typeFilterRef.current.contains(target)) {
         setTypeFilterOpen(false);
       }
-      if (scopeFilterRef.current && !scopeFilterRef.current.contains(target)) {
-        setScopeFilterOpen(false);
+      if (ownerFilterRef.current && !ownerFilterRef.current.contains(target)) {
+        setOwnerFilterOpen(false);
+      }
+      if (kindFilterRef.current && !kindFilterRef.current.contains(target)) {
+        setKindFilterOpen(false);
       }
       if (tasksMenuRef.current && !tasksMenuRef.current.contains(target)) {
         setTasksMenuOpen(false);
@@ -369,11 +379,12 @@ export function TaskTable() {
     return () => document.removeEventListener("mousedown", onPointerDown);
   }, []);
 
-  const closeOtherFilterMenus = useCallback((keep: "sprint" | "status" | "type" | "scope") => {
+  const closeOtherFilterMenus = useCallback((keep: "sprint" | "status" | "type" | "owner" | "kind") => {
     if (keep !== "sprint") setIsSprintFilterOpen(false);
     if (keep !== "status") setIsStatusFilterOpen(false);
     if (keep !== "type") setTypeFilterOpen(false);
-    if (keep !== "scope") setScopeFilterOpen(false);
+    if (keep !== "owner") setOwnerFilterOpen(false);
+    if (keep !== "kind") setKindFilterOpen(false);
     setTasksMenuOpen(false);
   }, []);
 
@@ -390,23 +401,46 @@ export function TaskTable() {
     setTasksMenuOpen(false);
   }, [addTask, isEditor, sprintFilter, visibleStatuses]);
 
-  const scopeFilterActiveCount = (emFilter !== "all" ? 1 : 0) + (parentlessFilter ? 1 : 0);
+  const ownerFilterSummary = emFilter === "em" ? "EM" : emFilter === "non-em" ? "Team" : "";
+  const kindFilterSummary =
+    kindFilter === "stories" ? "Stories" : kindFilter === "standalone" ? "Standalone" : "";
 
-  const scopeFilterSummary = useMemo(() => {
-    const parts: string[] = [];
-    if (emFilter === "em") parts.push("EM stories");
-    else if (emFilter === "non-em") parts.push("Team stories");
-    if (parentlessFilter) parts.push("Standalone");
-    return parts.join(" · ");
-  }, [emFilter, parentlessFilter]);
+  const statusFilterOptions = useMemo(
+    () => buildStatusFilterOptions(taskStatuses, tasks.map((task) => task.status)),
+    [tasks],
+  );
+  const defaultVisibleStatusOptions = useMemo(
+    () => defaultVisibleStatusFilter(statusFilterOptions),
+    [statusFilterOptions],
+  );
+
+  // Include unknown Jira statuses from tasks so they are not permanently hidden.
+  useEffect(() => {
+    setVisibleStatuses((current) => {
+      if (current.length === 0) {
+        return current;
+      }
+      const currentKeys = new Set(current.map((status) => status.trim().toLowerCase()));
+      const knownKeys = new Set(taskStatuses.map((status) => status.trim().toLowerCase()));
+      const toAdd = statusFilterOptions.filter((status) => {
+        const key = status.trim().toLowerCase();
+        if (currentKeys.has(key) || knownKeys.has(key)) {
+          return false;
+        }
+        return !isHiddenByDefaultStatusFilter(status);
+      });
+      return toAdd.length === 0 ? current : [...current, ...toAdd];
+    });
+  }, [statusFilterOptions]);
 
   const sprintFilterSummary =
     sprintFilter === "currentSprint" ? "Current" : sprintFilter === "nextSprint" ? "Next" : "All";
 
   const isStatusFilterCustom = useMemo(() => {
-    if (visibleStatuses.length !== defaultVisibleStatuses.length) return true;
-    return !defaultVisibleStatuses.every((status) => visibleStatuses.includes(status));
-  }, [visibleStatuses]);
+    if (visibleStatuses.length !== defaultVisibleStatusOptions.length) return true;
+    const visibleKeys = new Set(visibleStatuses.map((status) => status.trim().toLowerCase()));
+    return !defaultVisibleStatusOptions.every((status) => visibleKeys.has(status.trim().toLowerCase()));
+  }, [visibleStatuses, defaultVisibleStatusOptions]);
 
   const markProgressHoverHint = useMemo(() => {
     const pendingCount = pendingMarkProgressIds.size;
@@ -1114,7 +1148,10 @@ export function TaskTable() {
   // eslint-disable-next-line react-hooks/preserve-manual-memoization -- sort depends on live schedule map
   const orderedTasks = useMemo(() => {
     const filtered = tasks.filter((task) => {
-      if (!visibleStatuses.includes(task.status)) return false;
+      const statusVisible = visibleStatuses.some(
+        (status) => status.trim().toLowerCase() === task.status.trim().toLowerCase(),
+      );
+      if (!statusVisible) return false;
       if (sprintFilter === "nextSprint") return !!task.carryToNextSprint;
       if (sprintFilter === "currentSprint") return !task.carryToNextSprint;
       return true;
@@ -1122,7 +1159,8 @@ export function TaskTable() {
       if (emFilter === "em" && !task.isEmStory) return false;
       if (emFilter === "non-em" && task.isEmStory) return false;
       if (!taskMatchesIssueTypeFilter(task, typeFilter)) return false;
-      if (parentlessFilter && !isParentlessPlannerTask(task)) return false;
+      if (kindFilter === "standalone" && !isParentlessPlannerTask(task)) return false;
+      if (kindFilter === "stories" && isParentlessPlannerTask(task)) return false;
       return true;
     });
     const releaseDateById = new Map(
@@ -1133,7 +1171,7 @@ export function TaskTable() {
         ? plannerMeta.dashboardTaskOrder
         : null;
     return sortTasksForDashboard(filtered, releaseDateById, pinnedOrder);
-  }, [tasks, safeResult.tasks, visibleStatuses, sprintFilter, emFilter, typeFilter, parentlessFilter, isUatTrackingEnabled, plannerMeta.dashboardTaskOrder]);
+  }, [tasks, safeResult.tasks, visibleStatuses, sprintFilter, emFilter, typeFilter, kindFilter, isUatTrackingEnabled, plannerMeta.dashboardTaskOrder]);
 
   useEffect(() => {
     if (!focusTaskId) return;
@@ -1411,7 +1449,7 @@ export function TaskTable() {
   const totalStoryCount = tasks.length;
   const visibleStoryCount = orderedTasks.length;
 
-  const toggleVisibleStatus = (status: (typeof taskStatuses)[number]) => {
+  const toggleVisibleStatus = (status: string) => {
     setVisibleStatuses((current) => {
       if (current.includes(status)) {
         return current.filter((item) => item !== status);
@@ -1535,7 +1573,7 @@ export function TaskTable() {
                 <span>Status</span>
                 <ToolbarMenuChevron open={isStatusFilterOpen} />
                 <span className="toolbar-strip-btn-value tabular-nums">
-                  {visibleStatuses.length}/{taskStatuses.length}
+                  {visibleStatuses.length}/{statusFilterOptions.length}
                 </span>
               </button>
               {isStatusFilterOpen ? (
@@ -1545,11 +1583,13 @@ export function TaskTable() {
                 >
                   <ToolbarDropdownHeader
                     title="Status"
-                    subtitle={`${visibleStatuses.length} of ${taskStatuses.length} statuses visible in the table.`}
+                    subtitle={`${visibleStatuses.length} of ${statusFilterOptions.length} statuses visible in the table.`}
                   />
                   <div className="max-h-[min(18rem,calc(100vh-12rem))] space-y-1 overflow-y-auto px-2 py-2">
-                    {taskStatuses.map((status) => {
-                      const on = visibleStatuses.includes(status);
+                    {statusFilterOptions.map((status) => {
+                      const on = visibleStatuses.some(
+                        (item) => item.trim().toLowerCase() === status.trim().toLowerCase(),
+                      );
                       return (
                         <label
                           key={status}
@@ -1572,7 +1612,7 @@ export function TaskTable() {
                       type="button"
                       className="toolbar-dropdown-footer-btn"
                       onClick={() => {
-                        setVisibleStatuses([...taskStatuses]);
+                        setVisibleStatuses([...statusFilterOptions]);
                         setIsStatusFilterOpen(false);
                       }}
                     >
@@ -1582,7 +1622,7 @@ export function TaskTable() {
                       type="button"
                       className="toolbar-dropdown-footer-btn"
                       onClick={() => {
-                        setVisibleStatuses(defaultVisibleStatuses);
+                        setVisibleStatuses(defaultVisibleStatusOptions);
                         setIsStatusFilterOpen(false);
                       }}
                     >
@@ -1668,55 +1708,36 @@ export function TaskTable() {
                 );
               })() : null}
             </div>
-            <div className="relative" ref={scopeFilterRef}>
+            <div className="relative" ref={ownerFilterRef}>
               <button
                 type="button"
-                className={toolbarTriggerClass(scopeFilterOpen || scopeFilterActiveCount > 0)}
-                aria-expanded={scopeFilterOpen}
+                className={toolbarTriggerClass(ownerFilterOpen || emFilter !== "all")}
+                aria-expanded={ownerFilterOpen}
                 aria-haspopup="true"
-                title={
-                  scopeFilterSummary
-                    ? `Story filter: ${scopeFilterSummary}`
-                    : "Filter by EM ownership and standalone Jira items"
-                }
+                title={ownerFilterSummary ? `Owner: ${ownerFilterSummary}` : "Filter by EM or team"}
                 onClick={() => {
-                  if (!scopeFilterOpen) closeOtherFilterMenus("scope");
-                  setScopeFilterOpen((value) => !value);
+                  if (!ownerFilterOpen) closeOtherFilterMenus("owner");
+                  setOwnerFilterOpen((value) => !value);
                 }}
               >
-                <span>Story filter</span>
-                <ToolbarMenuChevron open={scopeFilterOpen} />
-                {scopeFilterSummary ? (
-                  <span className="toolbar-strip-btn-value">{scopeFilterSummary}</span>
+                <span>Owner</span>
+                <ToolbarMenuChevron open={ownerFilterOpen} />
+                {ownerFilterSummary ? (
+                  <span className="toolbar-strip-btn-value">{ownerFilterSummary}</span>
                 ) : null}
               </button>
-              {scopeFilterOpen ? (
+              {ownerFilterOpen ? (
                 <div
-                  className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,18rem)]"
-                  aria-label="Filter stories by EM and parent"
+                  className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,16rem)]"
+                  aria-label="Filter by owner"
                 >
-                  <ToolbarDropdownHeader
-                    title="Story filter"
-                    subtitle="EM marks come from Jira Assignee (or EM field). Pull once to set them — refresh keeps them."
-                  />
+                  <ToolbarDropdownHeader title="Owner" subtitle="Who owns the work on this squad." />
                   <div className="space-y-1 px-2 py-2">
                     {(
                       [
-                        {
-                          value: "all" as const,
-                          label: "All stories",
-                          hint: "EM and team — no filter",
-                        },
-                        {
-                          value: "em" as const,
-                          label: "EM stories only",
-                          hint: "Jira assignee (or EM field) is this squad’s EM. Pull from Jira once to mark; refresh keeps marks.",
-                        },
-                        {
-                          value: "non-em" as const,
-                          label: "Team stories only",
-                          hint: "Not marked as EM (after pull). Stories never pulled stay here.",
-                        },
+                        { value: "all" as const, label: "All", hint: "EM and team" },
+                        { value: "em" as const, label: "EM", hint: "Assigned to this squad’s EM" },
+                        { value: "non-em" as const, label: "Team", hint: "Not assigned to the EM" },
                       ] as const
                     ).map((option) => {
                       const on = emFilter === option.value;
@@ -1727,7 +1748,7 @@ export function TaskTable() {
                         >
                           <input
                             type="radio"
-                            name="story-em-filter"
+                            name="story-owner-filter"
                             className="mt-0.5"
                             checked={on}
                             onChange={() => setEmFilter(option.value)}
@@ -1741,22 +1762,6 @@ export function TaskTable() {
                         </label>
                       );
                     })}
-                    <label
-                      className={`toolbar-menu-choice mt-1.5 border-t border-slate-100 pt-2 ${parentlessFilter ? "toolbar-menu-choice-on" : ""}`}
-                    >
-                      <input
-                        type="checkbox"
-                        className="mt-0.5"
-                        checked={parentlessFilter}
-                        onChange={(event) => setParentlessFilter(event.target.checked)}
-                      />
-                      <span className="min-w-0">
-                        <span className="block font-semibold text-slate-900">Standalone items only</span>
-                        <span className="mt-0.5 block text-[11px] font-normal leading-snug text-slate-500">
-                          Bugs, tasks, and technical tasks without a parent story in Jira
-                        </span>
-                      </span>
-                    </label>
                   </div>
                   <div className="toolbar-dropdown-footer">
                     <button
@@ -1764,8 +1769,81 @@ export function TaskTable() {
                       className="toolbar-dropdown-footer-btn"
                       onClick={() => {
                         setEmFilter("all");
-                        setParentlessFilter(false);
-                        setScopeFilterOpen(false);
+                        setOwnerFilterOpen(false);
+                      }}
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div className="relative" ref={kindFilterRef}>
+              <button
+                type="button"
+                className={toolbarTriggerClass(kindFilterOpen || kindFilter !== "all")}
+                aria-expanded={kindFilterOpen}
+                aria-haspopup="true"
+                title={kindFilterSummary ? `Kind: ${kindFilterSummary}` : "Filter stories vs standalone items"}
+                onClick={() => {
+                  if (!kindFilterOpen) closeOtherFilterMenus("kind");
+                  setKindFilterOpen((value) => !value);
+                }}
+              >
+                <span>Kind</span>
+                <ToolbarMenuChevron open={kindFilterOpen} />
+                {kindFilterSummary ? (
+                  <span className="toolbar-strip-btn-value">{kindFilterSummary}</span>
+                ) : null}
+              </button>
+              {kindFilterOpen ? (
+                <div
+                  className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,16rem)]"
+                  aria-label="Filter by kind"
+                >
+                  <ToolbarDropdownHeader title="Kind" subtitle="Stories versus standalone Jira items." />
+                  <div className="space-y-1 px-2 py-2">
+                    {(
+                      [
+                        { value: "all" as const, label: "All", hint: "Stories and standalone" },
+                        { value: "stories" as const, label: "Stories", hint: "Jira stories" },
+                        {
+                          value: "standalone" as const,
+                          label: "Standalone",
+                          hint: "Bugs, tasks, and items with no parent story",
+                        },
+                      ] as const
+                    ).map((option) => {
+                      const on = kindFilter === option.value;
+                      return (
+                        <label
+                          key={option.value}
+                          className={`toolbar-menu-choice ${on ? "toolbar-menu-choice-on" : ""}`}
+                        >
+                          <input
+                            type="radio"
+                            name="story-kind-filter"
+                            className="mt-0.5"
+                            checked={on}
+                            onChange={() => setKindFilter(option.value)}
+                          />
+                          <span className="min-w-0">
+                            <span className="block font-semibold text-slate-900">{option.label}</span>
+                            <span className="mt-0.5 block text-[11px] font-normal leading-snug text-slate-500">
+                              {option.hint}
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <div className="toolbar-dropdown-footer">
+                    <button
+                      type="button"
+                      className="toolbar-dropdown-footer-btn"
+                      onClick={() => {
+                        setKindFilter("all");
+                        setKindFilterOpen(false);
                       }}
                     >
                       Reset
@@ -1836,7 +1914,8 @@ export function TaskTable() {
                   setIsSprintFilterOpen(false);
                   setIsStatusFilterOpen(false);
                   setTypeFilterOpen(false);
-                  setScopeFilterOpen(false);
+                  setOwnerFilterOpen(false);
+                  setKindFilterOpen(false);
                   setTasksMenuOpen((value) => !value);
                 }}
               >
@@ -2248,11 +2327,11 @@ export function TaskTable() {
                       type="button"
                       className="btn-secondary px-3 py-1.5 text-[13px]"
                       onClick={() => {
-                        setVisibleStatuses(defaultVisibleStatuses);
+                        setVisibleStatuses(defaultVisibleStatusOptions);
                         setSprintFilter("all");
                         setEmFilter("all");
                         setTypeFilter([]);
-                        setParentlessFilter(false);
+                        setKindFilter("all");
                       }}
                     >
                       Reset Filters

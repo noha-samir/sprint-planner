@@ -32,6 +32,7 @@ export function StoryLinkWithPreview({
   const canPreview = Boolean(issueKey && squadId && safeStoryHref(storyLink));
   const panelId = useId();
   const anchorRef = useRef<HTMLAnchorElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const openTimerRef = useRef<number | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   const requestIdRef = useRef(0);
@@ -40,7 +41,7 @@ export function StoryLinkWithPreview({
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState<JiraIssuePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pos, setPos] = useState({ top: 0, left: 0, width: 320 });
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 320, maxHeight: 360 });
 
   const clearOpenTimer = () => {
     if (openTimerRef.current != null) {
@@ -60,10 +61,22 @@ export function StoryLinkWithPreview({
     const anchor = anchorRef.current;
     if (!anchor) return;
     const rect = anchor.getBoundingClientRect();
+    const margin = 8;
+    const gap = 6;
+    const viewportH = window.innerHeight;
     const width = Math.min(340, Math.max(260, window.innerWidth - 24));
-    const left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
-    const top = Math.min(rect.bottom + 6, window.innerHeight - 12);
-    setPos({ top, left, width });
+    const left = Math.min(Math.max(margin, rect.left), window.innerWidth - width - margin);
+    const spaceBelow = viewportH - rect.bottom - gap - margin;
+    const spaceAbove = rect.top - gap - margin;
+    const measured = panelRef.current?.offsetHeight ?? 0;
+    const estimated = measured > 0 ? measured : 280;
+    const placeAbove = spaceBelow < estimated && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(120, placeAbove ? spaceAbove : spaceBelow);
+    const usedHeight = Math.min(estimated, maxHeight);
+    const top = placeAbove
+      ? Math.max(margin, rect.top - gap - usedHeight)
+      : rect.bottom + gap;
+    setPos({ top, left, width, maxHeight });
   }, []);
 
   const loadPreview = useCallback(async () => {
@@ -157,6 +170,11 @@ export function StoryLinkWithPreview({
     };
   }, [open, positionPanel]);
 
+  useEffect(() => {
+    if (!open) return;
+    positionPanel();
+  }, [open, loading, preview, error, positionPanel]);
+
   return (
     <>
       <a
@@ -177,6 +195,7 @@ export function StoryLinkWithPreview({
         ? createPortal(
             <div
               id={panelId}
+              ref={panelRef}
               role="tooltip"
               className="story-link-preview"
               style={{
@@ -184,6 +203,8 @@ export function StoryLinkWithPreview({
                 top: pos.top,
                 left: pos.left,
                 width: pos.width,
+                maxHeight: pos.maxHeight,
+                overflowY: "auto",
                 zIndex: 1100,
               }}
               onPointerEnter={keepOpen}

@@ -10,6 +10,8 @@ import {
   isReleasePendingOnPmStatus,
   releaseDateHandoffLabel,
   normalizeTaskStatus,
+  buildStatusFilterOptions,
+  defaultVisibleStatusFilter,
   resourceInsightStatusBucket,
   resourceInsightStatusRank,
   taskStatusColorKey,
@@ -55,14 +57,32 @@ describe("taskStatus", () => {
     expect(releaseDateHandoffLabel("Testing")).toBeNull();
   });
 
-  it("hides only discoped/cancelled/closed/production in the default status filter", () => {
+  it("hides inactive and released statuses in the default status filter", () => {
     expect(isHiddenByDefaultStatusFilter("Discoped")).toBe(true);
     expect(isHiddenByDefaultStatusFilter("Cancelled")).toBe(true);
     expect(isHiddenByDefaultStatusFilter("Closed")).toBe(true);
     expect(isHiddenByDefaultStatusFilter("Production")).toBe(true);
+    expect(isHiddenByDefaultStatusFilter("Done")).toBe(true);
+    expect(isHiddenByDefaultStatusFilter("Released")).toBe(true);
     expect(isHiddenByDefaultStatusFilter("STAGING")).toBe(false);
     expect(isHiddenByDefaultStatusFilter("Ready for Production")).toBe(false);
     expect(isHiddenByDefaultStatusFilter("UAT")).toBe(false);
+    expect(isHiddenByDefaultStatusFilter("Open")).toBe(false);
+  });
+
+  it("builds status filter options from defaults plus extras on tasks", () => {
+    expect(buildStatusFilterOptions(DEFAULT_JIRA_STORY_STATUSES, [])).toEqual([
+      ...DEFAULT_JIRA_STORY_STATUSES,
+    ]);
+    expect(buildStatusFilterOptions(DEFAULT_JIRA_STORY_STATUSES, ["Open", "to do", "Done"])).toEqual([
+      ...DEFAULT_JIRA_STORY_STATUSES,
+      "Open",
+      "Done",
+    ]);
+    expect(defaultVisibleStatusFilter(["To Do", "Open", "Done", "Production"])).toEqual([
+      "To Do",
+      "Open",
+    ]);
   });
 
   it("gives every default status a unique color key", () => {

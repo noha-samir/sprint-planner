@@ -128,10 +128,44 @@ export const isExcludedFromSchedule = (status: string): boolean =>
   isInactiveTaskStatus(status) || isReleasedTaskStatus(status);
 
 /** Statuses hidden in the dashboard filter by default. */
-export const isHiddenByDefaultStatusFilter = (status: string): boolean => {
-  const value = normalize(status);
-  return value === "discoped" || value === "cancelled" || value === "closed" || value === "production";
+export const isHiddenByDefaultStatusFilter = (status: string): boolean =>
+  isInactiveTaskStatus(status) || isReleasedTaskStatus(status);
+
+/**
+ * Status filter options: known planner list first, then any extra statuses already on tasks.
+ */
+export const buildStatusFilterOptions = (
+  knownStatuses: readonly string[],
+  taskStatuses: Iterable<string | null | undefined>,
+): string[] => {
+  const seen = new Set<string>();
+  const options: string[] = [];
+
+  const push = (raw: string) => {
+    const normalized = normalizeTaskStatus(raw);
+    const label = normalized.trim();
+    if (!label) return;
+    const key = normalize(label);
+    if (seen.has(key)) return;
+    seen.add(key);
+    const knownMatch = knownStatuses.find((status) => normalize(status) === key);
+    options.push(knownMatch ?? label);
+  };
+
+  for (const status of knownStatuses) {
+    push(status);
+  }
+  for (const status of taskStatuses) {
+    if (typeof status === "string") {
+      push(status);
+    }
+  }
+  return options;
 };
+
+/** Default-on statuses for a filter option list (excludes discoped / done / closed / etc.). */
+export const defaultVisibleStatusFilter = (options: readonly string[]): string[] =>
+  options.filter((status) => !isHiddenByDefaultStatusFilter(status));
 
 /**
  * Unique visual key per planner status — used for row/chip/filter colors.
