@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { z } from "zod";
-import { prisma } from "@/lib/db/prisma";
 import { requireWriteAccess } from "@/lib/integrations/jira/apiAuth";
 import { requireJiraApiCredentials } from "@/lib/authz/sessionJiraCredentials";
 import { readSquadJiraConfig } from "@/lib/integrations/jira/configStore";
@@ -10,10 +9,11 @@ import {
   discoverEmStoriesFromJira,
   discoverStandaloneTasksFromJira,
   existingIssueKeySet,
-  resolveEmJiraAccountId,
   type DiscoveredEmStory,
 } from "@/lib/integrations/jira/discoverEmStories";
 import { resolveHoursForDiscoveredTask } from "@/lib/integrations/jira/pullFromJira";
+import { resolveIsEmStory } from "@/lib/integrations/jira/emStoryFlag";
+import { resolveSquadEmAccountId } from "@/lib/integrations/jira/squadEmAccount";
 
 const discoverEmStoriesSchema = z.object({
   existingIssueKeys: z.array(z.string().max(80)).max(500).optional(),
@@ -51,25 +51,13 @@ export async function POST(request: Request) {
 
   try {
     const credentials = await requireJiraApiCredentials(authResult.squadId);
-    const squad = await prisma.squad.findUnique({
-      where: { id: authResult.squadId },
-      select: { emEmail: true },
-    });
-    let emAccountId: string | null = null;
-    if (squadConfig.engineeringManagerFieldId.trim()) {
-      try {
-        emAccountId = await resolveEmJiraAccountId(credentials, squad?.emEmail ?? "");
-      } catch {
-        emAccountId = null;
-      }
-    }
+    const emAccountId = await resolveSquadEmAccountId(authResult.squadId);
 
     const [storiesResult, standaloneTasks] = await Promise.all([
       discoverEmStoriesFromJira(credentials, squadConfig, existingKeys, emAccountId),
       discoverStandaloneTasksFromJira(credentials, squadConfig, existingKeys, emAccountId),
     ]);
 
-    // Merge story and standalone task results, dedup by key (stories take precedence)
     const seenKeys = new Set(storiesResult.stories.map((s) => s.key));
     const mergedExtra: DiscoveredEmStory[] = standaloneTasks.filter((t) => !seenKeys.has(t.key));
     const allDiscovered = [...storiesResult.stories, ...mergedExtra];
@@ -78,7 +66,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       stories: allDiscovered.map((item) => {
-        const isEmStory = emAccountId != null && item.assigneeAccountId === emAccountId;
         const hours = resolveHoursForDiscoveredTask(
           item.assigneeAccountId ?? null,
           item.estimateSeconds ?? null,
@@ -90,7 +77,11 @@ export async function POST(request: Request) {
           summary: item.summary,
           storyLink: item.storyLink,
           issueType: item.issueType ?? null,
-          isEmStory,
+          isEmStory: resolveIsEmStory(
+            emAccountId,
+            item.assigneeAccountId,
+            item.emFieldAccountId,
+          ),
           ...hours,
         };
       }),

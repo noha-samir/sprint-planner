@@ -13,6 +13,9 @@ type OrderInputProps = {
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
+export const PO_ORDER_HOVER_HINT =
+  "PO schedule order (1, 2, 3…): lower numbers are planned first in the sprint. Leave empty to let the scheduler order the story automatically.";
+
 /**
  * Compact schedule-order control for the select column.
  * − / + move rank; empty clears order (null).
@@ -59,15 +62,17 @@ export function OrderInput({
   };
 
   return (
-    <div className={`order-input ${disabled ? "order-input-disabled" : ""} ${className}`.trim()}>
-      <span className="order-input-label" title="Schedule order — lower numbers are scheduled first.">
+    <div
+      className={`order-input ${disabled ? "order-input-disabled" : ""} ${className}`.trim()}
+      title={focused ? undefined : PO_ORDER_HOVER_HINT}
+    >
+      <span className="order-input-label" aria-hidden>
         Ord
       </span>
       <button
         type="button"
         className="order-input-btn"
         disabled={disabled || (value != null && value <= min)}
-        title="Earlier (lower number)"
         aria-label="Move earlier in schedule"
         tabIndex={-1}
         onMouseDown={(event) => event.preventDefault()}
@@ -82,7 +87,6 @@ export function OrderInput({
         className="order-input-field"
         value={draft}
         placeholder="—"
-        title="Schedule order — lower numbers are scheduled first."
         aria-label="Schedule order"
         onFocus={() => setFocused(true)}
         onChange={(event) => setDraft(event.target.value)}
@@ -110,7 +114,6 @@ export function OrderInput({
         type="button"
         className="order-input-btn"
         disabled={disabled || (value != null && value >= max)}
-        title="Later (higher number)"
         aria-label="Move later in schedule"
         tabIndex={-1}
         onMouseDown={(event) => event.preventDefault()}

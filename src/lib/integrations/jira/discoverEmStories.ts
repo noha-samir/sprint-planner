@@ -40,6 +40,7 @@ export interface DiscoveredEmStory {
   storyLink: string;
   issueType?: string;
   assigneeAccountId?: string | null;
+  emFieldAccountId?: string | null;
   estimateSeconds?: number | null;
 }
 
@@ -115,6 +116,19 @@ export const buildEmStoryDiscoveryJql = (input: EmStoryDiscoveryInput): string |
 const storyLinkForKey = (siteUrl: string, key: string): string =>
   `${normalizeJiraSiteUrl(siteUrl) || "https://atlassian.net"}/browse/${key}`;
 
+const readJiraUserAccountId = (value: unknown): string | null => {
+  if (!value || typeof value !== "object") return null;
+  const accountId = (value as { accountId?: string }).accountId?.trim();
+  return accountId || null;
+};
+
+const discoverySearchFields = (engineeringManagerFieldId: string): string[] => {
+  const fields = ["summary", "issuetype", "assignee", "timeoriginalestimate", "parent"];
+  const emField = engineeringManagerFieldId.trim();
+  if (emField) fields.push(emField);
+  return fields;
+};
+
 /**
  * Search Jira for parent stories under this EM (and squad when configured)
  * in the current sprint or leftover open from closed sprints,
@@ -144,7 +158,7 @@ export const discoverEmStoriesFromJira = async (
   }
 
   const searched = await searchJqlIssues(credentials, jql, 100, {
-    fields: ["summary", "issuetype", "assignee", "timeoriginalestimate"],
+    fields: discoverySearchFields(config.engineeringManagerFieldId),
     maxIssues: EM_STORY_DISCOVERY_LIMIT + 1,
   });
   if (!searched) {
@@ -167,6 +181,9 @@ export const discoverEmStoriesFromJira = async (
       storyLink: storyLinkForKey(credentials.siteUrl, key),
       issueType: issue.fields?.issuetype?.name ?? undefined,
       assigneeAccountId: issue.fields?.assignee?.accountId ?? null,
+      emFieldAccountId: readJiraUserAccountId(
+        issue.fields?.[config.engineeringManagerFieldId.trim()],
+      ),
       estimateSeconds: issue.fields?.timeoriginalestimate ?? null,
     });
     if (stories.length >= EM_STORY_DISCOVERY_LIMIT) {
@@ -182,8 +199,9 @@ export const discoverEmStoriesFromJira = async (
   };
 };
 
-/** Jira issue types treated as standalone tasks (not stories, not epics, not subtasks). */
-export const STANDALONE_TASK_ISSUE_TYPES = ["Bug", "Task", "Technical Task"] as const;
+import { STANDALONE_TASK_ISSUE_TYPES } from "./issueTypes";
+
+export { STANDALONE_TASK_ISSUE_TYPES };
 
 /**
  * Build JQL for standalone bugs/tasks/technical tasks owned by this EM/squad.
@@ -248,7 +266,7 @@ export const discoverStandaloneTasksFromJira = async (
   if (!jql) return [];
 
   const searched = await searchJqlIssues(credentials, jql, 100, {
-    fields: ["summary", "issuetype", "assignee", "timeoriginalestimate"],
+    fields: discoverySearchFields(config.engineeringManagerFieldId),
     maxIssues: EM_STORY_DISCOVERY_LIMIT + 1,
   });
   if (!searched) return [];
@@ -266,6 +284,9 @@ export const discoverStandaloneTasksFromJira = async (
       storyLink: storyLinkForKey(credentials.siteUrl, key),
       issueType: issue.fields?.issuetype?.name ?? undefined,
       assigneeAccountId: issue.fields?.assignee?.accountId ?? null,
+      emFieldAccountId: readJiraUserAccountId(
+        issue.fields?.[config.engineeringManagerFieldId.trim()],
+      ),
       estimateSeconds: issue.fields?.timeoriginalestimate ?? null,
     });
     if (tasks.length >= EM_STORY_DISCOVERY_LIMIT) break;

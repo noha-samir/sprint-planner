@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Task" ADD COLUMN "issueType" TEXT;
+ALTER TABLE "Task" ADD COLUMN "isEmStory" BOOLEAN NOT NULL DEFAULT false;

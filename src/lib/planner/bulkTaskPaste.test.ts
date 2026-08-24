@@ -18,6 +18,7 @@ const resources: Resource[] = [
   { name: "Bob", type: "FE", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },
   { name: "Nour", type: "MO", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },
   { name: "QC-One", type: "QC", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },
+  { name: "PM-One", type: "PM", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },
 ];
 
 describe("parseBulkTaskPaste", () => {
@@ -458,6 +459,57 @@ describe("parseBulkTaskPaste", () => {
       storyName: "Payments",
       storyLink: "https://jira/FOO-2",
     });
+  });
+
+  it("pastes PM names into the PM column instead of QC hours", () => {
+    const current = createEmptyBulkDraftRows(2);
+    const pmColIndex = 13;
+
+    const next = applyClipboardPasteToDrafts(
+      current,
+      [[{ text: "PM-One", href: null }]],
+      { rowIndex: 0, colIndex: pmColIndex },
+    );
+
+    expect(next[0].productManagersRaw).toBe("PM-One");
+    expect(next[0].qcHoursRaw).toBe("");
+  });
+
+  it("pastes QC hours beside QC names in the grid column order", () => {
+    const current = createEmptyBulkDraftRows(1);
+    const table = [[{ text: "QC-One", href: null }, { text: "4", href: null }]];
+
+    const next = applyClipboardPasteToDrafts(current, table, { rowIndex: 0, colIndex: 11 });
+
+    expect(next[0].qcsRaw).toBe("QC-One");
+    expect(next[0].qcHoursRaw).toBe("4");
+    expect(next[0].productManagersRaw).toBe("");
+  });
+
+  it("resolves PM assignees from the PM column", () => {
+    const resolved = resolveBulkTaskRow(
+      {
+        storyName: "Story",
+        storyLink: "link",
+        beDevsRaw: "",
+        feDevsRaw: "",
+        androidDevsRaw: "",
+        iosDevsRaw: "",
+        qcsRaw: "QC-One",
+        productManagersRaw: "PM-One",
+        beHoursRaw: "",
+        feHoursRaw: "",
+        androidHoursRaw: "",
+        iosHoursRaw: "",
+        mobileAppRaw: "",
+        qcHoursRaw: "2",
+      },
+      resources,
+    );
+
+    expect(resolved.qcs).toEqual(["QC-One"]);
+    expect(resolved.qcHours).toBe(2);
+    expect(resolved.productManagers).toEqual(["PM-One"]);
   });
 
   it("clears all values inside a multi-cell selection", () => {

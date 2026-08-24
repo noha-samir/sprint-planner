@@ -30,6 +30,7 @@ export function ReleaseGroupInput({
   disabled = false,
 }: ReleaseGroupInputProps) {
   const [draft, setDraft] = useState(value ?? "");
+  const [focused, setFocused] = useState(false);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset draft when row value changes
@@ -37,39 +38,45 @@ export function ReleaseGroupInput({
   }, [taskId, value]);
 
   return (
-    <div className="story-select-release-wrap">
-      <textarea
-        className="story-select-release-input field-input"
-        placeholder="Group"
-        maxLength={96}
-        rows={2}
-        title={draft.trim() || help}
-        value={draft}
-        disabled={disabled}
-        readOnly={disabled}
-        style={releaseGroupInputStyle(draft.length > 0 ? draft : null, colorMap)}
-        onChange={(event) => {
-          if (disabled) return;
-          setDraft(event.target.value);
-        }}
-        onBlur={() => {
-          if (disabled) return;
-          const trimmed = draft.trim().replace(/\s+/g, " ");
-          const next = trimmed.length > 0 ? trimmed : null;
-          setDraft(next ?? "");
-          if ((value ?? null) !== next) {
-            onCommit(next);
-          }
-        }}
-        onKeyDown={(event) => {
-          if (disabled) return;
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-            event.currentTarget.blur();
-          }
-        }}
-        aria-label={`Release group for ${storyLabel}`}
-      />
+    <div className="story-select-release-wrap" title={focused ? undefined : help}>
+      <div className="story-select-release-input-row">
+        <span className="story-select-release-label" aria-hidden>
+          Grp
+        </span>
+        <textarea
+          className="story-select-release-input field-input"
+          placeholder="Name"
+          maxLength={96}
+          rows={2}
+          value={draft}
+          disabled={disabled}
+          readOnly={disabled}
+          style={releaseGroupInputStyle(draft.length > 0 ? draft : null, colorMap)}
+          onFocus={() => setFocused(true)}
+          onChange={(event) => {
+            if (disabled) return;
+            setDraft(event.target.value);
+          }}
+          onBlur={() => {
+            setFocused(false);
+            if (disabled) return;
+            const trimmed = draft.trim().replace(/\s+/g, " ");
+            const next = trimmed.length > 0 ? trimmed : null;
+            setDraft(next ?? "");
+            if ((value ?? null) !== next) {
+              onCommit(next);
+            }
+          }}
+          onKeyDown={(event) => {
+            if (disabled) return;
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              event.currentTarget.blur();
+            }
+          }}
+          aria-label={`Release group for ${storyLabel}`}
+        />
+      </div>
     </div>
   );
 }

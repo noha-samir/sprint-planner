@@ -18,7 +18,7 @@ function NewSprintButton() {
   }
   return (
     <button className="btn-danger disabled:opacity-50" onClick={() => void startNewSprint()}>
-      New Sprint
+      Start New Sprint
     </button>
   );
 }

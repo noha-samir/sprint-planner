@@ -10,7 +10,7 @@ import {
   type ResourceUtilization,
   type SprintTaskUtilization,
 } from "@/lib/scheduler/utilization";
-import { buildDashboardTaskOrder } from "@/lib/planner/dashboardTaskOrder";
+import { appendTaskIdsToDashboardOrder, buildDashboardTaskOrder } from "@/lib/planner/dashboardTaskOrder";
 import {
   defaultPlannerMeta,
   mergePlannerMetaPatch,
@@ -24,7 +24,6 @@ import {
   markTaskIdsNeedRemark,
   removeTaskIdFromNeedRemark,
   TASK_PATCH_KEYS_IGNORED_FOR_REMARK,
-  taskHasScheduleContentForRemark,
 } from "@/lib/planner/pendingMarkProgress";
 import {
   deserializeScheduleResult,
@@ -551,7 +550,7 @@ export const usePlannerStore = create<PlannerState>()(
         return newTask.id;
       },
       addTasks: (drafts) => {
-        const { tasks, resources, config, plannerMeta } = get();
+        const { tasks, resources, config, plannerMeta, result: currentResult } = get();
         const validDrafts = drafts.filter((draft) => draft.isValid);
         if (validDrafts.length === 0) {
           return [];
@@ -582,17 +581,28 @@ export const usePlannerStore = create<PlannerState>()(
           }),
         );
 
-        const remarkIds = newTasks.filter(taskHasScheduleContentForRemark).map((task) => task.id);
+        const combinedTasks = [...tasks, ...newTasks];
+        const newTaskIds = newTasks.map((task) => task.id);
+        const activeIds = activeSprintTasks(combinedTasks).map((task) => task.id);
+
+        let nextMeta = seedCurScheduleFreeze(plannerMeta, currentResult);
+        if (nextMeta.uatTrackingEnabled) {
+          nextMeta = {
+            ...nextMeta,
+            dashboardTaskOrder: appendTaskIdsToDashboardOrder(
+              nextMeta.dashboardTaskOrder,
+              activeIds,
+              newTaskIds,
+            ),
+          };
+        }
+        nextMeta = markTaskIdsNeedRemark(nextMeta, newTaskIds);
+
         set({
-          ...buildWithPlannerMeta(
-            [...tasks, ...newTasks],
-            resources,
-            config,
-            remarkIds.length > 0 ? markTaskIdsNeedRemark(plannerMeta, remarkIds) : plannerMeta,
-          ),
+          ...buildWithPlannerMeta(combinedTasks, resources, config, nextMeta),
           ...touchMutation(),
         });
-        return newTasks.map((task) => task.id);
+        return newTaskIds;
       },
       updateTask: (id, patch) => {
         const { tasks, resources, config, plannerMeta, result: currentResult } = get();

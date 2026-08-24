@@ -215,6 +215,8 @@ export async function readSquadPlannerState(squadId: string): Promise<Record<str
         replanFromStep: task.replanFromStep,
         carryToNextSprint: task.carryToNextSprint,
         releaseGroup: task.releaseGroup ?? undefined,
+        issueType: task.issueType ?? undefined,
+        isEmStory: task.isEmStory,
         jira: task.jiraLink
           ? {
               parentIssueKey: task.jiraLink.parentIssueKey,
@@ -509,6 +511,8 @@ export async function writeSquadPlannerState(
           replanFromStep: toReplanStep(task.replanFromStep),
           carryToNextSprint: Boolean(task.carryToNextSprint),
           releaseGroup: typeof task.releaseGroup === "string" ? task.releaseGroup : null,
+          issueType: typeof task.issueType === "string" && task.issueType.trim() ? task.issueType.trim() : null,
+          isEmStory: Boolean(task.isEmStory),
         })),
       });
     }

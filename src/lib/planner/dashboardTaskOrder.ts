@@ -168,6 +168,43 @@ export const buildDashboardTaskOrder = (tasks: Task[], result: ScheduleResult): 
  * Sort tasks for the dashboard table, optionally pinned to a saved order.
  * Status tier is always first; Order is next; release groups stay adjacent within a tier.
  */
+/**
+ * Keep saved dashboard order, then any active tasks missing from it (store order),
+ * then newly bulk-added ids at the end.
+ */
+export const appendTaskIdsToDashboardOrder = (
+  order: string[],
+  existingActiveIds: string[],
+  newIds: string[],
+): string[] => {
+  if (newIds.length === 0) {
+    return order;
+  }
+  const activeSet = new Set(existingActiveIds);
+  const next: string[] = [];
+  const seen = new Set<string>();
+
+  const push = (id: string) => {
+    if (!activeSet.has(id) || seen.has(id)) {
+      return;
+    }
+    next.push(id);
+    seen.add(id);
+  };
+
+  for (const id of order) {
+    push(id);
+  }
+  for (const id of existingActiveIds) {
+    push(id);
+  }
+  for (const id of newIds) {
+    push(id);
+  }
+
+  return next;
+};
+
 export const sortTasksForDashboard = (
   tasks: Task[],
   releaseDateById: Map<string, Date | null | undefined>,

@@ -39,5 +39,4 @@ export const applyColorScheme = (scheme: ColorScheme): void => {
     return;
   }
   document.documentElement.classList.toggle(COLOR_SCHEME_CLASS, scheme === "dark");
-  document.documentElement.style.colorScheme = scheme;
 };

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyClipboardPasteToDrafts,
-  bulkDraftFieldAt,
+  bulkDraftFieldOrderForGrid,
   bulkGridSelectionSize,
   clearBulkGridSelection,
   countClipboardRowsMissingLinks,
@@ -35,22 +35,24 @@ type ColumnDef =
   | { key: DraftField; label: string; kind: "mobileApp"; colClass: string }
   | { key: DraftField; label: string; kind: "hours"; placeholder: string; colClass: string };
 
-const columns: ColumnDef[] = [
-  { key: "storyName", label: "Story", kind: "text", placeholder: "Story name", colClass: "bulk-col-story" },
-  { key: "storyLink", label: "Link", kind: "text", placeholder: "https://…", colClass: "bulk-col-link" },
-  { key: "beDevsRaw", label: "BE", kind: "assignees", resourceType: "BE", colClass: "bulk-col-dev" },
-  { key: "beHoursRaw", label: "BE h", kind: "hours", placeholder: "8", colClass: "bulk-col-hours" },
-  { key: "feDevsRaw", label: "FE", kind: "assignees", resourceType: "FE", colClass: "bulk-col-dev" },
-  { key: "feHoursRaw", label: "FE h", kind: "hours", placeholder: "4", colClass: "bulk-col-hours" },
-  { key: "androidDevsRaw", label: "Android", kind: "assignees", resourceType: "MO", colClass: "bulk-col-dev" },
-  { key: "androidHoursRaw", label: "And h", kind: "hours", placeholder: "6", colClass: "bulk-col-hours" },
-  { key: "mobileAppRaw", label: "App", kind: "mobileApp", colClass: "bulk-col-app" },
-  { key: "iosDevsRaw", label: "IOS", kind: "assignees", resourceType: "MO", colClass: "bulk-col-dev" },
-  { key: "iosHoursRaw", label: "IOS h", kind: "hours", placeholder: "6", colClass: "bulk-col-hours" },
-  { key: "qcsRaw", label: "QC", kind: "assignees", resourceType: "QC", colClass: "bulk-col-dev" },
-  { key: "productManagersRaw", label: "PM", kind: "assignees", resourceType: "PM", colClass: "bulk-col-dev" },
-  { key: "qcHoursRaw", label: "QC h", kind: "hours", placeholder: "2", colClass: "bulk-col-hours" },
-];
+const columnByField: Record<keyof BulkTaskDraftRow, ColumnDef> = {
+  storyName: { key: "storyName", label: "Story", kind: "text", placeholder: "Story name", colClass: "bulk-col-story" },
+  storyLink: { key: "storyLink", label: "Link", kind: "text", placeholder: "https://…", colClass: "bulk-col-link" },
+  beDevsRaw: { key: "beDevsRaw", label: "BE", kind: "assignees", resourceType: "BE", colClass: "bulk-col-dev" },
+  beHoursRaw: { key: "beHoursRaw", label: "BE h", kind: "hours", placeholder: "8", colClass: "bulk-col-hours" },
+  feDevsRaw: { key: "feDevsRaw", label: "FE", kind: "assignees", resourceType: "FE", colClass: "bulk-col-dev" },
+  feHoursRaw: { key: "feHoursRaw", label: "FE h", kind: "hours", placeholder: "4", colClass: "bulk-col-hours" },
+  androidDevsRaw: { key: "androidDevsRaw", label: "Android", kind: "assignees", resourceType: "MO", colClass: "bulk-col-dev" },
+  androidHoursRaw: { key: "androidHoursRaw", label: "And h", kind: "hours", placeholder: "6", colClass: "bulk-col-hours" },
+  mobileAppRaw: { key: "mobileAppRaw", label: "App", kind: "mobileApp", colClass: "bulk-col-app" },
+  iosDevsRaw: { key: "iosDevsRaw", label: "IOS", kind: "assignees", resourceType: "MO", colClass: "bulk-col-dev" },
+  iosHoursRaw: { key: "iosHoursRaw", label: "IOS h", kind: "hours", placeholder: "6", colClass: "bulk-col-hours" },
+  qcsRaw: { key: "qcsRaw", label: "QC", kind: "assignees", resourceType: "QC", colClass: "bulk-col-dev" },
+  qcHoursRaw: { key: "qcHoursRaw", label: "QC h", kind: "hours", placeholder: "2", colClass: "bulk-col-hours" },
+  productManagersRaw: { key: "productManagersRaw", label: "PM", kind: "assignees", resourceType: "PM", colClass: "bulk-col-dev" },
+};
+
+const columns: ColumnDef[] = bulkDraftFieldOrderForGrid.map((field) => columnByField[field]);
 
 const splitNames = (raw: string): string[] =>
   raw
@@ -274,7 +276,7 @@ export function BulkAddTasksModal({ resources, onConfirm, onCancel }: BulkAddTas
       }
 
       const selectionSize = selection ? bulkGridSelectionSize(selection) : 0;
-      const focusedField = bulkDraftFieldAt(focusedCellRef.current.colIndex);
+      const focusedField = bulkDraftFieldOrderForGrid[focusedCellRef.current.colIndex];
       if (!shouldInterceptBulkGridPaste(html, plain, table, selectionSize, rtf, focusedField)) {
         return;
       }

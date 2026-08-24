@@ -2,11 +2,9 @@ import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import type { Task } from "@/lib/scheduler/types";
 import { requireWriteAccess } from "@/lib/integrations/jira/apiAuth";
-import { requireJiraApiCredentials } from "@/lib/authz/sessionJiraCredentials";
 import { readSquadJiraConfig } from "@/lib/integrations/jira/configStore";
 import { bulkPullTasksFromJira } from "@/lib/integrations/jira/pullFromJira";
-import { resolveEmJiraAccountId } from "@/lib/integrations/jira/discoverEmStories";
-import { prisma } from "@/lib/db/prisma";
+import { resolveSquadEmAccountId } from "@/lib/integrations/jira/squadEmAccount";
 import { z } from "zod";
 import { jiraTasksArraySchema } from "@/lib/validation/apiBodies";
 
@@ -39,21 +37,7 @@ export async function POST(request: Request) {
 
   const squadConfig = await readSquadJiraConfig(authResult.squadId);
   const plannerPeople = body.plannerPeople ?? body.plannerNames ?? [];
-
-  // Resolve EM account ID so isEmStory can be set accurately on each pulled task.
-  let emAccountId: string | null = null;
-  if (squadConfig.engineeringManagerFieldId.trim()) {
-    try {
-      const credentials = await requireJiraApiCredentials(authResult.squadId);
-      const squad = await prisma.squad.findUnique({
-        where: { id: authResult.squadId },
-        select: { emEmail: true },
-      });
-      emAccountId = await resolveEmJiraAccountId(credentials, squad?.emEmail ?? "");
-    } catch {
-      emAccountId = null;
-    }
-  }
+  const emAccountId = await resolveSquadEmAccountId(authResult.squadId);
 
   const result = await bulkPullTasksFromJira(
     body.tasks as unknown as Task[],

@@ -22,6 +22,7 @@ import {
   type BulkPullFromJiraResult,
   type BulkPullTaskResult,
 } from "./bulkPullMessages";
+import { resolveIsEmStory } from "./emStoryFlag";
 
 export type { BulkPullTaskResult, BulkPullFromJiraResult } from "./bulkPullMessages";
 export {
@@ -275,15 +276,18 @@ export const syncTaskFromJira = async (
 
   const credentials = await requireJiraApiCredentials();
   const fieldIds = squadConfig.parentStoryFields;
+  const emFieldId = squadConfig.engineeringManagerFieldId.trim();
   const parentFieldList = [
     "summary",
     "status",
     "issuetype",
     "assignee",
+    "parent",
     fieldIds.developmentEstimateHours,
     fieldIds.testingEstimateHours,
     fieldIds.qcEngineer,
     fieldIds.productManager,
+    ...(emFieldId ? [emFieldId] : []),
   ].filter(Boolean);
 
   const parentFields = await fetchIssueFields(credentials, parentIssueKey, parentFieldList);
@@ -306,9 +310,8 @@ export const syncTaskFromJira = async (
   }
 
   const assigneeAccountId = (parentFields.assignee as { accountId?: string } | null | undefined)?.accountId?.trim();
-  if (emAccountId != null) {
-    patch.isEmStory = Boolean(assigneeAccountId && assigneeAccountId === emAccountId);
-  }
+  const emFieldUser = emFieldId ? extractJiraUserField(parentFields[emFieldId]) : null;
+  patch.isEmStory = resolveIsEmStory(emAccountId, assigneeAccountId, emFieldUser?.accountId);
 
   const qcHours = hoursFromJiraNumberField(parentFields[fieldIds.testingEstimateHours.trim()]);
   if (qcHours != null) {

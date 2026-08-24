@@ -14,6 +14,7 @@ import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
 import { isJiraStoryLink, buildJiraIssueBrowseUrl, parseJiraIssueKey } from "@/lib/integrations/jira/issueKey";
 import { safeStoryHref } from "@/lib/ui/safeStoryHref";
 import { issueTypeChipClass } from "@/lib/ui/issueTypeChip";
+import { isParentlessPlannerTask } from "@/lib/planner/taskIssueFilters";
 import { isTaskEligibleForJiraPull, isTaskEligibleForJiraSync, resolveTaskForJiraSync } from "@/lib/integrations/jira/syncEligibility";
 import { JIRA_SYNC_ADDED_TAG } from "@/lib/integrations/jira/jiraSyncTag";
 import { formatBulkSyncConfirmMessage, formatBulkSyncSummary, bulkSyncHasPartialWarnings, type BulkSyncTaskResult } from "@/lib/integrations/jira/bulkSyncMessages";
@@ -26,6 +27,7 @@ import { getCurrentStoryPhase, getStatusPhase, type StoryPhase } from "@/lib/sch
 import { effectiveMobileHours, mobileAppLabel } from "@/lib/scheduler/mobilePlatform";
 import { storyPhasePlanFromTask } from "@/lib/scheduler/storyTimelineEntries";
 import { getTasksNeedingRemark } from "@/lib/planner/pendingMarkProgress";
+import { copySelectedStoriesToClipboard } from "@/lib/planner/copySelectedStories";
 import { sortTasksForDashboard } from "@/lib/planner/dashboardTaskOrder";
 import { buildReleaseGroupColorMap } from "@/lib/planner/releaseGroupColors";
 import { flushPlannerStateToServer } from "@/lib/planner/flushPlannerState";
@@ -133,7 +135,7 @@ const storyDisplayName = (task: Pick<Task, "id" | "storyName" | "storyLink">) =>
 };
 
 const RELEASE_GROUP_HELP =
-  "Stories that share the same release group name get the same UAT and production release dates (case-sensitive).";
+  "Release group: stories with the same name share UAT and production release dates (case-sensitive). Use for bundles that must ship together.";
 
 const splitTodoLines = (raw: string | undefined) =>
   (raw ?? "")
@@ -141,6 +143,28 @@ const splitTodoLines = (raw: string | undefined) =>
     .map((line) => line.trim())
     .filter(Boolean);
 const formatTagLabel = (tag: string) => tag.trim().split(/\s+/).join(" - ");
+
+const toolbarTriggerClass = (active: boolean, extraClass = "") =>
+  ["toolbar-strip-btn", "inline-flex", "items-center", "gap-1.5", active ? "toolbar-strip-btn-active" : "", extraClass]
+    .filter(Boolean)
+    .join(" ");
+
+function ToolbarMenuChevron({ open }: { open: boolean }) {
+  return (
+    <span className="toolbar-strip-btn-chevron" aria-hidden>
+      {open ? "▴" : "▾"}
+    </span>
+  );
+}
+
+function ToolbarDropdownHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <div className="toolbar-dropdown-header">
+      <div className="toolbar-dropdown-title">{title}</div>
+      {subtitle ? <div className="toolbar-dropdown-subtitle">{subtitle}</div> : null}
+    </div>
+  );
+}
 
 type AssigneePickerKind = "be" | "fe" | "android" | "ios" | "int" | "qc" | "pm" | "status";
 
@@ -233,7 +257,11 @@ export function TaskTable() {
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [parentlessFilter, setParentlessFilter] = useState(false);
   const [typeFilterOpen, setTypeFilterOpen] = useState(false);
+  const [scopeFilterOpen, setScopeFilterOpen] = useState(false);
+  const [tasksMenuOpen, setTasksMenuOpen] = useState(false);
   const typeFilterRef = useRef<HTMLDivElement | null>(null);
+  const scopeFilterRef = useRef<HTMLDivElement | null>(null);
+  const tasksMenuRef = useRef<HTMLDivElement | null>(null);
   const [isSprintFilterOpen, setIsSprintFilterOpen] = useState(false);
   const [isStatusFilterOpen, setIsStatusFilterOpen] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
@@ -324,10 +352,67 @@ export function TaskTable() {
       if (typeFilterRef.current && !typeFilterRef.current.contains(target)) {
         setTypeFilterOpen(false);
       }
+      if (scopeFilterRef.current && !scopeFilterRef.current.contains(target)) {
+        setScopeFilterOpen(false);
+      }
+      if (tasksMenuRef.current && !tasksMenuRef.current.contains(target)) {
+        setTasksMenuOpen(false);
+      }
     };
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
   }, []);
+
+  const closeOtherFilterMenus = useCallback((keep: "sprint" | "status" | "type" | "scope") => {
+    if (keep !== "sprint") setIsSprintFilterOpen(false);
+    if (keep !== "status") setIsStatusFilterOpen(false);
+    if (keep !== "type") setTypeFilterOpen(false);
+    if (keep !== "scope") setScopeFilterOpen(false);
+    setTasksMenuOpen(false);
+  }, []);
+
+  const handleAddTask = useCallback(() => {
+    if (!isEditor) return;
+    if (!visibleStatuses.includes(DEFAULT_TASK_STATUS)) {
+      setVisibleStatuses((current) => [...current, DEFAULT_TASK_STATUS]);
+    }
+    if (sprintFilter === "nextSprint") {
+      setSprintFilter("currentSprint");
+    }
+    const id = addTask();
+    setFocusTaskId(id);
+    setTasksMenuOpen(false);
+  }, [addTask, isEditor, sprintFilter, visibleStatuses]);
+
+  const scopeFilterActiveCount = (emFilter !== "all" ? 1 : 0) + (parentlessFilter ? 1 : 0);
+
+  const scopeFilterSummary = useMemo(() => {
+    const parts: string[] = [];
+    if (emFilter === "em") parts.push("EM stories");
+    else if (emFilter === "non-em") parts.push("Team stories");
+    if (parentlessFilter) parts.push("Standalone");
+    return parts.join(" · ");
+  }, [emFilter, parentlessFilter]);
+
+  const sprintFilterSummary =
+    sprintFilter === "currentSprint" ? "Current" : sprintFilter === "nextSprint" ? "Next" : "All";
+
+  const isStatusFilterCustom = useMemo(() => {
+    if (visibleStatuses.length !== defaultVisibleStatuses.length) return true;
+    return !defaultVisibleStatuses.every((status) => visibleStatuses.includes(status));
+  }, [visibleStatuses]);
+
+  const markProgressHoverHint = useMemo(() => {
+    const pendingCount = pendingMarkProgressIds.size;
+    if (pendingCount > 0) {
+      const noun = pendingCount === 1 ? "story needs" : "stories need";
+      return `${pendingCount} ${noun} remark. Use Mark Progress Now to refresh Cur UAT/Production dates after hours or schedule edits.`;
+    }
+    if (isUatTrackingEnabled) {
+      return "Replan remaining work from the current time and refresh Cur UAT/Production dates.";
+    }
+    return "Start release tracking and lock Cur UAT/Production dates from the current schedule.";
+  }, [pendingMarkProgressIds.size, isUatTrackingEnabled]);
 
   useEffect(() => {
     if (!assigneePickerOpen) return;
@@ -1031,7 +1116,7 @@ export function TaskTable() {
       if (emFilter === "em" && !task.isEmStory) return false;
       if (emFilter === "non-em" && task.isEmStory) return false;
       if (typeFilter.length > 0 && !typeFilter.includes(task.issueType ?? "")) return false;
-      if (parentlessFilter && task.storyLink) return false;
+      if (parentlessFilter && !isParentlessPlannerTask(task)) return false;
       return true;
     });
     const releaseDateById = new Map(
@@ -1217,6 +1302,29 @@ export function TaskTable() {
     });
   };
 
+  const copyStoryLinksForSelected = () => {
+    runAfterBulkMenuClose(async () => {
+      if (selectedTasks.length === 0) {
+        return;
+      }
+      try {
+        await copySelectedStoriesToClipboard(
+          selectedTasks.map((task) => ({
+            storyName: task.storyName,
+            storyLink: task.storyLink,
+          })),
+        );
+        setActionFeedback(
+          selectedTasks.length === 1
+            ? "Copied 1 story link."
+            : `Copied ${selectedTasks.length} story links.`,
+        );
+      } catch {
+        setActionFeedback("Could not copy story links.");
+      }
+    });
+  };
+
   const addTagForSelected = () => {
     runAfterBulkMenuClose(() => {
       if (selectedTasks.length === 0) {
@@ -1356,199 +1464,99 @@ export function TaskTable() {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
-      <div className="flex shrink-0 justify-between">
+      <div className="flex shrink-0 flex-col gap-2">
         <h2 className="text-lg font-semibold text-slate-900">Tasks</h2>
-        <div className="flex items-center gap-2">
-          <div className="relative" ref={sprintFilterRef}>
-            <button
-              type="button"
-              className={`toolbar-strip-btn inline-flex items-center gap-1.5 ${isSprintFilterOpen ? "border-blue-400 bg-blue-50 text-blue-950 ring-2 ring-blue-200/70" : ""}`}
-              aria-expanded={isSprintFilterOpen}
-              aria-haspopup="listbox"
-              onClick={() => {
-                setIsStatusFilterOpen(false);
-                setIsSprintFilterOpen((current) => !current);
-              }}
-            >
-              <span>Sprint</span>
-              <span className="text-[13px] font-bold text-slate-500" aria-hidden>
-                {isSprintFilterOpen ? "▴" : "▾"}
-              </span>
-              <span className="max-w-[6.5rem] truncate text-left font-medium capitalize text-slate-600">
-                {sprintFilter === "currentSprint"
-                  ? "Current"
-                  : sprintFilter === "nextSprint"
-                    ? "Next"
-                    : "All"}
-              </span>
-            </button>
-            {isSprintFilterOpen ? (
-              <div className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[13.5rem]">
-                <div className="toolbar-dropdown-header">
-                  <div className="text-[13px] font-bold uppercase tracking-wide text-slate-500">Show tasks from</div>
-                </div>
-                <div className="space-y-0.5 p-2">
-                  {(["currentSprint", "nextSprint", "all"] as const).map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      className={`w-full rounded-lg px-2.5 py-2 text-left text-[13px] font-semibold transition ${
-                        sprintFilter === option
-                          ? "bg-blue-100 text-blue-950 ring-1 ring-blue-200/80"
-                          : "text-slate-700 hover:bg-slate-100"
-                      }`}
-                      onClick={() => {
-                        setSprintFilter(option);
-                        setIsSprintFilterOpen(false);
-                      }}
-                    >
-                      {option === "currentSprint"
-                        ? "Current sprint"
-                        : option === "nextSprint"
-                          ? "Next sprint"
-                          : "All sprints"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </div>
-          <div className="relative" ref={statusFilterRef}>
-            <button
-              type="button"
-              className={`toolbar-strip-btn inline-flex items-center gap-1.5 ${isStatusFilterOpen ? "border-blue-400 bg-blue-50 text-blue-950 ring-2 ring-blue-200/70" : ""}`}
-              aria-expanded={isStatusFilterOpen}
-              aria-haspopup="true"
-              onClick={() => {
-                setIsSprintFilterOpen(false);
-                setIsStatusFilterOpen((current) => !current);
-              }}
-            >
-              <span>Status</span>
-              <span className="text-[13px] font-bold text-slate-500" aria-hidden>
-                {isStatusFilterOpen ? "▴" : "▾"}
-              </span>
-              <span className="tabular-nums text-slate-600">
-                ({visibleStatuses.length}/{taskStatuses.length})
-              </span>
-            </button>
-            {isStatusFilterOpen ? (
-              <div
-                className="toolbar-dropdown-shell absolute right-0 z-20 mt-2 w-[min(100vw-1.5rem,16.5rem)]"
-                aria-label="Filter tasks by status"
-              >
-                <div className="toolbar-dropdown-header">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-[13px] font-bold uppercase tracking-wide text-slate-500">Visible in table</span>
-                    <span className="text-[13px] font-semibold tabular-nums text-slate-700">
-                      {visibleStatuses.length} of {taskStatuses.length}
-                    </span>
-                  </div>
-                </div>
-                <div className="max-h-[min(18rem,calc(100vh-12rem))] space-y-1 overflow-y-auto px-2 py-2">
-                  {taskStatuses.map((status) => {
-                    const on = visibleStatuses.includes(status);
-                    return (
-                      <label
-                        key={status}
-                        className={`flex cursor-pointer items-center gap-2.5 rounded-lg border-l-4 py-2 pl-2.5 pr-2 text-[13px] font-semibold shadow-sm transition ${statusFilterClass(status)} ${
-                          on ? "ring-1 ring-slate-300/90 ring-offset-0" : "opacity-[0.72] hover:opacity-100"
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={on}
-                          onChange={() => toggleVisibleStatus(status)}
-                        />
-                        <span className="min-w-0 flex-1 leading-snug">{status}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-                <div className="toolbar-dropdown-footer">
-                  <button
-                    type="button"
-                    className="toolbar-dropdown-footer-btn"
-                    onClick={() => {
-                      setVisibleStatuses([...taskStatuses]);
-                      setIsStatusFilterOpen(false);
-                    }}
-                  >
-                    Show all
-                  </button>
-                  <button
-                    type="button"
-                    className="toolbar-dropdown-footer-btn"
-                    onClick={() => {
-                      setVisibleStatuses(defaultVisibleStatuses);
-                      setIsStatusFilterOpen(false);
-                    }}
-                  >
-                    Default
-                  </button>
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          {/* EM filter — 3-way segmented */}
-          <div className="inline-flex rounded-lg border border-slate-300 bg-white shadow-sm">
-            {(["all", "em", "non-em"] as const).map((value) => (
+        <div className="task-table-toolbar">
+          <div className="task-table-toolbar-filters">
+            <span className="task-table-toolbar-group-label">Filters</span>
+            <div className="relative" ref={sprintFilterRef}>
               <button
-                key={value}
                 type="button"
-                onClick={() => setEmFilter(value)}
-                className={`px-2.5 py-1 text-[12px] font-semibold first:rounded-l-lg last:rounded-r-lg transition ${
-                  emFilter === value
-                    ? "bg-blue-600 text-white"
-                    : "text-slate-600 hover:bg-slate-50"
-                }`}
-                title={value === "all" ? "Show all tasks" : value === "em" ? "Show only EM-assigned tasks" : "Show tasks not assigned to EM"}
+                className={toolbarTriggerClass(isSprintFilterOpen || sprintFilter !== "currentSprint")}
+                aria-expanded={isSprintFilterOpen}
+                aria-haspopup="listbox"
+                onClick={() => {
+                  if (!isSprintFilterOpen) closeOtherFilterMenus("sprint");
+                  setIsSprintFilterOpen((current) => !current);
+                }}
               >
-                {value === "all" ? "All" : value === "em" ? "Under EM" : "Not EM"}
+                <span>Sprint</span>
+                <ToolbarMenuChevron open={isSprintFilterOpen} />
+                <span className="toolbar-strip-btn-value capitalize">{sprintFilterSummary}</span>
               </button>
-            ))}
-          </div>
-
-          {/* Type filter — multi-checkbox dropdown */}
-          <div className="relative" ref={typeFilterRef}>
-            <button
-              type="button"
-              className={`toolbar-strip-btn inline-flex items-center gap-1.5 ${typeFilterOpen || typeFilter.length > 0 ? "border-blue-400 bg-blue-50 text-blue-950 ring-2 ring-blue-200/70" : ""}`}
-              aria-expanded={typeFilterOpen}
-              onClick={() => setTypeFilterOpen((v) => !v)}
-            >
-              Type
-              {typeFilter.length > 0 ? ` (${typeFilter.length})` : ""}
-              {typeFilterOpen ? " ▴" : " ▾"}
-            </button>
-            {typeFilterOpen ? (() => {
-              const allTypes = [...new Set(tasks.map((t) => t.issueType).filter(Boolean))] as string[];
-              return (
-                <div
-                  className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,14rem)]"
-                  aria-label="Filter tasks by type"
-                >
-                  <div className="toolbar-dropdown-header">
-                    <span className="text-[13px] font-bold uppercase tracking-wide text-slate-500">Issue type</span>
-                  </div>
-                  <div className="max-h-[min(14rem,calc(100vh-12rem))] space-y-1 overflow-y-auto px-2 py-2">
-                    {allTypes.length === 0 ? (
-                      <p className="px-1 py-2 text-[12px] text-slate-400">No types set — pull from Jira to populate.</p>
-                    ) : allTypes.map((type) => {
-                      const on = typeFilter.includes(type);
+              {isSprintFilterOpen ? (
+                <div className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,15rem)]">
+                  <ToolbarDropdownHeader
+                    title="Sprint"
+                    subtitle="Choose which sprint window to show in the table."
+                  />
+                  <div className="space-y-1 px-2 py-2">
+                    {(["currentSprint", "nextSprint", "all"] as const).map((option) => {
+                      const on = sprintFilter === option;
                       return (
-                        <label key={type} className="flex cursor-pointer items-center gap-2.5 rounded-lg border px-2.5 py-2 text-[13px] font-semibold shadow-sm transition hover:bg-slate-50">
+                        <button
+                          key={option}
+                          type="button"
+                          className={`toolbar-menu-item ${on ? "toolbar-menu-item-active" : ""}`}
+                          onClick={() => {
+                            setSprintFilter(option);
+                            setIsSprintFilterOpen(false);
+                          }}
+                        >
+                          {option === "currentSprint"
+                            ? "Current sprint"
+                            : option === "nextSprint"
+                              ? "Next sprint"
+                              : "All sprints"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div className="relative" ref={statusFilterRef}>
+              <button
+                type="button"
+                className={toolbarTriggerClass(isStatusFilterOpen || isStatusFilterCustom)}
+                aria-expanded={isStatusFilterOpen}
+                aria-haspopup="true"
+                onClick={() => {
+                  if (!isStatusFilterOpen) closeOtherFilterMenus("status");
+                  setIsStatusFilterOpen((current) => !current);
+                }}
+              >
+                <span>Status</span>
+                <ToolbarMenuChevron open={isStatusFilterOpen} />
+                <span className="toolbar-strip-btn-value tabular-nums">
+                  {visibleStatuses.length}/{taskStatuses.length}
+                </span>
+              </button>
+              {isStatusFilterOpen ? (
+                <div
+                  className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,16.5rem)]"
+                  aria-label="Filter tasks by status"
+                >
+                  <ToolbarDropdownHeader
+                    title="Status"
+                    subtitle={`${visibleStatuses.length} of ${taskStatuses.length} statuses visible in the table.`}
+                  />
+                  <div className="max-h-[min(18rem,calc(100vh-12rem))] space-y-1 overflow-y-auto px-2 py-2">
+                    {taskStatuses.map((status) => {
+                      const on = visibleStatuses.includes(status);
+                      return (
+                        <label
+                          key={status}
+                          className={`flex cursor-pointer items-center gap-2.5 rounded-lg border-l-4 py-2 pl-2.5 pr-2 text-[13px] font-semibold shadow-sm transition ${statusFilterClass(status)} ${
+                            on ? "ring-1 ring-slate-300/90 ring-offset-0" : "opacity-[0.72] hover:opacity-100"
+                          }`}
+                        >
                           <input
                             type="checkbox"
                             checked={on}
-                            onChange={() =>
-                              setTypeFilter((prev) =>
-                                on ? prev.filter((t) => t !== type) : [...prev, type],
-                              )
-                            }
+                            onChange={() => toggleVisibleStatus(status)}
                           />
-                          <span className="min-w-0 flex-1 leading-snug">{type}</span>
+                          <span className="min-w-0 flex-1 leading-snug">{status}</span>
                         </label>
                       );
                     })}
@@ -1557,28 +1565,252 @@ export function TaskTable() {
                     <button
                       type="button"
                       className="toolbar-dropdown-footer-btn"
-                      onClick={() => { setTypeFilter([]); setTypeFilterOpen(false); }}
+                      onClick={() => {
+                        setVisibleStatuses([...taskStatuses]);
+                        setIsStatusFilterOpen(false);
+                      }}
                     >
                       Show all
                     </button>
+                    <button
+                      type="button"
+                      className="toolbar-dropdown-footer-btn"
+                      onClick={() => {
+                        setVisibleStatuses(defaultVisibleStatuses);
+                        setIsStatusFilterOpen(false);
+                      }}
+                    >
+                      Default
+                    </button>
+                    <button
+                      type="button"
+                      className="toolbar-dropdown-footer-btn"
+                      onClick={() => {
+                        setVisibleStatuses([]);
+                        setIsStatusFilterOpen(false);
+                      }}
+                    >
+                      Clear
+                    </button>
                   </div>
                 </div>
-              );
-            })() : null}
+              ) : null}
+            </div>
+            <div className="relative" ref={typeFilterRef}>
+              <button
+                type="button"
+                className={toolbarTriggerClass(typeFilterOpen || typeFilter.length > 0)}
+                aria-expanded={typeFilterOpen}
+                onClick={() => {
+                  if (!typeFilterOpen) closeOtherFilterMenus("type");
+                  setTypeFilterOpen((value) => !value);
+                }}
+              >
+                <span>Type</span>
+                <ToolbarMenuChevron open={typeFilterOpen} />
+                {typeFilter.length > 0 ? (
+                  <span className="toolbar-strip-btn-value tabular-nums">{typeFilter.length} selected</span>
+                ) : null}
+              </button>
+              {typeFilterOpen ? (() => {
+                const allTypes = [...new Set(tasks.map((t) => t.issueType).filter(Boolean))] as string[];
+                return (
+                  <div
+                    className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,15rem)]"
+                    aria-label="Filter tasks by type"
+                  >
+                    <ToolbarDropdownHeader
+                      title="Issue type"
+                      subtitle="Show only stories matching selected Jira issue types."
+                    />
+                    <div className="max-h-[min(14rem,calc(100vh-12rem))] space-y-1 overflow-y-auto px-2 py-2">
+                      {allTypes.length === 0 ? (
+                        <p className="px-1 py-2 text-[12px] text-slate-400">No types set — pull from Jira to populate.</p>
+                      ) : allTypes.map((type) => {
+                        const on = typeFilter.includes(type);
+                        return (
+                          <label
+                            key={type}
+                            className={`toolbar-menu-choice ${on ? "toolbar-menu-choice-on" : ""}`}
+                          >
+                            <input
+                              type="checkbox"
+                              className="mt-0.5"
+                              checked={on}
+                              onChange={() =>
+                                setTypeFilter((prev) =>
+                                  on ? prev.filter((t) => t !== type) : [...prev, type],
+                                )
+                              }
+                            />
+                            <span className="min-w-0 flex-1 font-semibold leading-snug text-slate-900">{type}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <div className="toolbar-dropdown-footer">
+                      <button
+                        type="button"
+                        className="toolbar-dropdown-footer-btn"
+                        onClick={() => {
+                          setTypeFilter([]);
+                          setTypeFilterOpen(false);
+                        }}
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+                );
+              })() : null}
+            </div>
+            <div className="relative" ref={scopeFilterRef}>
+              <button
+                type="button"
+                className={toolbarTriggerClass(scopeFilterOpen || scopeFilterActiveCount > 0)}
+                aria-expanded={scopeFilterOpen}
+                aria-haspopup="true"
+                title={
+                  scopeFilterSummary
+                    ? `Story filter: ${scopeFilterSummary}`
+                    : "Filter by EM ownership and standalone Jira items"
+                }
+                onClick={() => {
+                  if (!scopeFilterOpen) closeOtherFilterMenus("scope");
+                  setScopeFilterOpen((value) => !value);
+                }}
+              >
+                <span>Story filter</span>
+                <ToolbarMenuChevron open={scopeFilterOpen} />
+                {scopeFilterSummary ? (
+                  <span className="toolbar-strip-btn-value">{scopeFilterSummary}</span>
+                ) : null}
+              </button>
+              {scopeFilterOpen ? (
+                <div
+                  className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,18rem)]"
+                  aria-label="Filter stories by EM and parent"
+                >
+                  <ToolbarDropdownHeader
+                    title="Story filter"
+                    subtitle="Narrow the table to EM stories, team stories, or standalone Jira items."
+                  />
+                  <div className="space-y-1 px-2 py-2">
+                    {(
+                      [
+                        {
+                          value: "all" as const,
+                          label: "All stories",
+                          hint: "EM and team — no filter",
+                        },
+                        {
+                          value: "em" as const,
+                          label: "EM stories only",
+                          hint: "Assigned to the Engineering Manager",
+                        },
+                        {
+                          value: "non-em" as const,
+                          label: "Team stories only",
+                          hint: "Not assigned to the EM",
+                        },
+                      ] as const
+                    ).map((option) => {
+                      const on = emFilter === option.value;
+                      return (
+                        <label
+                          key={option.value}
+                          className={`toolbar-menu-choice ${on ? "toolbar-menu-choice-on" : ""}`}
+                        >
+                          <input
+                            type="radio"
+                            name="story-em-filter"
+                            className="mt-0.5"
+                            checked={on}
+                            onChange={() => setEmFilter(option.value)}
+                          />
+                          <span className="min-w-0">
+                            <span className="block font-semibold text-slate-900">{option.label}</span>
+                            <span className="mt-0.5 block text-[11px] font-normal leading-snug text-slate-500">
+                              {option.hint}
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                    <label
+                      className={`toolbar-menu-choice mt-1.5 border-t border-slate-100 pt-2 ${parentlessFilter ? "toolbar-menu-choice-on" : ""}`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={parentlessFilter}
+                        onChange={(event) => setParentlessFilter(event.target.checked)}
+                      />
+                      <span className="min-w-0">
+                        <span className="block font-semibold text-slate-900">Standalone items only</span>
+                        <span className="mt-0.5 block text-[11px] font-normal leading-snug text-slate-500">
+                          Bugs, tasks, and technical tasks without a parent story in Jira
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                  <div className="toolbar-dropdown-footer">
+                    <button
+                      type="button"
+                      className="toolbar-dropdown-footer-btn"
+                      onClick={() => {
+                        setEmFilter("all");
+                        setParentlessFilter(false);
+                        setScopeFilterOpen(false);
+                      }}
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
-
-          {/* Parentless toggle */}
-          <button
-            type="button"
-            className={`toolbar-strip-btn inline-flex items-center gap-1.5 ${parentlessFilter ? "border-blue-400 bg-blue-50 text-blue-950 ring-2 ring-blue-200/70" : ""}`}
-            onClick={() => setParentlessFilter((v) => !v)}
-            title="Show only tasks without a Jira story link"
-          >
-            No parent
-          </button>
-
-          {isEditor ? (
-            <>
+          <div className="task-table-toolbar-divider" aria-hidden />
+          <div className="task-table-toolbar-actions">
+            <span className="task-table-toolbar-group-label">Actions</span>
+            {canManageSprintLifecycle ? (
+              <button
+                type="button"
+                className={toolbarTriggerClass(
+                  false,
+                  pendingMarkProgressIds.size > 0 ? "toolbar-strip-btn-needs-progress" : "",
+                )}
+                disabled={isMarkingProgress || jiraSyncInProgress}
+                aria-busy={isMarkingProgress}
+                title={markProgressHoverHint}
+                onClick={() => {
+                  setTasksMenuOpen(false);
+                  if (
+                    !window.confirm(
+                      isUatTrackingEnabled
+                        ? "Mark progress from now? UAT and production dates will replan from the current time."
+                        : "Start release tracking? UAT and production dates will be tracked from the current schedule.",
+                    )
+                  ) {
+                    return;
+                  }
+                  setIsMarkingProgress(true);
+                  try {
+                    markProgressNow();
+                    setActionFeedback("Marked progress — Cur UAT/Production dates refreshed.");
+                  } finally {
+                    window.setTimeout(() => setIsMarkingProgress(false), 250);
+                  }
+                }}
+              >
+                <span>{isMarkingProgress ? "Marking…" : "Mark Progress Now"}</span>
+                {!isMarkingProgress && pendingMarkProgressIds.size > 0 ? (
+                  <span className="toolbar-strip-btn-badge">{pendingMarkProgressIds.size}</span>
+                ) : null}
+              </button>
+            ) : null}
+            <div className="relative" ref={tasksMenuRef}>
               <input
                 ref={importFileInputRef}
                 type="file"
@@ -1593,117 +1825,99 @@ export function TaskTable() {
               />
               <button
                 type="button"
-                className="toolbar-strip-btn toolbar-strip-btn-accent"
-                disabled={isImportingTasks}
-                onClick={() => importFileInputRef.current?.click()}
+                className={toolbarTriggerClass(tasksMenuOpen)}
+                aria-expanded={tasksMenuOpen}
+                aria-haspopup="menu"
+                onClick={() => {
+                  setIsSprintFilterOpen(false);
+                  setIsStatusFilterOpen(false);
+                  setTypeFilterOpen(false);
+                  setScopeFilterOpen(false);
+                  setTasksMenuOpen((value) => !value);
+                }}
               >
-                {isImportingTasks ? "Importing…" : "Import"}
+                <span>Tasks</span>
+                <ToolbarMenuChevron open={tasksMenuOpen} />
               </button>
-            </>
-          ) : null}
-          <button
-            type="button"
-            className="toolbar-strip-btn toolbar-strip-btn-accent"
-            title="Download XLSX template for task import"
-            disabled={isDownloadingTemplate}
-            aria-busy={isDownloadingTemplate}
-            onClick={() => {
-              setIsDownloadingTemplate(true);
-              void downloadTasksImportTemplate(resources)
-                .then(() => setActionFeedback("Template downloaded."))
-                .catch(() => setActionFeedback("Template download failed."))
-                .finally(() => setIsDownloadingTemplate(false));
-            }}
-          >
-            {isDownloadingTemplate ? "Downloading…" : "Download Template"}
-          </button>
-          {canManageSprintLifecycle ? (
-            <button
-              type="button"
-              className={`toolbar-strip-btn toolbar-strip-btn-accent${pendingMarkProgressIds.size > 0 ? " toolbar-strip-btn-needs-progress" : ""}`}
-              disabled={isMarkingProgress || jiraSyncInProgress}
-              aria-busy={isMarkingProgress}
-              title={
-                pendingMarkProgressIds.size > 0
-                  ? `${pendingMarkProgressIds.size} ${pendingMarkProgressIds.size === 1 ? "story needs" : "stories need"} Mark Progress Now`
-                  : isUatTrackingEnabled
-                    ? "Replan remaining work from the current time"
-                    : "Lock release tracking and replan from now"
-              }
-              onClick={() => {
-                if (
-                  !window.confirm(
-                    isUatTrackingEnabled
-                      ? "Mark progress from now? UAT and production dates will replan from the current time."
-                      : "Start release tracking? UAT and production dates will be tracked from the current schedule.",
-                  )
-                ) {
-                  return;
-                }
-                setIsMarkingProgress(true);
-                try {
-                  markProgressNow();
-                  setActionFeedback("Marked progress — Cur UAT/Production dates refreshed.");
-                } finally {
-                  window.setTimeout(() => setIsMarkingProgress(false), 250);
-                }
-              }}
-            >
-              {isMarkingProgress ? "Marking…" : "Mark Progress Now"}
-              {!isMarkingProgress && pendingMarkProgressIds.size > 0 ? (
-                <span className="toolbar-strip-btn-badge">{pendingMarkProgressIds.size}</span>
+              {tasksMenuOpen ? (
+                <div
+                  className="toolbar-dropdown-shell absolute right-0 z-20 mt-2 w-[min(100vw-1.5rem,15rem)]"
+                  role="menu"
+                  aria-label="Add or import tasks"
+                >
+                  <ToolbarDropdownHeader
+                    title="Tasks"
+                    subtitle="Create one task, paste many, or import a spreadsheet."
+                  />
+                  <div className="space-y-1 px-2 py-2">
+                    {isEditor ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="toolbar-menu-item"
+                        onClick={handleAddTask}
+                      >
+                        Add singular task
+                      </button>
+                    ) : null}
+                    {isEditor ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="toolbar-menu-item"
+                        disabled={isImportingTasks}
+                        onClick={() => {
+                          setTasksMenuOpen(false);
+                          importFileInputRef.current?.click();
+                        }}
+                      >
+                        {isImportingTasks ? "Importing…" : "Import from file"}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="toolbar-menu-item"
+                      disabled={isDownloadingTemplate}
+                      aria-busy={isDownloadingTemplate}
+                      title="Download XLSX template for task import"
+                      onClick={() => {
+                        setTasksMenuOpen(false);
+                        setIsDownloadingTemplate(true);
+                        void downloadTasksImportTemplate(resources)
+                          .then(() => setActionFeedback("Template downloaded."))
+                          .catch(() => setActionFeedback("Template download failed."))
+                          .finally(() => setIsDownloadingTemplate(false));
+                      }}
+                    >
+                      {isDownloadingTemplate ? "Downloading…" : "Download template"}
+                    </button>
+                    {isEditor ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="toolbar-menu-item"
+                        onClick={() => {
+                          setTasksMenuOpen(false);
+                          setIsBulkAddOpen(true);
+                        }}
+                      >
+                        Bulk insertion
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
               ) : null}
-            </button>
-          ) : null}
-          {isEditor ? (
-            <button type="button" className="toolbar-strip-btn toolbar-strip-btn-accent" onClick={() => setIsBulkAddOpen(true)}>
-              Bulk Insertion
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={!isEditor}
-            onClick={() => {
-              if (!visibleStatuses.includes(DEFAULT_TASK_STATUS)) {
-                setVisibleStatuses((current) => [...current, DEFAULT_TASK_STATUS]);
-              }
-              if (sprintFilter === "nextSprint") {
-                setSprintFilter("currentSprint");
-              }
-              const id = addTask();
-              setFocusTaskId(id);
-            }}
-          >
-            Add Task
-          </button>
+            </div>
+          </div>
         </div>
       </div>
-      <div
-        className={`flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-xl border px-3 py-2 text-sm font-medium ${
-          pendingMarkProgressIds.size > 0
-            ? "border-amber-400 bg-amber-50 text-amber-950"
-            : "border-blue-300 bg-blue-100/80 text-blue-900"
-        }`}
-      >
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-300 bg-blue-100/80 px-3 py-2 text-sm font-medium text-blue-900">
         <span className="min-w-0">
-          {pendingMarkProgressIds.size > 0 ? (
-            <>
-              <span className="font-semibold">
-                {pendingMarkProgressIds.size} {pendingMarkProgressIds.size === 1 ? "story needs" : "stories need"} remark
-              </span>
-              <span className="mx-1.5 opacity-70">·</span>
-              Use <span className="font-semibold">Mark Progress Now</span> to refresh Cur dates after hours/schedule
-              edits
-            </>
-          ) : null}
-          {pendingMarkProgressIds.size > 0 ? <br /> : null}
           {hasHydrated ? (
             <>
               Sprint start {format(parseCalendarDate(config.sprintStartDate), "EEE dd MMM, yyyy")}
-              <span className={pendingMarkProgressIds.size > 0 ? "mx-1.5 opacity-70" : "mx-1.5 text-blue-800/70"}>
-                ·
-              </span>
+              <span className="mx-1.5 text-blue-800/70">·</span>
               Window ends {format(getSprintWindowEnd(config), "EEE dd MMM, yyyy")}
             </>
           ) : (
@@ -1737,7 +1951,7 @@ export function TaskTable() {
         <table className="task-table-fit text-[13px]">
           <thead className="table-head">
               <tr>
-              <th className="story-select-col text-center align-middle" title="Select stories, set schedule order, and release group">
+              <th className="story-select-col text-center align-middle" title="Select stories, set PO schedule order (Ord), and release group (Grp)">
                   {isEditor ? (
                   <div className="story-header-select story-header-select-stack" ref={bulkStoryMenuRef}>
                     <button
@@ -1905,6 +2119,23 @@ export function TaskTable() {
                                 Move to current sprint
                               </button>
                               ) : null}
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-45"
+                                disabled={visibleSelectedCount === 0}
+                                title={
+                                  visibleSelectedCount === 0
+                                    ? "Select stories first"
+                                    : "Copy selected story names as clickable links"
+                                }
+                                onClick={copyStoryLinksForSelected}
+                              >
+                                <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
+                                  ⎘
+                                </span>
+                                Copy story links
+                              </button>
                               <button
                                 type="button"
                                 role="menuitem"
@@ -2124,32 +2355,99 @@ export function TaskTable() {
                           })()}
                         </div>
                       </div>
-                      {isEditor ? (
+                      {isEditor ||
+                      task.issueType ||
+                      task.isEmStory ||
+                      (task.tags?.length ?? 0) > 0 ||
+                      todoLineCount > 0 ? (
                         <div className="story-fields-menu story-fields-menu-below">
-                          <button
-                            type="button"
-                            className={`story-fields-menu-btn${storyFieldsOpen?.taskId === task.id ? " story-fields-menu-btn-open" : ""}`}
-                            aria-expanded={storyFieldsOpen?.taskId === task.id}
-                            aria-haspopup="true"
-                            aria-label={`Edit name and link for ${storyLabel}`}
-                            title="Edit name & link"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              const trigger = event.currentTarget;
-                              setIsBulkStoryMenuOpen(false);
-                              setAssigneePickerOpen(null);
-                              setStoryFieldsDraft({
-                                storyName: task.storyName ?? "",
-                                storyLink: task.storyLink ?? "",
-                              });
-                              setStoryFieldsOpen((open) =>
-                                open?.taskId === task.id ? null : { taskId: task.id, trigger },
-                              );
-                            }}
-                          >
-                            Edit link
-                            <span aria-hidden>{storyFieldsOpen?.taskId === task.id ? "▴" : "▾"}</span>
-                          </button>
+                          {task.issueType ? (
+                            <span
+                              className={`task-flag-chip task-story-type-chip ${issueTypeChipClass(task.issueType)}`}
+                              title={`Issue type: ${task.issueType}`}
+                            >
+                              <span className="task-flag-chip-label">{task.issueType}</span>
+                            </span>
+                          ) : null}
+                          {task.isEmStory ? (
+                            <span
+                              className="task-flag-chip task-story-type-chip task-flag-chip-type-em"
+                              title="Assigned to the Engineering Manager"
+                            >
+                              <span className="task-flag-chip-label">EM</span>
+                            </span>
+                          ) : null}
+                          {(task.tags ?? []).map((tag) =>
+                            isEditor ? (
+                              <span
+                                key={tag}
+                                className="task-flag-chip task-story-type-chip task-flag-chip-tag group inline-flex items-start gap-1"
+                                title={tag}
+                              >
+                                <span className="task-flag-chip-label">{formatTagLabel(tag)}</span>
+                                <button
+                                  type="button"
+                                  className="shrink-0 text-slate-500 opacity-0 transition group-hover:opacity-100 hover:text-rose-700 focus-visible:opacity-100 focus-visible:outline-none"
+                                  aria-label={`Remove tag ${tag}`}
+                                  onClick={() => {
+                                    setAssigneePickerOpen(null);
+                                    updateTask(task.id, {
+                                      tags: (task.tags ?? []).filter((item) => item !== tag),
+                                    });
+                                  }}
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ) : (
+                              <span
+                                key={tag}
+                                className="task-flag-chip task-story-type-chip task-flag-chip-tag"
+                                title={tag}
+                              >
+                                <span className="task-flag-chip-label">{formatTagLabel(tag)}</span>
+                              </span>
+                            ),
+                          )}
+                          {todoLineCount > 0 ? (
+                            <button
+                              type="button"
+                              className="task-flag-chip task-story-type-chip task-flag-chip-todo"
+                              onClick={() => {
+                                setAssigneePickerOpen(null);
+                                setTodoModalDraft(task.taskNotes ?? "");
+                                setTaskTodoModalId(task.id);
+                              }}
+                            >
+                              <span className="task-flag-chip-label">Todo ({todoLineCount})</span>
+                            </button>
+                          ) : null}
+                          {isEditor ? (
+                            <button
+                              type="button"
+                              className={`story-fields-menu-btn${storyFieldsOpen?.taskId === task.id ? " story-fields-menu-btn-open" : ""}`}
+                              aria-expanded={storyFieldsOpen?.taskId === task.id}
+                              aria-haspopup="true"
+                              aria-label={`Edit name and link for ${storyLabel}`}
+                              title="Edit name & link"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                const trigger = event.currentTarget;
+                                setIsBulkStoryMenuOpen(false);
+                                setAssigneePickerOpen(null);
+                                setStoryFieldsDraft({
+                                  storyName: task.storyName ?? "",
+                                  storyLink: task.storyLink ?? "",
+                                });
+                                setStoryFieldsOpen((open) =>
+                                  open?.taskId === task.id ? null : { taskId: task.id, trigger },
+                                );
+                              }}
+                            >
+                              Edit link
+                              <span aria-hidden>{storyFieldsOpen?.taskId === task.id ? "▴" : "▾"}</span>
+                            </button>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>
@@ -3028,56 +3326,12 @@ export function TaskTable() {
                   </td>
                   <td className="align-top">
                     <div className="flex w-full min-w-0 flex-wrap content-start gap-0.5">
-                      {task.issueType ? (
-                        <span
-                          className={`task-flag-chip ${issueTypeChipClass(task.issueType)}`}
-                          title={`Issue type: ${task.issueType}`}
-                        >
-                          <span className="task-flag-chip-label">{task.issueType}</span>
-                        </span>
-                      ) : null}
-                      {task.isEmStory ? (
-                        <span
-                          className="task-flag-chip task-flag-chip-type-em"
-                          title="Assigned to the Engineering Manager"
-                        >
-                          <span className="task-flag-chip-label">EM</span>
-                        </span>
-                      ) : null}
-                      {(task.tags ?? []).map((tag) =>
-                        isEditor ? (
-                          <span
-                            key={tag}
-                            className="task-flag-chip task-flag-chip-tag group inline-flex w-full items-start gap-1"
-                            title={tag}
-                          >
-                            <span className="task-flag-chip-label">{formatTagLabel(tag)}</span>
-                            <button
-                              type="button"
-                              className="shrink-0 text-slate-500 opacity-0 transition group-hover:opacity-100 hover:text-rose-700 focus-visible:opacity-100 focus-visible:outline-none"
-                              aria-label={`Remove tag ${tag}`}
-                              onClick={() => {
-                                setAssigneePickerOpen(null);
-                                updateTask(task.id, {
-                                  tags: (task.tags ?? []).filter((item) => item !== tag),
-                                });
-                              }}
-                            >
-                              ×
-                            </button>
-                          </span>
-                        ) : (
-                          <span key={tag} className="task-flag-chip task-flag-chip-tag w-full" title={tag}>
-                            <span className="task-flag-chip-label">{formatTagLabel(tag)}</span>
-                          </span>
-                        ),
-                      )}
                       {task.carryToNextSprint ? (
                         <span
                           className="task-flag-chip task-flag-chip-next-sprint"
                           title="This story is carried to the next sprint"
                         >
-                          Next sprint
+                          <span className="task-flag-chip-label">Next sprint</span>
                         </span>
                       ) : null}
                       {needsMarkProgress ? (
@@ -3085,33 +3339,24 @@ export function TaskTable() {
                           className="task-flag-chip task-flag-chip-pending-sync"
                           title="Hours or schedule edited since last Mark Progress Now — click Mark Progress Now to refresh Cur dates."
                         >
-                          Need remark
+                          <span className="task-flag-chip-label">Need remark</span>
                         </span>
                       ) : null}
                       {computed?.isOverflow ? (
-                        <span className="task-flag-chip task-flag-chip-overflow">Overflow</span>
+                        <span className="task-flag-chip task-flag-chip-overflow">
+                          <span className="task-flag-chip-label">Overflow</span>
+                        </span>
                       ) : null}
                       {computed
                         ? (() => {
                             const thursdayLabel = thursdayReleaseChipLabel(computed.thursdayReleaseScope);
                             return thursdayLabel ? (
-                              <span className="task-flag-chip task-flag-chip-thursday">{thursdayLabel}</span>
+                              <span className="task-flag-chip task-flag-chip-thursday">
+                                <span className="task-flag-chip-label">{thursdayLabel}</span>
+                              </span>
                             ) : null;
                           })()
                         : null}
-                      {todoLineCount > 0 ? (
-                        <button
-                          type="button"
-                          className="task-flag-chip task-flag-chip-todo"
-                          onClick={() => {
-                            setAssigneePickerOpen(null);
-                            setTodoModalDraft(task.taskNotes ?? "");
-                            setTaskTodoModalId(task.id);
-                          }}
-                        >
-                          Todo ({todoLineCount})
-                        </button>
-                      ) : null}
                     </div>
                   </td>
                   <td className="tools-col align-top">
@@ -3580,8 +3825,11 @@ export function TaskTable() {
           resources={resources}
           onCancel={() => setIsBulkAddOpen(false)}
           onConfirm={(rows) => {
-            addTasks(rows);
+            const newIds = addTasks(rows);
             setIsBulkAddOpen(false);
+            if (newIds.length > 0) {
+              setFocusTaskId(newIds[newIds.length - 1] ?? null);
+            }
           }}
         />
       ) : null}

@@ -30,11 +30,12 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-dvh min-h-0 antialiased`}
+      suppressHydrationWarning
     >
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var v=localStorage.getItem(${JSON.stringify(COLOR_SCHEME_STORAGE_KEY)});var dark=v==="dark"||(v!=="light"&&window.matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle(${JSON.stringify(COLOR_SCHEME_CLASS)},dark);document.documentElement.style.colorScheme=dark?"dark":"light";}catch(e){}})();`,
+            __html: `(function(){try{var v=localStorage.getItem(${JSON.stringify(COLOR_SCHEME_STORAGE_KEY)});var dark=v==="dark"||(v!=="light"&&window.matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle(${JSON.stringify(COLOR_SCHEME_CLASS)},dark);}catch(e){}})();`,
           }}
         />
       </head>

@@ -241,6 +241,10 @@ model Task {
   replanFromStep    TaskReplanStep?
   carryToNextSprint Boolean         @default(false)
   releaseGroup      String?
+  /** Jira issue type label e.g. Story, Bug, Task, Technical Task. */
+  issueType         String?
+  /** True when Jira assignee or EM field matches the squad EM. */
+  isEmStory           Boolean         @default(false)
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 

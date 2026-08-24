@@ -260,7 +260,13 @@ body {
   }
 
   .jira-row-sync-chip {
-    @apply rounded-md px-1 py-0.5 text-center text-[9px] font-bold uppercase tracking-wide;
+    @apply rounded-md px-1 py-0.5 text-center text-[9px] font-bold uppercase leading-snug tracking-wide;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 
   .jira-row-sync-chip-pending {
@@ -343,37 +349,240 @@ body {
     @apply rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-rose-700 hover:shadow-md active:bg-rose-800;
   }
 
+  .task-table-toolbar {
+    @apply flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-slate-200/70 px-3 py-2.5;
+    background: linear-gradient(
+      135deg,
+      rgb(255 255 255 / 0.96) 0%,
+      rgb(248 250 252 / 0.92) 45%,
+      rgb(239 246 255 / 0.82) 100%
+    );
+    box-shadow:
+      0 1px 2px rgb(15 23 42 / 0.04),
+      0 8px 24px rgb(15 23 42 / 0.06),
+      inset 0 1px 0 rgb(255 255 255 / 0.85);
+  }
+
+  .task-table-toolbar-filters,
+  .task-table-toolbar-actions {
+    @apply flex min-w-0 flex-wrap items-center gap-2;
+  }
+
+  .task-table-toolbar-filters {
+    @apply flex-1;
+  }
+
+  .task-table-toolbar-actions {
+    @apply shrink-0 sm:ml-auto;
+  }
+
+  .task-table-toolbar-group-label {
+    @apply mr-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500;
+    background: linear-gradient(180deg, rgb(241 245 249 / 0.9) 0%, rgb(226 232 240 / 0.45) 100%);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.65);
+  }
+
+  .task-table-toolbar-divider {
+    @apply hidden h-9 w-px shrink-0 self-center lg:block;
+    background: linear-gradient(
+      180deg,
+      rgb(148 163 184 / 0) 0%,
+      rgb(148 163 184 / 0.45) 35%,
+      rgb(148 163 184 / 0.45) 65%,
+      rgb(148 163 184 / 0) 100%
+    );
+  }
+
+  .toolbar-segmented {
+    @apply inline-flex w-full rounded-lg border border-slate-200/80 p-0.5;
+    background: linear-gradient(180deg, rgb(248 250 252 / 0.95) 0%, rgb(241 245 249 / 0.75) 100%);
+    box-shadow: inset 0 1px 2px rgb(15 23 42 / 0.04);
+  }
+
+  .toolbar-segmented-btn {
+    @apply flex-1 rounded-md px-2 py-1.5 text-[12px] font-semibold transition duration-200 ease-out;
+  }
+
+  .toolbar-segmented-btn-active {
+    @apply text-blue-950 ring-1 ring-blue-200/70;
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.98) 0%, rgb(239 246 255 / 0.92) 100%);
+    box-shadow: 0 2px 8px rgb(37 99 235 / 0.12);
+  }
+
+  .toolbar-segmented-btn-inactive {
+    @apply text-slate-600 hover:text-slate-900;
+  }
+
+  .toolbar-segmented-btn-inactive:hover {
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.72) 0%, rgb(248 250 252 / 0.55) 100%);
+  }
+
+  .toolbar-scope-option {
+    @apply flex cursor-pointer items-start gap-2.5 rounded-xl border border-slate-200/70 px-2.5 py-2 text-[13px] font-semibold transition duration-200 ease-out;
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.98) 0%, rgb(248 250 252 / 0.88) 100%);
+    box-shadow: 0 1px 3px rgb(15 23 42 / 0.05);
+  }
+
+  .toolbar-scope-option:hover {
+    @apply border-slate-300/90;
+    background: linear-gradient(180deg, rgb(255 255 255) 0%, rgb(241 245 249 / 0.95) 100%);
+    box-shadow: 0 4px 12px rgb(15 23 42 / 0.07);
+  }
+
+  .toolbar-scope-choice,
+  .toolbar-menu-choice {
+    @apply flex cursor-pointer items-start gap-2.5 rounded-xl border border-slate-200/70 px-2.5 py-2 text-[13px] transition duration-200 ease-out;
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.98) 0%, rgb(248 250 252 / 0.86) 100%);
+    box-shadow: 0 1px 3px rgb(15 23 42 / 0.05);
+  }
+
+  .toolbar-scope-choice:hover,
+  .toolbar-menu-choice:hover {
+    @apply border-slate-300/90;
+    background: linear-gradient(180deg, rgb(255 255 255) 0%, rgb(241 245 249 / 0.92) 100%);
+    box-shadow: 0 4px 12px rgb(15 23 42 / 0.07);
+  }
+
+  .toolbar-menu-choice-on,
+  .toolbar-scope-choice-on {
+    @apply border-blue-300/90 text-blue-950 ring-1 ring-blue-200/80;
+    background: linear-gradient(135deg, rgb(239 246 255 / 0.98) 0%, rgb(219 234 254 / 0.78) 100%);
+    box-shadow:
+      0 2px 10px rgb(37 99 235 / 0.12),
+      inset 0 1px 0 rgb(255 255 255 / 0.75);
+  }
+
+  .toolbar-menu-item {
+    @apply flex w-full items-center rounded-xl px-2.5 py-2 text-left text-[13px] font-semibold text-slate-800 transition duration-200 ease-out disabled:cursor-default disabled:opacity-50;
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.55) 0%, rgb(248 250 252 / 0.35) 100%);
+  }
+
+  .toolbar-menu-item:hover:not(:disabled) {
+    background: linear-gradient(90deg, rgb(248 250 252 / 0.98) 0%, rgb(239 246 255 / 0.82) 100%);
+    box-shadow: 0 3px 10px rgb(15 23 42 / 0.06);
+  }
+
+  .toolbar-menu-item-active {
+    @apply text-blue-950 ring-1 ring-blue-200/80;
+    background: linear-gradient(135deg, rgb(219 234 254 / 0.95) 0%, rgb(191 219 254 / 0.72) 100%);
+    box-shadow: 0 3px 12px rgb(37 99 235 / 0.14);
+  }
+
+  .toolbar-menu-item-active:hover:not(:disabled) {
+    background: linear-gradient(135deg, rgb(219 234 254 / 0.98) 0%, rgb(191 219 254 / 0.82) 100%);
+  }
+
   .toolbar-strip-btn {
-    @apply rounded-xl border border-slate-300/90 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition;
-    @apply hover:border-blue-300 hover:bg-blue-50/80 hover:text-blue-950 hover:shadow;
+    @apply rounded-xl border border-slate-200/80 px-3 py-2 text-sm font-medium text-slate-700 transition duration-200 ease-out;
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.98) 0%, rgb(248 250 252 / 0.9) 100%);
+    box-shadow:
+      0 1px 2px rgb(15 23 42 / 0.05),
+      0 4px 12px rgb(15 23 42 / 0.05),
+      inset 0 1px 0 rgb(255 255 255 / 0.85);
+  }
+
+  .toolbar-strip-btn:hover:not(:disabled) {
+    @apply border-blue-300/80 text-blue-950;
+    background: linear-gradient(180deg, rgb(255 255 255) 0%, rgb(239 246 255 / 0.88) 100%);
+    box-shadow:
+      0 2px 6px rgb(37 99 235 / 0.1),
+      0 8px 20px rgb(37 99 235 / 0.08),
+      inset 0 1px 0 rgb(255 255 255 / 0.9);
+  }
+
+  .toolbar-strip-btn-active {
+    @apply border-blue-300/90 text-blue-950;
+    background: linear-gradient(135deg, rgb(239 246 255 / 0.98) 0%, rgb(191 219 254 / 0.72) 100%);
+    box-shadow:
+      0 0 0 1px rgb(147 197 253 / 0.45),
+      0 4px 16px rgb(37 99 235 / 0.16),
+      inset 0 1px 0 rgb(255 255 255 / 0.75);
+  }
+
+  .toolbar-strip-btn-chevron {
+    @apply shrink-0 text-[13px] font-bold text-slate-400 transition-colors duration-200;
+  }
+
+  .toolbar-strip-btn:hover:not(:disabled) .toolbar-strip-btn-chevron,
+  .toolbar-strip-btn-active .toolbar-strip-btn-chevron {
+    @apply text-blue-600/80;
+  }
+
+  .toolbar-strip-btn-value {
+    @apply max-w-[8rem] truncate text-left text-[13px] font-medium text-slate-500 transition-colors duration-200;
+  }
+
+  .toolbar-strip-btn-active .toolbar-strip-btn-value {
+    @apply text-blue-800/85;
+  }
+
+  .toolbar-dropdown-title {
+    @apply text-[13px] font-bold text-slate-800;
+  }
+
+  .toolbar-dropdown-subtitle {
+    @apply mt-0.5 text-[11px] font-normal leading-snug text-slate-500/95;
   }
 
   .toolbar-strip-btn-accent {
-    @apply border-blue-200 bg-blue-50/90 text-blue-950 hover:border-blue-300 hover:bg-blue-100;
+    @apply border-blue-200/80 text-blue-950;
+    background: linear-gradient(180deg, rgb(239 246 255 / 0.95) 0%, rgb(219 234 254 / 0.72) 100%);
   }
 
   .toolbar-strip-btn-needs-progress {
-    @apply border-amber-400 bg-amber-100 text-amber-950 ring-2 ring-amber-300/60 hover:border-amber-500 hover:bg-amber-200/90;
+    @apply border-amber-300/90 text-amber-950;
+    background: linear-gradient(135deg, rgb(254 249 195 / 0.98) 0%, rgb(253 230 138 / 0.82) 100%);
+    box-shadow:
+      0 0 0 1px rgb(251 191 36 / 0.35),
+      0 4px 16px rgb(245 158 11 / 0.18),
+      inset 0 1px 0 rgb(255 255 255 / 0.65);
+  }
+
+  .toolbar-strip-btn-needs-progress:hover:not(:disabled) {
+    @apply border-amber-400/90;
+    background: linear-gradient(135deg, rgb(254 243 199) 0%, rgb(252 211 77 / 0.88) 100%);
+    box-shadow:
+      0 0 0 1px rgb(245 158 11 / 0.4),
+      0 6px 18px rgb(245 158 11 / 0.22),
+      inset 0 1px 0 rgb(255 255 255 / 0.7);
   }
 
   .toolbar-strip-btn-badge {
-    @apply ml-1.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-amber-600 px-1.5 py-px text-[11px] font-bold tabular-nums text-white;
+    @apply ml-1.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-px text-[11px] font-bold tabular-nums text-white;
+    background: linear-gradient(180deg, rgb(217 119 6) 0%, rgb(180 83 9) 100%);
+    box-shadow: 0 2px 6px rgb(180 83 9 / 0.35);
   }
 
   .toolbar-dropdown-shell {
-    @apply overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-xl ring-1 ring-slate-900/5;
+    @apply overflow-hidden rounded-2xl border border-slate-200/70;
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.98) 0%, rgb(248 250 252 / 0.96) 100%);
+    box-shadow:
+      0 8px 16px rgb(15 23 42 / 0.06),
+      0 20px 40px rgb(15 23 42 / 0.12),
+      0 0 0 1px rgb(255 255 255 / 0.65);
+    backdrop-filter: blur(10px);
   }
 
   .toolbar-dropdown-header {
-    @apply border-b border-slate-100 bg-slate-50/40 px-3 py-2;
+    @apply border-b border-slate-200/60 px-3 py-2.5;
+    background: linear-gradient(180deg, rgb(248 250 252 / 0.95) 0%, rgb(241 245 249 / 0.55) 100%);
   }
 
   .toolbar-dropdown-footer {
-    @apply flex gap-1.5 border-t border-slate-100 bg-slate-50/50 px-2.5 py-2;
+    @apply flex gap-1.5 border-t border-slate-200/60 px-2.5 py-2;
+    background: linear-gradient(0deg, rgb(248 250 252 / 0.92) 0%, rgb(241 245 249 / 0.45) 100%);
   }
 
   .toolbar-dropdown-footer-btn {
-    @apply flex-1 rounded-lg border border-slate-200/90 bg-white px-2 py-1.5 text-center text-[13px] font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50;
+    @apply flex-1 rounded-lg border border-slate-200/75 px-2 py-1.5 text-center text-[13px] font-semibold text-slate-700 transition duration-200 ease-out;
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.98) 0%, rgb(248 250 252 / 0.88) 100%);
+    box-shadow: 0 1px 3px rgb(15 23 42 / 0.05);
+  }
+
+  .toolbar-dropdown-footer-btn:hover {
+    @apply border-slate-300/90 text-slate-900;
+    background: linear-gradient(180deg, rgb(255 255 255) 0%, rgb(241 245 249 / 0.95) 100%);
+    box-shadow: 0 3px 10px rgb(15 23 42 / 0.08);
   }
 
   .row-action-btn {
@@ -483,11 +692,12 @@ body {
   }
 
   .task-flag-chip {
-    @apply inline-flex max-w-full shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[11px] font-semibold leading-tight shadow-sm;
+    @apply inline-flex max-w-full min-w-0 shrink items-start rounded-full border px-1 py-0.5 text-[10.25px] font-semibold leading-snug shadow-sm;
   }
 
   .task-flag-chip-label {
-    @apply block min-w-0 flex-1 whitespace-normal break-words text-center;
+    @apply block min-w-0 flex-1 whitespace-normal break-words text-center leading-snug;
+    overflow-wrap: anywhere;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -758,11 +968,12 @@ body {
   }
 
   .task-table-fit .task-flag-chip {
-    @apply rounded-md px-1 py-px text-[0.92em];
+    @apply rounded-md px-1 py-px text-[9.5px];
   }
 
   .task-table-fit .task-flag-chip-label {
-    -webkit-line-clamp: 1;
+    -webkit-line-clamp: 2;
+    @apply leading-snug;
   }
 
   .task-table-fit .release-date-card {
@@ -1161,8 +1372,16 @@ body {
     @apply relative z-[1] flex w-full flex-col items-stretch;
   }
 
+  .story-select-release-input-row {
+    @apply flex h-[2.1rem] w-full min-w-0 items-stretch overflow-hidden rounded-md border border-slate-200/90 bg-white;
+  }
+
+  .story-select-release-label {
+    @apply flex shrink-0 items-center bg-slate-100/90 px-0.5 text-[7px] font-bold uppercase tracking-wide text-slate-600;
+  }
+
   .story-select-release-input {
-    @apply w-full min-h-[2.1rem] max-h-[2.1rem] min-w-0 resize-none overflow-hidden rounded border border-slate-200 bg-white px-0.5 py-0.5 text-center text-[9px] font-semibold leading-tight;
+    @apply min-h-0 min-w-0 flex-1 resize-none overflow-hidden rounded-none border-0 bg-white px-0.5 py-0.5 text-center text-[9px] font-semibold leading-tight;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     word-break: break-word;
@@ -1244,7 +1463,11 @@ body {
   }
 
   .story-fields-menu-below {
-    @apply mb-0;
+    @apply mb-0 flex flex-wrap items-center gap-1;
+  }
+
+  .task-story-type-chip {
+    @apply px-1 py-px text-[9.5px];
   }
 
   .story-fields-menu-btn {
@@ -2085,6 +2308,103 @@ html.color-scheme-dark .user-mgmt-user-card,
 html.color-scheme-dark .sign-in-page,
 html.color-scheme-dark .sign-in-panel,
 html.color-scheme-dark .toolbar-dropdown-shell,
+html.color-scheme-dark .task-table-toolbar,
+html.color-scheme-dark .number-stepper {
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+html.color-scheme-dark .task-table-toolbar {
+  background: linear-gradient(
+    135deg,
+    rgb(30 32 38 / 0.96) 0%,
+    rgb(24 26 31 / 0.94) 50%,
+    rgb(20 28 42 / 0.9) 100%
+  );
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.25),
+    0 10px 28px rgb(0 0 0 / 0.28),
+    inset 0 1px 0 rgb(255 255 255 / 0.04);
+}
+
+html.color-scheme-dark .toolbar-dropdown-shell {
+  background: linear-gradient(180deg, rgb(34 36 42 / 0.98) 0%, rgb(26 28 34 / 0.96) 100%);
+  box-shadow:
+    0 10px 24px rgb(0 0 0 / 0.35),
+    0 24px 48px rgb(0 0 0 / 0.4),
+    0 0 0 1px rgb(255 255 255 / 0.04);
+}
+
+html.color-scheme-dark .toolbar-strip-btn,
+html.color-scheme-dark .toolbar-dropdown-footer-btn {
+  background: linear-gradient(180deg, rgb(38 40 48 / 0.96) 0%, rgb(28 30 36 / 0.92) 100%);
+  border-color: rgb(255 255 255 / 0.08);
+  color: var(--foreground);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.22),
+    0 4px 12px rgb(0 0 0 / 0.18),
+    inset 0 1px 0 rgb(255 255 255 / 0.05);
+}
+
+html.color-scheme-dark .toolbar-strip-btn:hover:not(:disabled),
+html.color-scheme-dark .toolbar-dropdown-footer-btn:hover {
+  background: linear-gradient(180deg, rgb(44 48 58 / 0.98) 0%, rgb(32 38 52 / 0.94) 100%);
+  border-color: rgb(96 165 250 / 0.35);
+  box-shadow:
+    0 2px 8px rgb(37 99 235 / 0.18),
+    0 10px 24px rgb(0 0 0 / 0.28);
+}
+
+html.color-scheme-dark .toolbar-strip-btn-active {
+  background: linear-gradient(135deg, rgb(30 58 95 / 0.95) 0%, rgb(30 64 110 / 0.82) 100%);
+  border-color: rgb(96 165 250 / 0.45);
+  box-shadow:
+    0 0 0 1px rgb(59 130 246 / 0.35),
+    0 6px 18px rgb(37 99 235 / 0.22),
+    inset 0 1px 0 rgb(255 255 255 / 0.06);
+}
+
+html.color-scheme-dark .toolbar-menu-item,
+html.color-scheme-dark .toolbar-menu-choice,
+html.color-scheme-dark .toolbar-scope-choice {
+  background: linear-gradient(180deg, rgb(36 38 46 / 0.72) 0%, rgb(28 30 36 / 0.55) 100%);
+  border-color: rgb(255 255 255 / 0.08);
+}
+
+html.color-scheme-dark .toolbar-menu-item:hover:not(:disabled),
+html.color-scheme-dark .toolbar-menu-choice:hover,
+html.color-scheme-dark .toolbar-scope-choice:hover {
+  background: linear-gradient(180deg, rgb(42 46 56 / 0.92) 0%, rgb(32 38 52 / 0.78) 100%);
+}
+
+html.color-scheme-dark .toolbar-menu-item-active,
+html.color-scheme-dark .toolbar-menu-choice-on,
+html.color-scheme-dark .toolbar-scope-choice-on {
+  background: linear-gradient(135deg, rgb(30 58 95 / 0.92) 0%, rgb(30 64 110 / 0.75) 100%);
+  border-color: rgb(96 165 250 / 0.4);
+}
+
+html.color-scheme-dark .toolbar-dropdown-header {
+  background: linear-gradient(180deg, rgb(34 36 42 / 0.95) 0%, rgb(28 30 36 / 0.55) 100%);
+  border-color: rgb(255 255 255 / 0.06);
+}
+
+html.color-scheme-dark .toolbar-dropdown-footer {
+  background: linear-gradient(0deg, rgb(34 36 42 / 0.92) 0%, rgb(28 30 36 / 0.45) 100%);
+  border-color: rgb(255 255 255 / 0.06);
+}
+
+html.color-scheme-dark .task-table-toolbar-group-label {
+  background: linear-gradient(180deg, rgb(40 42 50 / 0.9) 0%, rgb(32 34 40 / 0.55) 100%);
+  color: rgb(148 163 184 / 0.95);
+}
+
+html.color-scheme-dark .toolbar-strip-btn-needs-progress {
+  background: linear-gradient(135deg, rgb(69 52 20 / 0.95) 0%, rgb(92 62 18 / 0.88) 100%);
+  border-color: rgb(245 158 11 / 0.45);
+  color: rgb(254 243 199);
+}
+
 html.color-scheme-dark .number-stepper {
   background-color: var(--surface);
   border-color: var(--border);

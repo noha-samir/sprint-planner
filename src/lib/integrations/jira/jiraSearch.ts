@@ -8,6 +8,8 @@ export type SearchJqlIssue = {
     issuetype?: { name?: string; subtask?: boolean };
     assignee?: { accountId?: string; displayName?: string } | null;
     timeoriginalestimate?: number | null;
+    parent?: { key?: string } | null;
+    [customField: string]: unknown;
   };
 };
 

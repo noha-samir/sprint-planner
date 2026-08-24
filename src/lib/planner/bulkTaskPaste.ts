@@ -782,7 +782,31 @@ const parseHtmlClipboardTable = (html: string): ClipboardCell[][] => {
   return rows;
 };
 
-const draftFields: (keyof BulkTaskDraftRow)[] = [
+const looksLikeMoStartDate = (raw: string): boolean => /^\d{4}-\d{2}-\d{2}/.test(raw.trim());
+
+const looksLikeMobileAppCell = (raw: string): boolean => {
+  const value = raw.trim().toLowerCase();
+  return (
+    value === "" ||
+    value === "star" ||
+    value === "hubs" ||
+    value === "hub" ||
+    value === "star app" ||
+    value === "hubs app"
+  );
+};
+
+const isCurrentBulkGridPasteRow = (cells: string[]): boolean => {
+  if (cells.length < 14) {
+    return false;
+  }
+  if (looksLikeMoStartDate(cells[11] ?? "")) {
+    return false;
+  }
+  return looksLikeMobileAppCell(cells[8] ?? "");
+};
+
+const bulkDraftFieldOrder: (keyof BulkTaskDraftRow)[] = [
   "storyName",
   "storyLink",
   "beDevsRaw",
@@ -799,8 +823,10 @@ const draftFields: (keyof BulkTaskDraftRow)[] = [
   "productManagersRaw",
 ];
 
+export const bulkDraftFieldOrderForGrid = bulkDraftFieldOrder;
+
 export const bulkDraftFieldAt = (colIndex: number): keyof BulkTaskDraftRow | undefined =>
-  draftFields[colIndex];
+  bulkDraftFieldOrder[colIndex];
 
 export const isBulkAssigneeDraftField = (field: keyof BulkTaskDraftRow | undefined): boolean =>
   field === "beDevsRaw" ||
@@ -895,7 +921,7 @@ export const clearBulkGridSelection = (
 
     const draft = { ...row };
     for (let colIndex = sel.startCol; colIndex <= sel.endCol; colIndex += 1) {
-      const field = draftFields[colIndex];
+      const field = bulkDraftFieldOrder[colIndex];
       if (field) {
         draft[field] = "";
       }
@@ -952,7 +978,8 @@ const isEmptyBulkDraftRow = (row: BulkTaskDraftRow): boolean =>
   !row.androidHoursRaw &&
   !row.iosHoursRaw &&
   !row.mobileAppRaw &&
-  !row.qcHoursRaw;
+  !row.qcHoursRaw &&
+  !row.productManagersRaw;
 
 const ensureTrailingEmptyRows = (rows: BulkTaskDraftRow[], minEmpty = 2): BulkTaskDraftRow[] => {
   let trailingEmpty = 0;
@@ -993,7 +1020,7 @@ const applyPasteToSelection = (
 
       const targetRowIndex = sel.startRow + rowOffset;
       const targetColIndex = sel.startCol + colOffset;
-      const field = draftFields[targetColIndex];
+      const field = bulkDraftFieldOrder[targetColIndex];
       if (!field) {
         continue;
       }
@@ -1024,7 +1051,7 @@ export const applyClipboardPasteToDrafts = (
     return current;
   }
 
-  const anchorField = draftFields[anchor.colIndex];
+  const anchorField = bulkDraftFieldOrder[anchor.colIndex];
   if (!anchorField) {
     return current;
   }
@@ -1041,7 +1068,7 @@ export const applyClipboardPasteToDrafts = (
     const draft = { ...next[targetRowIndex] };
 
     clipboardRow.forEach((cell, colOffset) => {
-      const field = draftFields[anchor.colIndex + colOffset];
+      const field = bulkDraftFieldOrder[anchor.colIndex + colOffset];
       if (!field) {
         return;
       }
@@ -1077,7 +1104,8 @@ const parseRowCells = (
   const storyName = (colCount >= 1 ? cells[0] : "").trim();
   const storyLink = (colCount >= 2 ? cells[1] : "").trim();
 
-  // Current grid (13): Story, Link, BE, BE h, FE, FE h, Android, And h, App, IOS, IOS h, QC, QC h
+  // Current grid (14): Story, Link, BE, BE h, FE, FE h, Android, And h, App, IOS, IOS h, QC, QC h, PM
+  // Legacy 13: … QC, QC h (no PM)
   // Legacy 15: … App, Needs iOS, IOS, IOS h, MO start, QC, QC h
   // Legacy 14: … Needs iOS, IOS, IOS h, MO start, QC, QC h
   // Legacy 12: Story, Link, BE, BE h, FE, FE h, Android, And h, IOS, IOS h, QC, QC h
@@ -1100,6 +1128,7 @@ const parseRowCells = (
   let androidRaw = "";
   let iosRaw = "";
   let qcRaw = "";
+  let pmRaw = "";
   let beHours = 0;
   let feHours = 0;
   let androidHours = 0;
@@ -1118,6 +1147,18 @@ const parseRowCells = (
     androidHours = parseEstimationHours(cells[7] ?? "");
     iosHours = parseEstimationHours(cells[11] ?? "");
     qcHours = parseEstimationHours(cells[14] ?? "");
+  } else if (colCount >= 14 && isCurrentBulkGridPasteRow(cells)) {
+    feRaw = cells[4] ?? "";
+    androidRaw = cells[6] ?? "";
+    mobileApp = parseMobileAppFlag(cells[8] ?? "");
+    iosRaw = cells[9] ?? "";
+    qcRaw = cells[11] ?? "";
+    pmRaw = cells[13] ?? "";
+    beHours = parseEstimationHours(cells[3] ?? "");
+    feHours = parseEstimationHours(cells[5] ?? "");
+    androidHours = parseEstimationHours(cells[7] ?? "");
+    iosHours = parseEstimationHours(cells[10] ?? "");
+    qcHours = parseEstimationHours(cells[12] ?? "");
   } else if (legacyWithFlagStartNoApp) {
     feRaw = cells[4] ?? "";
     androidRaw = cells[6] ?? "";
@@ -1184,17 +1225,26 @@ const parseRowCells = (
   const feKnown = resourceSets.get("FE") ?? new Set<string>();
   const moKnown = resourceSets.get("MO") ?? new Set<string>();
   const qcKnown = resourceSets.get("QC") ?? new Set<string>();
+  const pmKnown = resourceSets.get("PM") ?? new Set<string>();
 
   const be = resolveAssignees(beRaw, "BE", "BE", beKnown);
   const fe = resolveAssignees(feRaw, "FE", "FE", feKnown);
   const android = resolveAssignees(androidRaw, "MO", "MO", moKnown);
   const ios = resolveAssignees(iosRaw, "MO", "MO", moKnown);
   const qc = resolveAssignees(qcRaw, "QC", "QC", qcKnown);
+  const pm = resolveAssignees(pmRaw, "PM", "PM", pmKnown);
 
   // IOS cell data (assignees and/or hours) implies Needs iOS — no separate flag column.
   const needsIos = ios.names.length > 0 || iosHours > 0;
 
-  const warnings = [...be.warnings, ...fe.warnings, ...android.warnings, ...ios.warnings, ...qc.warnings];
+  const warnings = [
+    ...be.warnings,
+    ...fe.warnings,
+    ...android.warnings,
+    ...ios.warnings,
+    ...qc.warnings,
+    ...pm.warnings,
+  ];
   const isValid = storyName.length > 0 || storyLink.length > 0;
 
   return {
@@ -1205,7 +1255,7 @@ const parseRowCells = (
     androidDevs: android.names,
     iosDevs: needsIos ? ios.names : [],
     qcs: qc.names,
-    productManagers: [],
+    productManagers: pm.names,
     beHours,
     feHours,
     androidHours,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "@/lib/scheduler/types";
 import {
+  appendTaskIdsToDashboardOrder,
   buildDashboardTaskOrder,
   clusterTasksByReleaseGroup,
   floatNearReleaseStatusesToTop,
@@ -44,6 +45,17 @@ describe("dashboardTaskOrder", () => {
 
     const ordered = sortTasksForDashboard(tasks, releaseDates, pinned);
     expect(ordered.map((row) => row.id)).toEqual(["a", "c", "b"]);
+  });
+
+  it("appends bulk-added task ids to the end of dashboard order", () => {
+    expect(appendTaskIdsToDashboardOrder(["a", "b"], ["a", "b", "c", "d"], ["c", "d"])).toEqual([
+      "a",
+      "b",
+      "c",
+      "d",
+    ]);
+    expect(appendTaskIdsToDashboardOrder([], ["a", "b", "c"], ["c"])).toEqual(["a", "b", "c"]);
+    expect(appendTaskIdsToDashboardOrder(["b", "a"], ["a", "b", "c"], ["c"])).toEqual(["b", "a", "c"]);
   });
 
   it("groups release stories together by default, ordered by group priority", () => {
