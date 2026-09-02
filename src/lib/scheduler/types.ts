@@ -47,6 +47,16 @@ export interface Task {
   /** Optional checkpoint used by Mark Progress Now to keep only remaining phases. */
   replanFromStep?: TaskReplanStep | null;
   carryToNextSprint?: boolean;
+  /** Set at Start New Sprint for stories kept from the previous current sprint. */
+  carriedFromPreviousSprint?: boolean;
+  /** EM-confirmed remaining role hours for utilization (Start New Sprint wizard). */
+  remainingFeHours?: number | null;
+  remainingBeHours?: number | null;
+  remainingAndroidHours?: number | null;
+  remainingIosHours?: number | null;
+  remainingQcHours?: number | null;
+  remainingIntegrationHours?: number | null;
+  remainingBufferHours?: number | null;
   /** Stories with the same group name release together (latest date in the group). */
   releaseGroup?: string | null;
   status: TaskWorkflowStatus;

@@ -104,6 +104,18 @@ describe("store task helpers", () => {
     expect(carry.find((item) => item.id === "c")?.status).toBe("In Progress");
     expect(carry.find((item) => item.id === "done")?.status).toBe("Production");
     expect(carry.every((item) => item.carryToNextSprint === false)).toBe(true);
+    expect(carry.find((item) => item.id === "a")?.carriedFromPreviousSprint).toBe(false);
+    expect(carry.find((item) => item.id === "c")?.carriedFromPreviousSprint).toBe(true);
+    expect(carry.find((item) => item.id === "done")?.carriedFromPreviousSprint).toBe(true);
+  });
+
+  it("applies carry remaining overrides from the wizard", () => {
+    const tasks = [{ ...makeTask("c", 1, false), status: "In Progress" as const, beHours: 10 }];
+    const carry = buildCarryOverTasks(tasks, {
+      c: { remainingBeHours: 3, remainingFeHours: null, remainingAndroidHours: null, remainingIosHours: null, remainingQcHours: null, remainingIntegrationHours: null, remainingBufferHours: null },
+    });
+    expect(carry[0].remainingBeHours).toBe(3);
+    expect(carry[0].carriedFromPreviousSprint).toBe(true);
   });
 
   it("keeps local replanFromStep when server payload is null", () => {

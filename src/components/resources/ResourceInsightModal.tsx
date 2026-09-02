@@ -3,16 +3,19 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { getSprintWorkingDayCountInWindow, totalWorkingHoursForSprint } from "@/lib/scheduler/calendar";
-import { matchResourceByAssigneeLabel, resourceDisplayName } from "@/lib/planner/resourceIdentity";
-import { buildResourceInsightTaskRows } from "@/lib/planner/resourceInsightTasks";
-import { resolveOtherSquadsHours } from "@/lib/scheduler/utilization";
 import {
-  RESOURCE_INSIGHT_BUCKET_LABELS,
-  resourceInsightStatusBucket,
-  resourceInsightStatusRank,
-  statusChipClass,
-  type ResourceInsightStatusBucket,
-} from "@/lib/scheduler/taskStatus";
+  capacityDayBreakdownCopy,
+  devCapacityFromAssignedHours,
+  sprintCapacityBreakdown,
+} from "@/lib/scheduler/capacityBreakdown";
+import { matchResourceByAssigneeLabel, resourceDisplayName } from "@/lib/planner/resourceIdentity";
+import {
+  buildResourceInsightTaskRows,
+  sumResourceInsightHoursByOrigin,
+  type ResourceInsightTaskRow,
+} from "@/lib/planner/resourceInsightTasks";
+import { resolveOtherSquadsHours } from "@/lib/scheduler/utilization";
+import { statusChipClass } from "@/lib/scheduler/taskStatus";
 import { SQUAD_CAPACITY_HOURS_MAX, type Resource } from "@/lib/scheduler/types";
 import { usePlannerStore } from "@/store/usePlannerStore";
 import { safeStoryHref } from "@/lib/ui/safeStoryHref";
@@ -20,15 +23,6 @@ import { safeStoryHref } from "@/lib/ui/safeStoryHref";
 type Props = {
   resourceName: string | null;
   onClose: () => void;
-};
-
-type InsightTaskRow = {
-  taskId: string;
-  storyLabel: string;
-  storyLink: string;
-  /** Exact Jira / planner status name shown to the user. */
-  status: string;
-  totalHours: number;
 };
 
 const phaseCardClass = (resource: Resource | null) => {
@@ -41,6 +35,48 @@ const phaseCardClass = (resource: Resource | null) => {
   return "phase-int";
 };
 
+const renderTaskSection = (title: string, rows: ResourceInsightTaskRow[]) => {
+  if (rows.length === 0) {
+    return null;
+  }
+  return (
+    <div className="space-y-1">
+      <div className="sticky top-0 z-[1] bg-white/90 px-0.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600 backdrop-blur-sm">
+        {title} · {rows.length}
+      </div>
+      {rows.map((entry) => {
+        const href = safeStoryHref(entry.storyLink);
+        return (
+          <div key={entry.taskId} className="rounded border border-white/50 bg-white/70 p-1.5">
+            <div className="flex items-start justify-between gap-2">
+              {href ? (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="line-clamp-2 text-[12px] font-semibold text-blue-700 underline"
+                >
+                  {entry.storyLabel}
+                </a>
+              ) : (
+                <span className="line-clamp-2 text-[12px] font-semibold text-slate-800">{entry.storyLabel}</span>
+              )}
+              <div className="flex shrink-0 flex-col items-end gap-0.5">
+                <span className="text-[12px] font-bold tabular-nums text-slate-900">
+                  {Math.round(entry.totalHours)}h
+                </span>
+                <span className={`tag ${statusChipClass(entry.status)}`} title="Jira status">
+                  {entry.status}
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 export function ResourceInsightModal({ resourceName, onClose }: Props) {
   const pathname = usePathname();
   const { resources, tasks, config, remainingUtilization, sprintUtilization } = usePlannerStore();
@@ -50,13 +86,15 @@ export function ResourceInsightModal({ resourceName, onClose }: Props) {
   const resolvedResourceName = resource?.name ?? resourceName ?? "";
   const displayTitle = resource ? resourceDisplayName(resource) : resolvedResourceName;
   const sprintWorkingDays = getSprintWorkingDayCountInWindow(config);
-  const devHoursPerResource = sprintWorkingDays * 6;
-  const meetingsHoursPerResource = sprintWorkingDays * 2;
   const totalWorkingHours = Math.min(SQUAD_CAPACITY_HOURS_MAX, totalWorkingHoursForSprint(config));
+  const capacity = sprintCapacityBreakdown(config, sprintWorkingDays, totalWorkingHours);
   const remainingUtil = remainingUtilization.find(
     (entry) => entry.name === resolvedResourceName && entry.type === resource?.type,
   );
   const sprintUtil = sprintUtilization.perMember.find(
+    (entry) => entry.name === resolvedResourceName && entry.type === resource?.type,
+  );
+  const originUtil = sprintUtilization.perMemberByOrigin.find(
     (entry) => entry.name === resolvedResourceName && entry.type === resource?.type,
   );
   const assignedOurSquadHours = remainingUtil
@@ -64,35 +102,25 @@ export function ResourceInsightModal({ resourceName, onClose }: Props) {
     : resource?.ourSquadHours ?? totalWorkingHours;
   const otherSquadsHours = resolveOtherSquadsHours(totalWorkingHours, assignedOurSquadHours);
   const takenHours = sprintUtil ? sprintUtil.takenHours : 0;
-  const devCapacityHours = (assignedOurSquadHours * 6) / Math.max(1, config.hoursPerDay);
+  const newSprintTaken = originUtil?.newSprintTakenHours ?? 0;
+  const carryOverTaken = originUtil?.carryOverTakenHours ?? 0;
+  const devCapacityHours = devCapacityFromAssignedHours(assignedOurSquadHours, config.hoursPerDay);
   const remainingHours = Math.max(0, devCapacityHours - takenHours);
   const overloadHours = Math.max(0, takenHours - devCapacityHours);
   const utilizationPct =
     devCapacityHours > 0 ? Math.min(999, Math.round((takenHours / devCapacityHours) * 100)) : 0;
 
-  const assignedTasks: InsightTaskRow[] = resource
+  const assignedTasks: ResourceInsightTaskRow[] = resource
     ? buildResourceInsightTaskRows(tasks, resource).sort((a, b) => {
-        const rankDiff = resourceInsightStatusRank(a.status) - resourceInsightStatusRank(b.status);
-        if (rankDiff !== 0) return rankDiff;
+        if (a.origin !== b.origin) {
+          return a.origin === "new" ? -1 : 1;
+        }
         return b.totalHours - a.totalHours;
       })
     : [];
-
-  const tasksByBucket = assignedTasks.reduce(
-    (acc, row) => {
-      const bucket = resourceInsightStatusBucket(row.status);
-      acc[bucket].push(row);
-      return acc;
-    },
-    {
-      todo: [] as InsightTaskRow[],
-      "in-progress": [] as InsightTaskRow[],
-      "in-review": [] as InsightTaskRow[],
-      done: [] as InsightTaskRow[],
-    } satisfies Record<ResourceInsightStatusBucket, InsightTaskRow[]>,
-  );
-
-  const bucketOrder: ResourceInsightStatusBucket[] = ["todo", "in-progress", "in-review", "done"];
+  const hourSplit = sumResourceInsightHoursByOrigin(assignedTasks);
+  const newTasks = assignedTasks.filter((row) => row.origin === "new");
+  const carryTasks = assignedTasks.filter((row) => row.origin === "carry");
 
   if (!resourceName) {
     return null;
@@ -131,72 +159,50 @@ export function ResourceInsightModal({ resourceName, onClose }: Props) {
             <>
               <div className="mt-1.5 grid min-w-0 flex-1 grid-cols-2 gap-1.5">
                 <div className="flex flex-col items-center gap-1 rounded-lg border border-white/40 bg-white/50 px-2 py-1.5">
-                  <span
-                    className="text-center text-[10px] font-semibold leading-tight text-slate-800"
-                    title="Configured hours assigned to this resource in our squad."
-                  >
+                  <span className="text-center text-[10px] font-semibold leading-tight text-slate-800">
                     Hours in our squad
                   </span>
-                  <div
-                    className="field-input w-full min-w-0 cursor-default bg-white/90 px-2 py-1 text-center text-[13px] font-semibold tabular-nums text-slate-900"
-                    title="Hours in our squad."
-                  >
+                  <div className="field-input w-full min-w-0 cursor-default bg-white/90 px-2 py-1 text-center text-[13px] font-semibold tabular-nums text-slate-900">
                     {Math.round(assignedOurSquadHours)}h
                   </div>
                 </div>
                 <div className="flex flex-col items-center gap-1 rounded-lg border border-white/40 bg-white/50 px-2 py-1.5">
-                  <span
-                    className="text-center text-[10px] font-semibold leading-tight text-slate-800"
-                    title="Derived from total working hours minus our squad hours."
-                  >
+                  <span className="text-center text-[10px] font-semibold leading-tight text-slate-800">
                     Hours in other squads
                   </span>
-                  <div
-                    className="flex items-baseline justify-center gap-0.5 tabular-nums text-sm font-bold text-slate-900"
-                    title={`${Math.round(totalWorkingHours)}h total − ${Math.round(assignedOurSquadHours)}h in our squad`}
-                  >
+                  <div className="flex items-baseline justify-center gap-0.5 tabular-nums text-sm font-bold text-slate-900">
                     <span>{Math.round(otherSquadsHours)}</span>
                     <span className="text-[12px] font-semibold text-slate-800">h</span>
                   </div>
                 </div>
                 <div className="flex flex-col gap-0.5 rounded-lg border border-white/40 bg-white/50 px-2 py-1.5">
-                  <span
-                    className="text-[10px] font-semibold leading-tight text-slate-800"
-                    title="Total available working hours in this sprint (excluding planning day and vacations)."
-                  >
-                    Total working hours
-                  </span>
+                  <span className="text-[10px] font-semibold leading-tight text-slate-800">Total working hours</span>
                   <div className="text-left text-[10px] tabular-nums text-slate-900">
-                    <span className="font-bold">{Math.round(totalWorkingHours)}</span>h: (
-                    <span className="font-bold">{sprintWorkingDays}</span> working days ×{" "}
+                    <span className="font-bold">{Math.round(totalWorkingHours)}</span>h (
+                    <span className="font-bold">{sprintWorkingDays}</span> days ×{" "}
                     <span className="font-bold">{config.hoursPerDay}</span>h/day)
                   </div>
                   <div className="text-left text-[10px] text-slate-700">
-                    Dev: <span className="font-bold">{devHoursPerResource}</span>h (
-                    <span className="font-bold">{sprintWorkingDays}</span> working days ×{" "}
-                    <span className="font-bold">6</span>h/day)
+                    Dev: <span className="font-bold">{capacity.devHours}</span>h · Prep:{" "}
+                    <span className="font-bold">{capacity.prepHours}</span>h
                   </div>
-                  <div className="text-left text-[10px] text-slate-700">
-                    Preparations: <span className="font-bold">{meetingsHoursPerResource}</span>h (
-                    <span className="font-bold">{sprintWorkingDays}</span> working days ×{" "}
-                    <span className="font-bold">2</span>h/day)
-                  </div>
+                  <div className="text-left text-[10px] text-slate-600">{capacityDayBreakdownCopy(config.hoursPerDay)}</div>
                 </div>
                 <div className="flex flex-col items-center gap-1 rounded-lg border border-white/40 bg-white/50 px-2 py-1.5">
-                  <span
-                    className="text-center text-[10px] font-semibold leading-tight text-slate-800"
-                    title="Taken vs remaining dev hours in our squad (preparations excluded)."
-                  >
+                  <span className="text-center text-[10px] font-semibold leading-tight text-slate-800">
                     Taken / Remaining (Dev)
                   </span>
                   <div className="text-center text-sm font-bold tabular-nums text-slate-900">
                     {Math.round(takenHours)}h / {Math.round(remainingHours)}h
                   </div>
-                  <div className="text-center text-[10px] font-semibold tabular-nums text-slate-600">
-                    excludes preparations hours
+                  <div className="text-center text-[10px] text-slate-600">
+                    New {Math.round(newSprintTaken)}h · Carry {Math.round(carryOverTaken)}h
+                  </div>
+                  <div className="text-center text-[10px] text-slate-600">
+                    Dev capacity {Math.round(devCapacityHours)}h (prep excluded)
                   </div>
                   <div className="text-center text-[11px] font-semibold tabular-nums text-slate-700">
-                    Utilization in our squad: {utilizationPct}%
+                    Utilization: {utilizationPct}%
                   </div>
                   {takenHours > devCapacityHours ? (
                     <div className="flex w-full justify-center">
@@ -209,66 +215,25 @@ export function ResourceInsightModal({ resourceName, onClose }: Props) {
               </div>
 
               <div className="mt-2 rounded-lg border border-white/40 bg-white/50 p-2">
-                <div className="mb-1.5 flex items-center justify-between gap-2">
+                <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
                   <span className="text-[11px] font-semibold text-slate-800">
-                    Tasks ({assignedTasks.length})
+                    Utilization stories ({assignedTasks.length})
                   </span>
                   <span className="text-[10px] font-medium text-slate-600">
-                    To Do → In Progress → In Review → Done
+                    New {Math.round(hourSplit.newHours)}h · Carry {Math.round(hourSplit.carryHours)}h
                   </span>
                 </div>
+                <p className="mb-2 text-[10px] text-slate-600">
+                  UAT, Ready for Production, and Production stories stay on the board but are excluded from Taken.
+                </p>
                 <div className="max-h-72 space-y-2.5 overflow-y-auto pr-1">
                   {assignedTasks.length === 0 ? (
-                    <p className="text-[12px] text-slate-600">No assigned stories for this resource.</p>
+                    <p className="text-[12px] text-slate-600">No utilization stories for this resource.</p>
                   ) : (
-                    bucketOrder.map((bucket) => {
-                      const rows = tasksByBucket[bucket];
-                      if (rows.length === 0) return null;
-                      return (
-                        <div key={bucket} className="space-y-1">
-                          <div className="sticky top-0 z-[1] bg-white/90 px-0.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600 backdrop-blur-sm">
-                            {RESOURCE_INSIGHT_BUCKET_LABELS[bucket]} · {rows.length}
-                          </div>
-                          {rows.map((entry) => {
-                            const href = safeStoryHref(entry.storyLink);
-                            return (
-                              <div
-                                key={entry.taskId}
-                                className="rounded border border-white/50 bg-white/70 p-1.5"
-                              >
-                                <div className="flex items-start justify-between gap-2">
-                                  {href ? (
-                                    <a
-                                      href={href}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="line-clamp-2 text-[12px] font-semibold text-blue-700 underline"
-                                    >
-                                      {entry.storyLabel}
-                                    </a>
-                                  ) : (
-                                    <span className="line-clamp-2 text-[12px] font-semibold text-slate-800">
-                                      {entry.storyLabel}
-                                    </span>
-                                  )}
-                                  <div className="flex shrink-0 flex-col items-end gap-0.5">
-                                    <span className="text-[12px] font-bold tabular-nums text-slate-900">
-                                      {Math.round(entry.totalHours)}h
-                                    </span>
-                                    <span
-                                      className={`tag ${statusChipClass(entry.status)}`}
-                                      title="Jira status (from story / last pull)"
-                                    >
-                                      {entry.status}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      );
-                    })
+                    <>
+                      {renderTaskSection("New this sprint", newTasks)}
+                      {renderTaskSection("Carried from last sprint", carryTasks)}
+                    </>
                   )}
                 </div>
               </div>

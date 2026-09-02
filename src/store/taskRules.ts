@@ -1,10 +1,13 @@
 import type { Task } from "../lib/scheduler/types";
 import { DEFAULT_TASK_STATUS } from "../lib/scheduler/taskStatus";
+import { clearRemainingHourOverrides, type TaskRemainingOverrides } from "../lib/scheduler/utilizationEffort";
 
 const normalizePriority = (value: number | null | undefined) =>
   value === null || value === undefined ? null : Math.max(1, Math.trunc(value) || 1);
 
 export const activeSprintTasks = (tasks: Task[]) => tasks.filter((task) => !task.carryToNextSprint);
+
+export type CarryOverRemainingByTaskId = Record<string, TaskRemainingOverrides>;
 
 export const enforceUniquePoPriorities = (tasks: Task[], changedTaskId: string, requestedPriority: number | null) => {
   const targetPriority = normalizePriority(requestedPriority);
@@ -56,14 +59,19 @@ export const enforceUniquePoPriorities = (tasks: Task[], changedTaskId: string, 
  * Start New Sprint keeps the full live board (story count unchanged).
  * History gets a snapshot first; Next Sprint flags clear; parked Next rows reset to To Do.
  */
-export const buildCarryOverTasks = (tasks: Task[]) =>
+export const buildCarryOverTasks = (tasks: Task[], carryRemainingByTaskId?: CarryOverRemainingByTaskId) =>
   tasks.map((task) => {
     const wasParkedForNextSprint = Boolean(task.carryToNextSprint);
+    const carried = !wasParkedForNextSprint;
+    const overrides = carryRemainingByTaskId?.[task.id];
     return {
       ...task,
       storyName: task.storyName ?? "",
       carryToNextSprint: false,
       status: wasParkedForNextSprint ? DEFAULT_TASK_STATUS : task.status,
+      carriedFromPreviousSprint: carried,
+      ...(wasParkedForNextSprint ? clearRemainingHourOverrides() : {}),
+      ...(carried && overrides ? overrides : {}),
     };
   });
 

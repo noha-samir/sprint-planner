@@ -35,6 +35,7 @@ function NewSprintButton() {
       </button>
       <StartNewSprintModal
         open={modalOpen}
+        tasks={tasks}
         totalStories={tasks.length}
         nextSprintStories={nextSprintStories}
         busy={busy}
@@ -43,11 +44,11 @@ function NewSprintButton() {
             setModalOpen(false);
           }
         }}
-        onConfirm={(sprintStartDate) => {
+        onConfirm={(sprintStartDate, carryRemainingByTaskId) => {
           void (async () => {
             setBusy(true);
             try {
-              await startNewSprint({ sprintStartDate });
+              await startNewSprint({ sprintStartDate, carryRemainingByTaskId });
               setModalOpen(false);
             } catch (error) {
               window.alert(

@@ -74,11 +74,41 @@ describe("resourceInsightTasks", () => {
     expect(br1?.storyLabel).toBe("With hours");
   });
 
+  it("returns zero BE hours when story is in Testing", () => {
+    const task = baseTask({ beHours: 12, status: "Testing", qcHours: 6, qcs: ["QC-1"] });
+    expect(hoursForResourceOnTask(task, beNoha)).toBe(0);
+  });
+
   it("skips next-sprint carry rows", () => {
     const rows = buildResourceInsightTaskRows(
       [baseTask({ carryToNextSprint: true, beHours: 4 })],
       beNoha,
     );
     expect(rows).toHaveLength(0);
+  });
+
+  it("hides Production and UAT from the people modal list", () => {
+    const rows = buildResourceInsightTaskRows(
+      [
+        baseTask({ id: "prod", status: "Production", beHours: 8 }),
+        baseTask({ id: "uat", status: "UAT", beHours: 8 }),
+        baseTask({ id: "todo", status: "To Do", beHours: 5 }),
+      ],
+      beNoha,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].taskId).toBe("todo");
+  });
+
+  it("tags origin from carriedFromPreviousSprint", () => {
+    const rows = buildResourceInsightTaskRows(
+      [
+        baseTask({ id: "new", storyLink: "https://jira.example/browse/BR-10", beHours: 4, carriedFromPreviousSprint: false }),
+        baseTask({ id: "carry", storyLink: "https://jira.example/browse/BR-11", beHours: 3, carriedFromPreviousSprint: true }),
+      ],
+      beNoha,
+    );
+    expect(rows.find((row) => row.taskId === "new")?.origin).toBe("new");
+    expect(rows.find((row) => row.taskId === "carry")?.origin).toBe("carry");
   });
 });

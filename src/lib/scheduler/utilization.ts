@@ -1,5 +1,5 @@
 import { totalWorkingHoursForSprint } from "./calendar";
-import { effectiveIosHours } from "./mobilePlatform";
+import { isUtilizationExcludedStatus, resolveUtilizationEffort } from "./utilizationEffort";
 import type { Config, Resource, ScheduleResult, Task } from "./types";
 import { SQUAD_CAPACITY_HOURS_MAX } from "./types";
 
@@ -13,6 +13,13 @@ export interface ResourceUtilization {
   overloaded: boolean;
 }
 
+export interface ResourceUtilizationByOrigin {
+  name: string;
+  type: Resource["type"];
+  newSprintTakenHours: number;
+  carryOverTakenHours: number;
+}
+
 export interface SquadUtilizationTotals {
   integrationHours: number;
   bufferHours: number;
@@ -21,6 +28,7 @@ export interface SquadUtilizationTotals {
 
 export interface SprintTaskUtilization {
   perMember: ResourceUtilization[];
+  perMemberByOrigin: ResourceUtilizationByOrigin[];
   squadTotals: SquadUtilizationTotals;
 }
 
@@ -68,6 +76,15 @@ const addAllocatedHours = (
   allocatedMap.set(resourceKey(type, name), (allocatedMap.get(resourceKey(type, name)) ?? 0) + hours);
 };
 
+const roleHoursForUtilization = (effort: ReturnType<typeof resolveUtilizationEffort>): number =>
+  effort.feHours +
+  effort.beHours +
+  effort.androidHours +
+  effort.iosHours +
+  effort.qcHours +
+  effort.integrationHours +
+  effort.bufferHours;
+
 export const computeUtilization = (
   resources: Resource[],
   scheduleResult: ScheduleResult,
@@ -112,41 +129,53 @@ export const computeSprintUtilizationFromTasks = (
   config: Config,
 ): SprintTaskUtilization => {
   const allocatedMap = new Map<string, number>();
+  const newSprintMap = new Map<string, number>();
+  const carryOverMap = new Map<string, number>();
   let integrationHours = 0;
   let bufferHours = 0;
 
+  const allocateTaskHours = (
+    map: Map<string, number>,
+    type: Resource["type"],
+    assignees: string[],
+    hours: number,
+  ) => {
+    splitHours(hours, assignees.length).forEach((chunk, index) => {
+      addAllocatedHours(map, type, assignees[index], chunk);
+    });
+  };
+
   tasks
-    .filter((task) => !task.carryToNextSprint)
+    .filter((task) => !task.carryToNextSprint && !isUtilizationExcludedStatus(task.status))
     .forEach((task) => {
+      const remaining = resolveUtilizationEffort(task);
       const feAssignees = resolveAssignees(task.feDevs, "Unassigned-FE");
       const beAssignees = resolveAssignees(task.beDevs, "Unassigned-BE");
       const androidAssignees = resolveAssignees(task.androidDevs, "Unassigned-MO");
       const iosAssignees = resolveAssignees(task.iosDevs, "Unassigned-MO");
       const qcAssignees = resolveAssignees(task.qcs, "Unassigned-QC");
+      const originMap = task.carriedFromPreviousSprint ? carryOverMap : newSprintMap;
 
-      splitHours(task.feHours, feAssignees.length).forEach((hours, index) => {
-        addAllocatedHours(allocatedMap, "FE", feAssignees[index], hours);
-      });
-      splitHours(task.beHours, beAssignees.length).forEach((hours, index) => {
-        addAllocatedHours(allocatedMap, "BE", beAssignees[index], hours);
-      });
-      splitHours(task.androidHours ?? 0, androidAssignees.length).forEach((hours, index) => {
-        addAllocatedHours(allocatedMap, "MO", androidAssignees[index], hours);
-      });
-      splitHours(effectiveIosHours(task), iosAssignees.length).forEach((hours, index) => {
-        addAllocatedHours(allocatedMap, "MO", iosAssignees[index], hours);
-      });
-      splitHours(task.qcHours, qcAssignees.length).forEach((hours, index) => {
-        addAllocatedHours(allocatedMap, "QC", qcAssignees[index], hours);
-      });
+      allocateTaskHours(originMap, "FE", feAssignees, remaining.feHours);
+      allocateTaskHours(originMap, "BE", beAssignees, remaining.beHours);
+      allocateTaskHours(originMap, "MO", androidAssignees, remaining.androidHours);
+      allocateTaskHours(originMap, "MO", iosAssignees, remaining.iosHours);
+      allocateTaskHours(originMap, "QC", qcAssignees, remaining.qcHours);
 
-      integrationHours += task.integrationHours;
-      bufferHours += task.bufferHours ?? 0;
+      allocateTaskHours(allocatedMap, "FE", feAssignees, remaining.feHours);
+      allocateTaskHours(allocatedMap, "BE", beAssignees, remaining.beHours);
+      allocateTaskHours(allocatedMap, "MO", androidAssignees, remaining.androidHours);
+      allocateTaskHours(allocatedMap, "MO", iosAssignees, remaining.iosHours);
+      allocateTaskHours(allocatedMap, "QC", qcAssignees, remaining.qcHours);
+
+      integrationHours += remaining.integrationHours;
+      bufferHours += remaining.bufferHours;
     });
 
   const fallbackCapacity = defaultMemberCapacity(config);
   const perMember = resources.map((resource) => {
-    const takenHours = allocatedMap.get(resourceKey(resource.type, resource.name)) ?? 0;
+    const key = resourceKey(resource.type, resource.name);
+    const takenHours = allocatedMap.get(key) ?? 0;
     const assignedOurSquadHours = resolveOurSquadHours(resource, fallbackCapacity);
     const remainingHours = Math.max(0, assignedOurSquadHours - takenHours);
     const utilizationPct =
@@ -162,8 +191,19 @@ export const computeSprintUtilizationFromTasks = (
     };
   });
 
+  const perMemberByOrigin = resources.map((resource) => {
+    const key = resourceKey(resource.type, resource.name);
+    return {
+      name: resource.name,
+      type: resource.type,
+      newSprintTakenHours: newSprintMap.get(key) ?? 0,
+      carryOverTakenHours: carryOverMap.get(key) ?? 0,
+    };
+  });
+
   return {
     perMember,
+    perMemberByOrigin,
     squadTotals: {
       integrationHours,
       bufferHours,
@@ -171,3 +211,6 @@ export const computeSprintUtilizationFromTasks = (
     },
   };
 };
+
+export const sumPersonUtilizationRoleHours = (effort: ReturnType<typeof resolveUtilizationEffort>): number =>
+  roleHoursForUtilization(effort);

@@ -4,6 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
 import { getSprintWorkingDayCountInWindow, totalWorkingHoursForSprint } from "@/lib/scheduler/calendar";
+import {
+  capacityDayBreakdownCopy,
+  devCapacityFromAssignedHours,
+  sprintCapacityBreakdown,
+} from "@/lib/scheduler/capacityBreakdown";
 import { resolveOtherSquadsHours } from "@/lib/scheduler/utilization";
 import { SQUAD_CAPACITY_HOURS_MAX, type Resource, type ResourceType } from "@/lib/scheduler/types";
 import { usePlannerStore } from "@/store/usePlannerStore";
@@ -61,9 +66,8 @@ export function ResourceTable() {
   const scrollerRef = useRef<HTMLDivElement>(null);
 
   const sprintWorkingDays = getSprintWorkingDayCountInWindow(config);
-  const devHoursPerResource = sprintWorkingDays * 6;
-  const meetingsHoursPerResource = sprintWorkingDays * 2;
   const totalWorkingHours = Math.min(SQUAD_CAPACITY_HOURS_MAX, totalWorkingHoursForSprint(config));
+  const capacityBreakdown = sprintCapacityBreakdown(config, sprintWorkingDays, totalWorkingHours);
   const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const squadHeaders = useMemo((): Record<string, string> => {
@@ -312,12 +316,17 @@ export function ResourceTable() {
     const sprintUtil = sprintUtilization.perMember.find(
       (entry) => entry.name === item.name && entry.type === item.type,
     );
+    const originUtil = sprintUtilization.perMemberByOrigin.find(
+      (entry) => entry.name === item.name && entry.type === item.type,
+    );
     const assignedOurSquadHours = remainingUtil
       ? remainingUtil.assignedOurSquadHours
       : item.ourSquadHours ?? totalWorkingHours;
     const otherSquadsHours = resolveOtherSquadsHours(totalWorkingHours, assignedOurSquadHours);
     const takenHours = sprintUtil ? sprintUtil.takenHours : 0;
-    const devCapacityHours = (assignedOurSquadHours * 6) / Math.max(1, config.hoursPerDay);
+    const newSprintTaken = originUtil?.newSprintTakenHours ?? 0;
+    const carryOverTaken = originUtil?.carryOverTakenHours ?? 0;
+    const devCapacityHours = devCapacityFromAssignedHours(assignedOurSquadHours, config.hoursPerDay);
     const remainingHours = Math.max(0, devCapacityHours - takenHours);
     const overloadHours = Math.max(0, takenHours - devCapacityHours);
     const utilizationPct =
@@ -432,6 +441,13 @@ export function ResourceTable() {
               <div className="font-bold tabular-nums text-slate-900">
                 {Math.round(takenHours)}h / {Math.round(remainingHours)}h
               </div>
+              {carryOverTaken > 0 ? (
+                <div className="mt-0.5 text-[8px] leading-tight text-slate-600">
+                  New {Math.round(newSprintTaken)}h · Carry {Math.round(carryOverTaken)}h
+                </div>
+              ) : (
+                <div className="mt-0.5 text-[8px] leading-tight text-slate-600">Dev hours only</div>
+              )}
             </div>
             <div className="rounded-md border border-white/50 bg-white/70 px-1.5 py-1">
               <div className="font-semibold text-slate-700">Util %</div>
@@ -641,17 +657,22 @@ export function ResourceTable() {
             role="dialog"
             aria-modal="true"
           >
-            <h3 className="text-base font-semibold text-slate-900">Total Working Hours Formula</h3>
+            <h3 className="text-base font-semibold text-slate-900">Capacity & utilization</h3>
             <div className="mt-2 space-y-1 text-[12px] text-slate-700">
               <p>
                 Working days: <span className="font-bold">{sprintWorkingDays}</span>
               </p>
               <p>
-                Total: <span className="font-bold">{Math.round(totalWorkingHours)}h</span>
+                Total: <span className="font-bold">{Math.round(totalWorkingHours)}h</span> (
+                {sprintWorkingDays} × {config.hoursPerDay}h/day)
               </p>
               <p>
-                Dev: <span className="font-bold">{devHoursPerResource}h</span> · Preparations:{" "}
-                <span className="font-bold">{meetingsHoursPerResource}h</span>
+                Dev: <span className="font-bold">{capacityBreakdown.devHours}h</span> · Preparations:{" "}
+                <span className="font-bold">{capacityBreakdown.prepHours}h</span>
+              </p>
+              <p className="text-slate-600">{capacityDayBreakdownCopy(config.hoursPerDay)}</p>
+              <p className="text-slate-600">
+                Taken / Rem uses dev capacity only. UAT and Production stories are excluded from Taken.
               </p>
             </div>
             <div className="mt-3 flex justify-end">

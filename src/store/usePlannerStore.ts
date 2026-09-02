@@ -42,6 +42,7 @@ import {
   buildCarryOverTasks,
   compactPrioritiesAfterRelease,
   enforceUniquePoPriorities,
+  type CarryOverRemainingByTaskId,
 } from "./taskRules";
 import { ensureDefaultMobileResources, normalizeMobileAppFlag } from "@/lib/scheduler/mobilePlatform";
 import {
@@ -101,7 +102,10 @@ interface PlannerState {
   applyJiraResourceRenames: (renames: Array<{ from: string; to: string }>) => void;
   clearResourceNicknames: () => void;
   updateConfig: (patch: Partial<Config>) => void;
-  startNewSprint: (options?: { sprintStartDate?: string }) => Promise<void>;
+  startNewSprint: (options?: {
+    sprintStartDate?: string;
+    carryRemainingByTaskId?: CarryOverRemainingByTaskId;
+  }) => Promise<void>;
   /** Replace the live board with an archived History snapshot (tasks / resources / config). */
   restoreSprintFromHistory: (snapshot: {
     tasks: Task[];
@@ -171,6 +175,14 @@ const emptyTask = (): Task => ({
   bufferHours: 0,
   replanFromStep: null,
   carryToNextSprint: false,
+  carriedFromPreviousSprint: false,
+  remainingFeHours: null,
+  remainingBeHours: null,
+  remainingAndroidHours: null,
+  remainingIosHours: null,
+  remainingQcHours: null,
+  remainingIntegrationHours: null,
+  remainingBufferHours: null,
   releaseGroup: null,
   status: DEFAULT_TASK_STATUS,
 });
@@ -237,6 +249,9 @@ const seedCurScheduleFreeze = (meta: PlannerMeta, result: ScheduleResult): Plann
   return next;
 };
 
+const normalizeOptionalHours = (value: number | null | undefined): number | null =>
+  value != null && Number.isFinite(value) ? Math.max(0, value) : null;
+
 const normalizeTask = (task: Task): Task => {
   const legacy = task as Task & LegacyTaskFields;
   const androidDevs = Array.isArray(task.androidDevs)
@@ -292,6 +307,14 @@ const normalizeTask = (task: Task): Task => {
     replanFromStep: normalizeReplanStep(task.replanFromStep),
     status: normalizeTaskStatus(task.status),
     carryToNextSprint: task.carryToNextSprint ?? false,
+    carriedFromPreviousSprint: task.carriedFromPreviousSprint ?? false,
+    remainingFeHours: normalizeOptionalHours(task.remainingFeHours),
+    remainingBeHours: normalizeOptionalHours(task.remainingBeHours),
+    remainingAndroidHours: normalizeOptionalHours(task.remainingAndroidHours),
+    remainingIosHours: normalizeOptionalHours(task.remainingIosHours),
+    remainingQcHours: normalizeOptionalHours(task.remainingQcHours),
+    remainingIntegrationHours: normalizeOptionalHours(task.remainingIntegrationHours),
+    remainingBufferHours: normalizeOptionalHours(task.remainingBufferHours),
     releaseGroup:
       typeof task.releaseGroup === "string" && task.releaseGroup.trim() ? task.releaseGroup.trim() : null,
     jira: task.jira
@@ -971,7 +994,7 @@ export const usePlannerStore = create<PlannerState>()(
           extraHolidays: [],
           replanAsOf: null,
         });
-        const carryOverTasks = buildCarryOverTasks(tasks);
+        const carryOverTasks = buildCarryOverTasks(tasks, options?.carryRemainingByTaskId);
         const keptIds = new Set(carryOverTasks.map((task) => task.id));
         const preservedOrder = plannerMeta.dashboardTaskOrder.filter((id) => keptIds.has(id));
         const seedMeta: PlannerMeta = {

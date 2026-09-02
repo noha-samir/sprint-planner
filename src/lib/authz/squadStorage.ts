@@ -214,6 +214,14 @@ export async function readSquadPlannerState(squadId: string): Promise<Record<str
         bufferHours: task.bufferHours,
         replanFromStep: task.replanFromStep,
         carryToNextSprint: task.carryToNextSprint,
+        carriedFromPreviousSprint: task.carriedFromPreviousSprint,
+        remainingFeHours: task.remainingFeHours,
+        remainingBeHours: task.remainingBeHours,
+        remainingAndroidHours: task.remainingAndroidHours,
+        remainingIosHours: task.remainingIosHours,
+        remainingQcHours: task.remainingQcHours,
+        remainingIntegrationHours: task.remainingIntegrationHours,
+        remainingBufferHours: task.remainingBufferHours,
         releaseGroup: task.releaseGroup ?? undefined,
         issueType: task.issueType ?? undefined,
         isEmStory: task.isEmStory,
@@ -510,6 +518,35 @@ export async function writeSquadPlannerState(
           needsThirdParty: Boolean(flags.needsThirdParty),
           replanFromStep: toReplanStep(task.replanFromStep),
           carryToNextSprint: Boolean(task.carryToNextSprint),
+          carriedFromPreviousSprint: Boolean(task.carriedFromPreviousSprint),
+          remainingFeHours:
+            task.remainingFeHours != null && Number.isFinite(Number(task.remainingFeHours))
+              ? Number(task.remainingFeHours)
+              : null,
+          remainingBeHours:
+            task.remainingBeHours != null && Number.isFinite(Number(task.remainingBeHours))
+              ? Number(task.remainingBeHours)
+              : null,
+          remainingAndroidHours:
+            task.remainingAndroidHours != null && Number.isFinite(Number(task.remainingAndroidHours))
+              ? Number(task.remainingAndroidHours)
+              : null,
+          remainingIosHours:
+            task.remainingIosHours != null && Number.isFinite(Number(task.remainingIosHours))
+              ? Number(task.remainingIosHours)
+              : null,
+          remainingQcHours:
+            task.remainingQcHours != null && Number.isFinite(Number(task.remainingQcHours))
+              ? Number(task.remainingQcHours)
+              : null,
+          remainingIntegrationHours:
+            task.remainingIntegrationHours != null && Number.isFinite(Number(task.remainingIntegrationHours))
+              ? Number(task.remainingIntegrationHours)
+              : null,
+          remainingBufferHours:
+            task.remainingBufferHours != null && Number.isFinite(Number(task.remainingBufferHours))
+              ? Number(task.remainingBufferHours)
+              : null,
           releaseGroup: typeof task.releaseGroup === "string" ? task.releaseGroup : null,
           issueType: typeof task.issueType === "string" && task.issueType.trim() ? task.issueType.trim() : null,
           isEmStory: Boolean(task.isEmStory),

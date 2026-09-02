@@ -22,7 +22,7 @@ const defaultFlags = {
 };
 
 describe("computeSprintUtilizationFromTasks", () => {
-  it("counts assigned hours regardless of task state but excludes next-sprint carry tasks", () => {
+  it("counts remaining hours by status/replan and excludes next-sprint carry and inactive statuses", () => {
     const resources: Resource[] = [
       { name: "BE-1", type: "BE", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },
       { name: "FE-1", type: "FE", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },
@@ -121,12 +121,92 @@ describe("computeSprintUtilizationFromTasks", () => {
     const fe = result.perMember.find((entry) => entry.type === "FE" && entry.name === "FE-1");
     const qc = result.perMember.find((entry) => entry.type === "QC" && entry.name === "QC-1");
 
-    expect(be?.takenHours).toBe(34);
-    expect(fe?.takenHours).toBe(34);
-    expect(qc?.takenHours).toBe(31);
-    expect(be?.remainingHours).toBe(6);
-    expect(fe?.remainingHours).toBe(6);
-    expect(qc?.remainingHours).toBe(9);
+    expect(be?.takenHours).toBe(10);
+    expect(fe?.takenHours).toBe(8);
+    expect(qc?.takenHours).toBe(6);
+    expect(be?.remainingHours).toBe(30);
+    expect(fe?.remainingHours).toBe(32);
+    expect(qc?.remainingHours).toBe(34);
+    expect(result.squadTotals.integrationHours).toBe(3);
+    expect(result.squadTotals.bufferHours).toBe(2);
+  });
+
+  it("charges only QC hours for Testing stories", () => {
+    const resources: Resource[] = [
+      { name: "BE-1", type: "BE", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },
+      { name: "QC-1", type: "QC", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },
+    ];
+    const tasks: Task[] = [
+      {
+        id: "testing-story",
+        storyName: "Testing story",
+        storyLink: "",
+        poPriority: null,
+        beDevs: ["BE-1"],
+        beHours: 12,
+        androidDevs: [],
+        androidHours: 0,
+        iosDevs: [],
+        iosHours: 0,
+        needsIos: false,
+        feDevs: [],
+        feHours: 0,
+        integrationHours: 4,
+        integrationFlags: defaultFlags,
+        qcs: ["QC-1"],
+        qcHours: 6,
+        bufferHours: 2,
+        status: "Testing",
+      },
+    ];
+
+    const result = computeSprintUtilizationFromTasks(tasks, resources, config);
+    const be = result.perMember.find((entry) => entry.type === "BE" && entry.name === "BE-1");
+    const qc = result.perMember.find((entry) => entry.type === "QC" && entry.name === "QC-1");
+
+    expect(be?.takenHours).toBe(0);
+    expect(qc?.takenHours).toBe(6);
+    expect(result.squadTotals.integrationHours).toBe(0);
+    expect(result.squadTotals.bufferHours).toBe(2);
+  });
+
+  it("counts full hours for In Progress stories from Start", () => {
+    const resources: Resource[] = [
+      { name: "BE-1", type: "BE", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },
+      { name: "FE-1", type: "FE", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },
+    ];
+    const tasks: Task[] = [
+      {
+        id: "in-progress-story",
+        storyName: "In progress",
+        storyLink: "",
+        poPriority: null,
+        beDevs: ["BE-1"],
+        beHours: 15,
+        androidDevs: [],
+        androidHours: 0,
+        iosDevs: [],
+        iosHours: 0,
+        needsIos: false,
+        feDevs: ["FE-1"],
+        feHours: 9,
+        integrationHours: 3,
+        integrationFlags: defaultFlags,
+        qcs: [],
+        qcHours: 0,
+        bufferHours: 1,
+        status: "In Progress",
+      },
+    ];
+
+    const result = computeSprintUtilizationFromTasks(tasks, resources, config);
+    const be = result.perMember.find((entry) => entry.type === "BE" && entry.name === "BE-1");
+    const fe = result.perMember.find((entry) => entry.type === "FE" && entry.name === "FE-1");
+
+    expect(be?.takenHours).toBe(15);
+    expect(fe?.takenHours).toBe(9);
+    expect(result.squadTotals.integrationHours).toBe(3);
+    expect(result.squadTotals.bufferHours).toBe(1);
   });
 
   it("splits assignee hours and tracks integration/buffer at squad level", () => {
@@ -164,11 +244,13 @@ describe("computeSprintUtilizationFromTasks", () => {
     const be1 = result.perMember.find((entry) => entry.type === "BE" && entry.name === "BE-1");
     const be2 = result.perMember.find((entry) => entry.type === "BE" && entry.name === "BE-2");
 
-    expect(be1?.takenHours).toBeCloseTo(2.5, 5);
-    expect(be2?.takenHours).toBeCloseTo(2.5, 5);
-    expect(result.squadTotals.integrationHours).toBe(4);
+    expect(be1?.takenHours).toBe(0);
+    expect(be2?.takenHours).toBe(0);
+    const qc = result.perMember.find((entry) => entry.type === "QC" && entry.name === "QC-1");
+    expect(qc?.takenHours).toBe(2);
+    expect(result.squadTotals.integrationHours).toBe(0);
     expect(result.squadTotals.bufferHours).toBe(1.5);
-    expect(result.squadTotals.totalHours).toBe(5.5);
+    expect(result.squadTotals.totalHours).toBe(1.5);
   });
 
   it("uses fullyMine ownership as full working hours and shared as custom assigned hours", () => {
@@ -289,5 +371,96 @@ describe("computeSprintUtilizationFromTasks", () => {
 
     const utilization = computeUtilization(resources, scheduleResult, config);
     expect(utilization.find((entry) => entry.name === "MO-1")?.takenHours).toBe(14);
+  });
+
+  it("splits new sprint vs carry-over taken hours", () => {
+    const resources: Resource[] = [
+      { name: "BE-1", type: "BE", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },
+    ];
+    const tasks: Task[] = [
+      {
+        id: "new-story",
+        storyName: "New",
+        storyLink: "",
+        poPriority: null,
+        beDevs: ["BE-1"],
+        beHours: 8,
+        androidDevs: [],
+        androidHours: 0,
+        iosDevs: [],
+        iosHours: 0,
+        needsIos: false,
+        feDevs: [],
+        feHours: 0,
+        integrationHours: 0,
+        integrationFlags: defaultFlags,
+        qcs: [],
+        qcHours: 0,
+        bufferHours: 0,
+        status: "To Do",
+        carriedFromPreviousSprint: false,
+      },
+      {
+        id: "carry-story",
+        storyName: "Carry",
+        storyLink: "",
+        poPriority: null,
+        beDevs: ["BE-1"],
+        beHours: 10,
+        androidDevs: [],
+        androidHours: 0,
+        iosDevs: [],
+        iosHours: 0,
+        needsIos: false,
+        feDevs: [],
+        feHours: 0,
+        integrationHours: 0,
+        integrationFlags: defaultFlags,
+        qcs: [],
+        qcHours: 0,
+        bufferHours: 0,
+        status: "In Progress",
+        carriedFromPreviousSprint: true,
+        remainingBeHours: 3,
+      },
+    ];
+
+    const result = computeSprintUtilizationFromTasks(tasks, resources, config);
+    const origin = result.perMemberByOrigin.find((entry) => entry.name === "BE-1");
+    expect(origin?.newSprintTakenHours).toBe(8);
+    expect(origin?.carryOverTakenHours).toBe(3);
+    expect(result.perMember.find((entry) => entry.name === "BE-1")?.takenHours).toBe(11);
+  });
+
+  it("excludes UAT stories from utilization", () => {
+    const resources: Resource[] = [
+      { name: "BE-1", type: "BE", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },
+    ];
+    const tasks: Task[] = [
+      {
+        id: "uat-story",
+        storyName: "UAT",
+        storyLink: "",
+        poPriority: null,
+        beDevs: ["BE-1"],
+        beHours: 12,
+        androidDevs: [],
+        androidHours: 0,
+        iosDevs: [],
+        iosHours: 0,
+        needsIos: false,
+        feDevs: [],
+        feHours: 0,
+        integrationHours: 0,
+        integrationFlags: defaultFlags,
+        qcs: [],
+        qcHours: 0,
+        bufferHours: 4,
+        status: "UAT",
+      },
+    ];
+
+    const result = computeSprintUtilizationFromTasks(tasks, resources, config);
+    expect(result.perMember.find((entry) => entry.name === "BE-1")?.takenHours).toBe(0);
   });
 });

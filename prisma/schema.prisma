@@ -240,6 +240,16 @@ model Task {
   needsThirdParty   Boolean         @default(false)
   replanFromStep    TaskReplanStep?
   carryToNextSprint Boolean         @default(false)
+  /** True when the story rolled from the previous sprint at Start New Sprint. */
+  carriedFromPreviousSprint Boolean @default(false)
+  /** EM-confirmed remaining hours for capacity (nullable = use status/replan defaults). */
+  remainingFeHours          Float?
+  remainingBeHours          Float?
+  remainingAndroidHours     Float?
+  remainingIosHours         Float?
+  remainingQcHours          Float?
+  remainingIntegrationHours Float?
+  remainingBufferHours      Float?
   releaseGroup      String?
   /** Jira issue type label e.g. Story, Bug, Task, Technical Task. */
   issueType         String?

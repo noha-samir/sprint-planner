@@ -123,6 +123,26 @@ export function HelpDocs() {
       </section>
 
       <section className="space-y-3">
+        <h2 className="text-lg font-bold text-slate-900">People utilization</h2>
+        <ul className="list-disc space-y-2 pl-5 text-sm text-slate-700">
+          <li>
+            Each working day = sprint hours/day total: <strong>6h dev</strong> (story work counted in Taken) +{" "}
+            <strong>2h preparations</strong> (meetings, planning, standups — reserved, not in Taken).
+          </li>
+          <li>
+            <strong>New this sprint</strong> stories (including Next Sprint rows reset to To Do) use full remaining
+            hours by status.
+          </li>
+          <li>
+            <strong>Carried from last sprint</strong> stories keep their status; EM confirms remaining dev/QC hours in
+            the Start New Sprint wizard.
+          </li>
+          <li>UAT, Ready for Production, and Production stories are excluded from Taken and hidden in the people modal.</li>
+          <li>Timeline replan still drives the Gantt; wizard overrides drive people Taken.</li>
+        </ul>
+      </section>
+
+      <section className="space-y-3">
         <h2 className="text-lg font-bold text-slate-900">Data path</h2>
         <pre className="overflow-x-auto rounded-2xl border border-slate-200 bg-slate-900 p-4 text-[11px] leading-relaxed text-slate-100">
 {`Sign-in (Jira email + token)
