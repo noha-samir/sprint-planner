@@ -1,4 +1,4 @@
-/** True when Jira assignee or Engineering Manager field matches the squad EM account. */
+/** True when Jira assignee matches the squad EM account (from User Management emEmail). */
 export function resolveIsEmStory(
   emAccountId: string | null | undefined,
   assigneeAccountId: string | null | undefined,

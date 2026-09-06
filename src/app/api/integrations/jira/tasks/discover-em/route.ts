@@ -54,8 +54,8 @@ export async function POST(request: Request) {
     const emAccountId = await resolveSquadEmAccountId(authResult.squadId);
 
     const [storiesResult, standaloneTasks] = await Promise.all([
-      discoverEmStoriesFromJira(credentials, squadConfig, existingKeys, emAccountId),
-      discoverStandaloneTasksFromJira(credentials, squadConfig, existingKeys, emAccountId),
+      discoverEmStoriesFromJira(credentials, squadConfig, existingKeys),
+      discoverStandaloneTasksFromJira(credentials, squadConfig, existingKeys),
     ]);
 
     const seenKeys = new Set(storiesResult.stories.map((s) => s.key));
@@ -77,11 +77,7 @@ export async function POST(request: Request) {
           summary: item.summary,
           storyLink: item.storyLink,
           issueType: item.issueType ?? null,
-          isEmStory: resolveIsEmStory(
-            emAccountId,
-            item.assigneeAccountId,
-            item.emFieldAccountId,
-          ),
+          isEmStory: resolveIsEmStory(emAccountId, item.assigneeAccountId, null),
           ...hours,
         };
       }),
@@ -92,6 +88,6 @@ export async function POST(request: Request) {
     if (error instanceof JiraApiError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    return NextResponse.json({ error: "Failed to search Jira for EM stories" }, { status: 500 });
+    return NextResponse.json({ error: "Failed to search Jira for squad stories" }, { status: 500 });
   }
 }

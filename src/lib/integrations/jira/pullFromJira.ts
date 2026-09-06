@@ -261,7 +261,6 @@ export const syncTaskFromJira = async (
 
   const credentials = await requireJiraApiCredentials();
   const fieldIds = squadConfig.parentStoryFields;
-  const emFieldId = squadConfig.engineeringManagerFieldId.trim();
   const parentFieldList = [
     "summary",
     "status",
@@ -272,7 +271,6 @@ export const syncTaskFromJira = async (
     fieldIds.testingEstimateHours,
     fieldIds.qcEngineer,
     fieldIds.productManager,
-    ...(emFieldId ? [emFieldId] : []),
   ].filter(Boolean);
 
   const parentFields = await fetchIssueFields(credentials, parentIssueKey, parentFieldList);
@@ -295,8 +293,7 @@ export const syncTaskFromJira = async (
   }
 
   const assigneeAccountId = (parentFields.assignee as { accountId?: string } | null | undefined)?.accountId?.trim();
-  const emFieldUser = emFieldId ? extractJiraUserField(parentFields[emFieldId]) : null;
-  patch.isEmStory = resolveIsEmStory(emAccountId, assigneeAccountId, emFieldUser?.accountId);
+  patch.isEmStory = resolveIsEmStory(emAccountId, assigneeAccountId, null);
 
   const qcHours = hoursFromJiraNumberField(parentFields[fieldIds.testingEstimateHours.trim()]);
   if (qcHours != null) {

@@ -5,6 +5,7 @@ import { parseJiraIssueKey } from "./issueKey";
 import { jqlFieldRef, quoteJql, searchJqlIssues } from "./jiraSearch";
 import type { SquadJiraConfig } from "./types";
 import { searchJiraUsers } from "./userSearch";
+import { STANDALONE_TASK_ISSUE_TYPES } from "./issueTypes";
 
 export const EM_STORY_DISCOVERY_LIMIT = 200;
 
@@ -40,7 +41,6 @@ export interface DiscoveredEmStory {
   storyLink: string;
   issueType?: string;
   assigneeAccountId?: string | null;
-  emFieldAccountId?: string | null;
   estimateSeconds?: number | null;
 }
 
@@ -53,8 +53,6 @@ export interface DiscoverEmStoriesResult {
 
 export interface EmStoryDiscoveryInput {
   projectKey: string;
-  engineeringManagerFieldId: string;
-  emAccountId?: string | null;
   squadFieldId: string;
   squadOptionId: string;
 }
@@ -71,8 +69,11 @@ export const existingIssueKeySet = (storyLinks: string[]): Set<string> => {
   return keys;
 };
 
+export const EM_DISCOVERY_CONFIG_WARNING =
+  "Set Squad field + Squad option under People → Jira fields before Pull can add missing stories. Squad identity comes from User Management EM email for EM-story badges (assignee match), not a Jira EM custom field.";
+
 /**
- * Build JQL for parent stories owned by this EM / squad (not subtasks or epics).
+ * Build JQL for parent stories owned by this squad (not subtasks or epics).
  * Limited to the current open sprint, plus unfinished stories from closed sprints.
  */
 export const buildEmStoryDiscoveryJql = (input: EmStoryDiscoveryInput): string | null => {
@@ -81,69 +82,41 @@ export const buildEmStoryDiscoveryJql = (input: EmStoryDiscoveryInput): string |
     return null;
   }
 
-  const emField = jqlFieldRef(input.engineeringManagerFieldId);
-  const emAccountId = input.emAccountId?.trim() ?? "";
-  let emClause: string | null = null;
-  if (emField) {
-    const matches = [`${emField} = currentUser()`];
-    if (emAccountId) {
-      matches.push(`${emField} = ${quoteJql(emAccountId)}`);
-    }
-    emClause = matches.length === 1 ? matches[0]! : `(${matches.join(" OR ")})`;
-  }
-
   const squadField = jqlFieldRef(input.squadFieldId);
   const squadOptionId = input.squadOptionId.trim();
   const squadClause =
     squadField && squadOptionId ? `${squadField} = ${quoteJql(squadOptionId)}` : null;
 
-  if (!emClause && !squadClause) {
+  if (!squadClause) {
     return null;
   }
 
-  const parts = [
+  return [
     `project = ${quoteJql(projectKey)}`,
     "issuetype not in subTaskIssueTypes()",
     "issuetype != Epic",
     "status != Discoped",
     emSprintAwareStoryClause(),
-  ];
-  if (emClause) parts.push(emClause);
-  if (squadClause) parts.push(squadClause);
-  return `${parts.join(" AND ")} ORDER BY key ASC`;
+    squadClause,
+  ].join(" AND ") + " ORDER BY key ASC";
 };
 
 const storyLinkForKey = (siteUrl: string, key: string): string =>
   `${normalizeJiraSiteUrl(siteUrl) || "https://atlassian.net"}/browse/${key}`;
 
-const readJiraUserAccountId = (value: unknown): string | null => {
-  if (!value || typeof value !== "object") return null;
-  const accountId = (value as { accountId?: string }).accountId?.trim();
-  return accountId || null;
-};
-
-const discoverySearchFields = (engineeringManagerFieldId: string): string[] => {
-  const fields = ["summary", "issuetype", "assignee", "timeoriginalestimate", "parent"];
-  const emField = engineeringManagerFieldId.trim();
-  if (emField) fields.push(emField);
-  return fields;
-};
+const DISCOVERY_SEARCH_FIELDS = ["summary", "issuetype", "assignee", "timeoriginalestimate", "parent"];
 
 /**
- * Search Jira for parent stories under this EM (and squad when configured)
- * in the current sprint or leftover open from closed sprints,
- * skipping keys already on the dashboard.
+ * Search Jira for parent stories under this squad in the current sprint or leftover open
+ * from closed sprints, skipping keys already on the dashboard.
  */
 export const discoverEmStoriesFromJira = async (
   credentials: JiraApiCredentials,
   config: SquadJiraConfig,
   existingKeys: Set<string>,
-  emAccountId?: string | null,
 ): Promise<DiscoverEmStoriesResult> => {
   const jql = buildEmStoryDiscoveryJql({
     projectKey: config.projectKey,
-    engineeringManagerFieldId: config.engineeringManagerFieldId,
-    emAccountId,
     squadFieldId: config.subtaskSquadFieldId,
     squadOptionId: config.subtaskSquadOptionId,
   });
@@ -151,19 +124,18 @@ export const discoverEmStoriesFromJira = async (
     return {
       stories: [],
       truncated: false,
-      warning:
-        "Set Engineering Manager field (and/or Squad field) under People → Jira fields to import stories that are not on the dashboard.",
+      warning: EM_DISCOVERY_CONFIG_WARNING,
       jql: null,
     };
   }
 
   const searched = await searchJqlIssues(credentials, jql, 100, {
-    fields: discoverySearchFields(config.engineeringManagerFieldId),
+    fields: DISCOVERY_SEARCH_FIELDS,
     maxIssues: EM_STORY_DISCOVERY_LIMIT + 1,
   });
   if (!searched) {
     throw new JiraApiError(
-      publicJiraErrorMessage(400, "Failed to search Jira for stories under this EM"),
+      publicJiraErrorMessage(400, "Failed to search Jira for stories under this squad"),
       400,
     );
   }
@@ -181,9 +153,6 @@ export const discoverEmStoriesFromJira = async (
       storyLink: storyLinkForKey(credentials.siteUrl, key),
       issueType: issue.fields?.issuetype?.name ?? undefined,
       assigneeAccountId: issue.fields?.assignee?.accountId ?? null,
-      emFieldAccountId: readJiraUserAccountId(
-        issue.fields?.[config.engineeringManagerFieldId.trim()],
-      ),
       estimateSeconds: issue.fields?.timeoriginalestimate ?? null,
     });
     if (stories.length >= EM_STORY_DISCOVERY_LIMIT) {
@@ -199,13 +168,11 @@ export const discoverEmStoriesFromJira = async (
   };
 };
 
-import { STANDALONE_TASK_ISSUE_TYPES } from "./issueTypes";
-
 export { STANDALONE_TASK_ISSUE_TYPES };
 
 /**
- * Build JQL for standalone bugs/tasks/technical tasks owned by this EM/squad.
- * Same sprint and status filters as EM story discovery.
+ * Build JQL for standalone bugs/tasks/technical tasks owned by this squad.
+ * Same sprint/status filters and required Squad config as story discovery.
  */
 export const buildStandaloneTaskDiscoveryJql = (input: EmStoryDiscoveryInput): string | null => {
   const projectKey = input.projectKey.trim().toUpperCase();
@@ -213,60 +180,44 @@ export const buildStandaloneTaskDiscoveryJql = (input: EmStoryDiscoveryInput): s
     return null;
   }
 
-  const emField = jqlFieldRef(input.engineeringManagerFieldId);
-  const emAccountId = input.emAccountId?.trim() ?? "";
-  let emClause: string | null = null;
-  if (emField) {
-    const matches = [`${emField} = currentUser()`];
-    if (emAccountId) {
-      matches.push(`${emField} = ${quoteJql(emAccountId)}`);
-    }
-    emClause = matches.length === 1 ? matches[0]! : `(${matches.join(" OR ")})`;
-  }
-
   const squadField = jqlFieldRef(input.squadFieldId);
   const squadOptionId = input.squadOptionId.trim();
   const squadClause =
     squadField && squadOptionId ? `${squadField} = ${quoteJql(squadOptionId)}` : null;
 
-  if (!emClause && !squadClause) {
+  if (!squadClause) {
     return null;
   }
 
   const typeList = STANDALONE_TASK_ISSUE_TYPES.map((t) => quoteJql(t)).join(", ");
-  const parts = [
+  return [
     `project = ${quoteJql(projectKey)}`,
     `issuetype in (${typeList})`,
     "issuetype not in subTaskIssueTypes()",
     "status != Discoped",
     emSprintAwareStoryClause(),
-  ];
-  if (emClause) parts.push(emClause);
-  if (squadClause) parts.push(squadClause);
-  return `${parts.join(" AND ")} ORDER BY key ASC`;
+    squadClause,
+  ].join(" AND ") + " ORDER BY key ASC";
 };
 
 /**
- * Search Jira for standalone bugs/tasks/technical tasks for this squad/EM,
+ * Search Jira for standalone bugs/tasks/technical tasks for this squad,
  * skipping keys already on the dashboard.
  */
 export const discoverStandaloneTasksFromJira = async (
   credentials: JiraApiCredentials,
   config: SquadJiraConfig,
   existingKeys: Set<string>,
-  emAccountId?: string | null,
 ): Promise<DiscoveredEmStory[]> => {
   const jql = buildStandaloneTaskDiscoveryJql({
     projectKey: config.projectKey,
-    engineeringManagerFieldId: config.engineeringManagerFieldId,
-    emAccountId,
     squadFieldId: config.subtaskSquadFieldId,
     squadOptionId: config.subtaskSquadOptionId,
   });
   if (!jql) return [];
 
   const searched = await searchJqlIssues(credentials, jql, 100, {
-    fields: discoverySearchFields(config.engineeringManagerFieldId),
+    fields: DISCOVERY_SEARCH_FIELDS,
     maxIssues: EM_STORY_DISCOVERY_LIMIT + 1,
   });
   if (!searched) return [];
@@ -284,9 +235,6 @@ export const discoverStandaloneTasksFromJira = async (
       storyLink: storyLinkForKey(credentials.siteUrl, key),
       issueType: issue.fields?.issuetype?.name ?? undefined,
       assigneeAccountId: issue.fields?.assignee?.accountId ?? null,
-      emFieldAccountId: readJiraUserAccountId(
-        issue.fields?.[config.engineeringManagerFieldId.trim()],
-      ),
       estimateSeconds: issue.fields?.timeoriginalestimate ?? null,
     });
     if (tasks.length >= EM_STORY_DISCOVERY_LIMIT) break;

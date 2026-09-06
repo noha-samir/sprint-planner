@@ -54,44 +54,34 @@ describe("emSprintAwareStoryClause", () => {
 });
 
 describe("buildEmStoryDiscoveryJql", () => {
-  it("returns null without project or EM/squad fields", () => {
+  it("returns null without project or when Squad config is incomplete", () => {
     expect(
       buildEmStoryDiscoveryJql({
         projectKey: "",
-        engineeringManagerFieldId: "customfield_1",
-        squadFieldId: "",
-        squadOptionId: "",
-      }),
-    ).toBeNull();
-    expect(
-      buildEmStoryDiscoveryJql({
-        projectKey: "BR",
-        engineeringManagerFieldId: "",
-        squadFieldId: "",
-        squadOptionId: "",
-      }),
-    ).toBeNull();
-  });
-
-  it("filters by Engineering Manager currentUser and squad option", () => {
-    expect(
-      buildEmStoryDiscoveryJql({
-        projectKey: "br",
-        engineeringManagerFieldId: "customfield_10200",
-        emAccountId: "acct-em",
         squadFieldId: "customfield_10001",
         squadOptionId: "10001",
       }),
-    ).toBe(
-      `project = "BR" AND issuetype not in subTaskIssueTypes() AND issuetype != Epic AND status != Discoped AND ${sprintAwareClause} AND (cf[10200] = currentUser() OR cf[10200] = "acct-em") AND cf[10001] = "10001" ORDER BY key ASC`,
-    );
-  });
-
-  it("uses squad field alone when EM field is empty", () => {
+    ).toBeNull();
     expect(
       buildEmStoryDiscoveryJql({
         projectKey: "BR",
-        engineeringManagerFieldId: "",
+        squadFieldId: "",
+        squadOptionId: "",
+      }),
+    ).toBeNull();
+    expect(
+      buildEmStoryDiscoveryJql({
+        projectKey: "BR",
+        squadFieldId: "customfield_10001",
+        squadOptionId: "",
+      }),
+    ).toBeNull();
+  });
+
+  it("filters by squad option only", () => {
+    expect(
+      buildEmStoryDiscoveryJql({
+        projectKey: "br",
         squadFieldId: "customfield_10001",
         squadOptionId: "10001",
       }),
@@ -118,18 +108,21 @@ describe("discoverEmStoriesFromJira", () => {
     );
     const config = defaultSquadJiraConfig();
     config.projectKey = "BR";
-    config.engineeringManagerFieldId = "customfield_10200";
+    config.subtaskSquadFieldId = "customfield_10001";
+    config.subtaskSquadOptionId = "10001";
     const result = await discoverEmStoriesFromJira(
       { siteUrl: "https://example.atlassian.net", email: "a@b.co", apiToken: "x" },
       config,
       new Set(["BR-1"]),
-      "acct-em",
     );
     expect(result.stories).toEqual([
       {
         key: "BR-2",
         summary: "New story",
         storyLink: "https://example.atlassian.net/browse/BR-2",
+        issueType: undefined,
+        assigneeAccountId: null,
+        estimateSeconds: null,
       },
     ]);
     vi.unstubAllGlobals();

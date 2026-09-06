@@ -41,8 +41,6 @@ export interface SquadJiraConfig {
   subtaskSquadFieldId: string;
   /** Jira select option id for Squad (e.g. 10001). */
   subtaskSquadOptionId: string;
-  /** Parent-story Engineering Manager user field (customfield_…) used to import missing stories. */
-  engineeringManagerFieldId: string;
   assigneeMap: Record<string, string>;
   /** ISO timestamp of last successful account sync from Jira (read-only for clients). */
   assigneesSyncedAt?: string | null;
@@ -87,7 +85,6 @@ export const defaultSquadJiraConfig = (): SquadJiraConfig => ({
   productManagerFieldIsUser: true,
   subtaskSquadFieldId: "",
   subtaskSquadOptionId: "",
-  engineeringManagerFieldId: "",
   assigneeMap: {},
   assigneesSyncedAt: null,
 });

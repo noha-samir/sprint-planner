@@ -114,7 +114,11 @@ export function HelpDocs() {
           <li>Add or import stories; set hours and assignees.</li>
           <li>Check Timeline for overload.</li>
           <li>EM / Super Admin: Mark Progress Now when locking Cur dates.</li>
-          <li>Push / pull Jira as needed. Pull can add current-sprint EM/squad stories plus leftover open work from closed sprints (tagged Jira sync).</li>
+          <li>
+            Push / pull Jira as needed. Pull auto-adds stories when People → Jira fields has Squad field +
+            option set (must match this squad, e.g. Ventures not Ship). EM-story badges use User Management EM
+            email vs Jira assignee. Leftover open work from closed sprints is included.
+          </li>
         </ol>
         <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-[13px] text-blue-950">
           <strong>Editors:</strong> you can plan the board on your squad, but you cannot run New Sprint,

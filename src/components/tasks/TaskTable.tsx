@@ -2346,7 +2346,7 @@ export function TaskTable() {
                   <div className="flex flex-col items-center gap-2">
                     <span>
                       {emFilter === "em" && !anyEmStoryMarked
-                        ? "No EM stories marked yet. Pull from Jira once to mark stories whose Jira assignee (or EM field) is this squad’s EM — refresh keeps those marks."
+                        ? "No EM stories marked yet. Pull from Jira once to mark stories whose Jira assignee is this squad’s EM (User Management email) — refresh keeps those marks."
                         : "No tasks match the current filters."}
                     </span>
                     <button
@@ -2486,7 +2486,7 @@ export function TaskTable() {
                           {task.isEmStory ? (
                             <span
                               className="task-flag-chip task-story-type-chip task-flag-chip-type-em"
-                              title="Jira assignee (or EM field) matches this squad’s Engineering Manager"
+                              title="Jira assignee matches this squad’s Engineering Manager (User Management email)"
                             >
                               <span className="task-flag-chip-label">EM</span>
                             </span>
