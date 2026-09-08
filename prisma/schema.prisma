@@ -78,6 +78,8 @@ model Squad {
   id        String   @id
   name      String
   emEmail   String
+  /** Product manager emails for this squad (User Management); used by Owner PM filter. */
+  pmEmails  String[] @default([])
   hidden    Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

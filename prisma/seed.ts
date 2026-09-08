@@ -26,24 +26,29 @@ const toRole = (role: string): UserRole => {
 
 async function seedAccessControl() {
   const registry = await readJson<{
-    squads: Array<{ id: string; name: string; emEmail: string; hidden?: boolean }>;
+    squads: Array<{ id: string; name: string; emEmail: string; pmEmails?: string[]; hidden?: boolean }>;
     users: Array<{ email: string; role: string; squadId: string | null }>;
     squadAccounts: Array<{ email: string; role: string; squadId: string | null }>;
   }>(path.join(DATA_DIR, "access-control.json"));
   if (!registry) return;
 
   for (const squad of registry.squads ?? []) {
+    const pmEmails = (squad.pmEmails ?? [])
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean);
     await prisma.squad.upsert({
       where: { id: squad.id },
       create: {
         id: squad.id,
         name: squad.name,
         emEmail: (squad.emEmail ?? "").toLowerCase(),
+        pmEmails,
         hidden: Boolean(squad.hidden),
       },
       update: {
         name: squad.name,
         emEmail: (squad.emEmail ?? "").toLowerCase(),
+        pmEmails,
         hidden: Boolean(squad.hidden),
       },
     });

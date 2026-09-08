@@ -5,8 +5,8 @@ import { getSessionAccess, canReadFromSession, canWriteFromSession } from "./ser
 vi.mock("@/lib/access/registry", () => ({
   readAccessRegistry: vi.fn(async () => ({
     squads: [
-      { id: "ventures", name: "V", emEmail: "a@example.com", hidden: false },
-      { id: "ship", name: "S", emEmail: "b@example.com", hidden: false },
+      { id: "ventures", name: "V", emEmail: "a@example.com", pmEmails: [], hidden: false },
+      { id: "ship", name: "S", emEmail: "b@example.com", pmEmails: [], hidden: false },
     ],
     users: [],
     squadAccounts: [],

@@ -8,8 +8,8 @@ import {
 
 const registry = (): AccessRegistry => ({
   squads: [
-    { id: "ventures", name: "Ventures", emEmail: "em@example.com" },
-    { id: "ship", name: "Ship", emEmail: "lead@example.com" },
+    { id: "ventures", name: "Ventures", emEmail: "em@example.com", pmEmails: [] },
+    { id: "ship", name: "Ship", emEmail: "lead@example.com", pmEmails: [] },
   ],
   users: [
     { email: "em@example.com", role: "em", squadId: "ventures" },

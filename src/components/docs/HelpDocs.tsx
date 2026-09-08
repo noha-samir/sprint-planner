@@ -94,7 +94,7 @@ export function HelpDocs() {
             { name: "History", desc: "Archived sprint snapshots" },
             { name: "People & Jira", desc: "Roster + Jira fields (edit: super admin)" },
             { name: "Sprint Settings", desc: "Window, hours, holidays, appearance (calendar edit: super admin)" },
-            { name: "User Management", desc: "Squads & roles (edit: super admin; others see only their squad)" },
+            { name: "User Management", desc: "Squads, EM/PM emails & roles (edit: super admin; others see only their squad)" },
           ].map((item) => (
             <li
               key={item.name}
@@ -117,7 +117,8 @@ export function HelpDocs() {
           <li>
             Push / pull Jira as needed. Pull auto-adds stories when People → Jira fields has Squad field +
             option set (must match this squad, e.g. Ventures not Ship). EM-story badges use User Management EM
-            email vs Jira assignee. Leftover open work from closed sprints is included.
+            email vs Jira assignee. Owner filter All / EM / Team / PM uses squad PM emails from User Management
+            (matched to story Product Managers). Leftover open work from closed sprints is included.
           </li>
         </ol>
         <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-[13px] text-blue-950">

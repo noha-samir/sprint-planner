@@ -33,6 +33,7 @@ import { storyPhasePlanFromTask } from "@/lib/scheduler/storyTimelineEntries";
 import { getTasksNeedingRemark } from "@/lib/planner/pendingMarkProgress";
 import { copySelectedStoriesToClipboard } from "@/lib/planner/copySelectedStories";
 import { sortTasksForDashboard } from "@/lib/planner/dashboardTaskOrder";
+import { isSquadPmStory } from "@/lib/planner/pmStoryFlag";
 import { buildReleaseGroupColorMap } from "@/lib/planner/releaseGroupColors";
 import { flushPlannerStateToServer } from "@/lib/planner/flushPlannerState";
 import {
@@ -262,7 +263,8 @@ export function TaskTable() {
   });
   const [visibleStatuses, setVisibleStatuses] = useState<string[]>(defaultVisibleStatuses);
   const [sprintFilter, setSprintFilter] = useState<"all" | "currentSprint" | "nextSprint">("currentSprint");
-  const [emFilter, setEmFilter] = useState<"all" | "em" | "non-em">("all");
+  const [emFilter, setEmFilter] = useState<"all" | "em" | "non-em" | "pm">("all");
+  const [squadPmNames, setSquadPmNames] = useState<string[]>([]);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [kindFilter, setKindFilter] = useState<"all" | "stories" | "standalone">("all");
   const [typeFilterOpen, setTypeFilterOpen] = useState(false);
@@ -302,6 +304,36 @@ export function TaskTable() {
     return () => window.clearTimeout(timer);
   }, [actionFeedback]);
 
+  useEffect(() => {
+    if (!activeSquadId) {
+      setSquadPmNames([]);
+      return;
+    }
+    let cancelled = false;
+    const loadSquadPms = async () => {
+      try {
+        const response = await fetch(`/api/squad-pms?squadId=${encodeURIComponent(activeSquadId)}`, {
+          headers: { "x-squad-id": activeSquadId },
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          if (!cancelled) setSquadPmNames([]);
+          return;
+        }
+        const body = (await response.json()) as { pmNames?: string[] };
+        if (!cancelled) {
+          setSquadPmNames(Array.isArray(body.pmNames) ? body.pmNames : []);
+        }
+      } catch {
+        if (!cancelled) setSquadPmNames([]);
+      }
+    };
+    void loadSquadPms();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSquadId]);
+
   const feOptions = resources.filter((item) => item.type === "FE");
   const beOptions = resources.filter((item) => item.type === "BE");
   const mobileOptions = resources.filter((item) => item.type === "MO");
@@ -320,6 +352,10 @@ export function TaskTable() {
     [plannerMeta, activeTasks],
   );
   const anyEmStoryMarked = useMemo(() => tasks.some((task) => Boolean(task.isEmStory)), [tasks]);
+  const anyPmStoryMarked = useMemo(
+    () => tasks.some((task) => isSquadPmStory(task.productManagers, squadPmNames)),
+    [tasks, squadPmNames],
+  );
   const [selectedTimelineTaskId, setSelectedTimelineTaskId] = useState<string | null>(null);
   const selectedTimelineTask = useMemo(
     () => (selectedTimelineTaskId ? tasks.find((task) => task.id === selectedTimelineTaskId) ?? null : null),
@@ -421,7 +457,8 @@ export function TaskTable() {
     setTasksMenuOpen(false);
   }, [addTask, isEditor, sprintFilter, visibleStatuses]);
 
-  const ownerFilterSummary = emFilter === "em" ? "EM" : emFilter === "non-em" ? "Team" : "";
+  const ownerFilterSummary =
+    emFilter === "em" ? "EM" : emFilter === "non-em" ? "Team" : emFilter === "pm" ? "PM" : "";
   const kindFilterSummary =
     kindFilter === "stories" ? "Stories" : kindFilter === "standalone" ? "Standalone" : "";
 
@@ -1176,8 +1213,10 @@ export function TaskTable() {
       if (sprintFilter === "currentSprint") return !task.carryToNextSprint;
       return true;
     }).filter((task) => {
+      const pmStory = isSquadPmStory(task.productManagers, squadPmNames);
       if (emFilter === "em" && !task.isEmStory) return false;
-      if (emFilter === "non-em" && task.isEmStory) return false;
+      if (emFilter === "pm" && !pmStory) return false;
+      if (emFilter === "non-em" && (task.isEmStory || pmStory)) return false;
       if (!taskMatchesIssueTypeFilter(task, typeFilter)) return false;
       if (kindFilter === "standalone" && !isParentlessPlannerTask(task)) return false;
       if (kindFilter === "stories" && isParentlessPlannerTask(task)) return false;
@@ -1191,7 +1230,7 @@ export function TaskTable() {
         ? plannerMeta.dashboardTaskOrder
         : null;
     return sortTasksForDashboard(filtered, releaseDateById, pinnedOrder);
-  }, [tasks, safeResult.tasks, visibleStatuses, sprintFilter, emFilter, typeFilter, kindFilter, isUatTrackingEnabled, plannerMeta.dashboardTaskOrder]);
+  }, [tasks, safeResult.tasks, visibleStatuses, sprintFilter, emFilter, typeFilter, kindFilter, isUatTrackingEnabled, plannerMeta.dashboardTaskOrder, squadPmNames]);
 
   useEffect(() => {
     if (!focusTaskId) return;
@@ -1740,7 +1779,7 @@ export function TaskTable() {
                 className={toolbarTriggerClass(ownerFilterOpen || emFilter !== "all")}
                 aria-expanded={ownerFilterOpen}
                 aria-haspopup="true"
-                title={ownerFilterSummary ? `Owner: ${ownerFilterSummary}` : "Filter by EM or team"}
+                title={ownerFilterSummary ? `Owner: ${ownerFilterSummary}` : "Filter by EM, team, or PM"}
                 onClick={() => {
                   if (!ownerFilterOpen) closeOtherFilterMenus("owner");
                   setOwnerFilterOpen((value) => !value);
@@ -1761,9 +1800,18 @@ export function TaskTable() {
                   <div className="space-y-1 px-2 py-2">
                     {(
                       [
-                        { value: "all" as const, label: "All", hint: "EM and team" },
+                        { value: "all" as const, label: "All", hint: "EM, team, and PM" },
                         { value: "em" as const, label: "EM", hint: "Assigned to this squad’s EM" },
-                        { value: "non-em" as const, label: "Team", hint: "Not assigned to the EM" },
+                        {
+                          value: "non-em" as const,
+                          label: "Team",
+                          hint: "Not EM and not a squad PM story",
+                        },
+                        {
+                          value: "pm" as const,
+                          label: "PM",
+                          hint: "Assigned to this squad’s PM(s)",
+                        },
                       ] as const
                     ).map((option) => {
                       const on = emFilter === option.value;
@@ -2347,7 +2395,11 @@ export function TaskTable() {
                     <span>
                       {emFilter === "em" && !anyEmStoryMarked
                         ? "No EM stories marked yet. Pull from Jira once to mark stories whose Jira assignee is this squad’s EM (User Management email) — refresh keeps those marks."
-                        : "No tasks match the current filters."}
+                        : emFilter === "pm" && squadPmNames.length === 0
+                          ? "No squad PM names resolved yet. Add PM emails in User Management and map those PMs on People → Jira assignees."
+                          : emFilter === "pm" && !anyPmStoryMarked
+                            ? "No stories assigned to this squad’s PM(s). Set Product Managers on the story, or adjust Squad PMs in User Management."
+                            : "No tasks match the current filters."}
                     </span>
                     <button
                       type="button"
@@ -2472,6 +2524,7 @@ export function TaskTable() {
                       {isEditor ||
                       task.issueType ||
                       task.isEmStory ||
+                      isSquadPmStory(task.productManagers, squadPmNames) ||
                       (task.tags?.length ?? 0) > 0 ||
                       todoLineCount > 0 ? (
                         <div className="story-fields-menu story-fields-menu-below">
@@ -2489,6 +2542,14 @@ export function TaskTable() {
                               title="Jira assignee matches this squad’s Engineering Manager (User Management email)"
                             >
                               <span className="task-flag-chip-label">EM</span>
+                            </span>
+                          ) : null}
+                          {isSquadPmStory(task.productManagers, squadPmNames) ? (
+                            <span
+                              className="task-flag-chip task-story-type-chip task-flag-chip-type-pm"
+                              title="Story lists a Product Manager from this squad’s PM list (User Management)"
+                            >
+                              <span className="task-flag-chip-label">PM</span>
                             </span>
                           ) : null}
                           {(task.tags ?? []).map((tag) =>

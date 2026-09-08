@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Squad" ADD COLUMN "pmEmails" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

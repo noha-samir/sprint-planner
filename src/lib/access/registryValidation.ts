@@ -14,6 +14,7 @@ const squadSchema = z.object({
   id: squadIdSchema,
   name: z.string().trim().min(1).max(120),
   emEmail: z.union([emailSchema, z.literal("")]),
+  pmEmails: z.array(emailSchema).max(20).default([]),
   hidden: z.boolean().optional(),
 });
 
@@ -29,7 +30,7 @@ export const accessRegistrySchema = z.object({
   squadAccounts: z.array(userAccountSchema).max(2000),
 });
 
-/** User Management PUT: access registry only (PM people live on Resources). */
+/** User Management PUT: access registry (squad PM emails + users; PM roster people still live on Resources). */
 export const userManagementWriteSchema = accessRegistrySchema;
 
 export type AccessRegistryInput = z.infer<typeof accessRegistrySchema>;

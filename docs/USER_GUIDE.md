@@ -41,7 +41,7 @@ flowchart TB
 ## Tabs
 
 ### Dashboard (`/`)
-Plan the sprint table: story link, BE/FE/Mobile/Integration/QC, PM + buffer, status, release dates, flags, tools (timeline modal, Jira updates).
+Plan the sprint table: story link, BE/FE/Mobile/Integration/QC, PM + buffer, status, release dates, flags, tools (timeline modal, Jira updates). **Owner** filter: All / EM / Team / PM — Team excludes EM and squad-PM stories; PM shows stories whose Product Managers include a squad PM from User Management.
 
 ### Timeline (`/timeline`)
 Visual phase schedule for the active board.
@@ -56,7 +56,7 @@ Roster by team (BE/FE/MO/QC/PM/Other Squad). Super admins add people from Jira a
 Sprint start, hours/day, workday start, holidays. Edit: super admin only.
 
 ### User Management (`/user-management`)
-Squads and user roles. Edit: super admin only. Squad leads only see users in their own squad(s). Super admins can filter the users list by squad.
+Squads and user roles. Edit: super admin only. Squad leads only see users in their own squad(s). Super admins can filter the users list by squad. Each squad has an **EM email** and one or more **Squad PM** emails (used by the dashboard Owner filter).
 
 ### Help (`/docs`)
 This guide inside the app.
@@ -102,9 +102,9 @@ If stories show **Need remark**, an EM/Super Admin should run **Mark Progress No
 ## Jira tips
 
 - Story needs a Jira link (or prior sync) for push/pull.
-- **Pull from Jira** also adds parent stories under this EM that are not on the dashboard: the **current open sprint**, plus leftover **open** stories from closed sprints (not Done / Production / In Design). Configure the Engineering Manager field and/or Squad field under People → Jira fields. Those new rows get a **Jira sync** tag.
+- **Pull from Jira** also adds parent stories under this squad that are not on the dashboard: the **current open sprint**, plus leftover **open** stories from closed sprints (not Done / Production / In Design). Configure Squad field under People → Jira fields. EM-story badges use User Management EM email vs Jira assignee. Those new rows get a **Jira sync** tag.
 - Assignees must exist on People with a saved Jira account (mapped at Add time).
-- Parent PM/QC custom fields are configured under People → Jira fields (super admin).
+- Parent PM/QC custom fields are configured under People → Jira fields (super admin). Squad PM emails for the Owner **PM** filter are set in User Management.
 - Multiple `[BE]` (or FE/Android/IOS) subtasks under one story are all pulled: hours are summed, every mapped assignee is kept. Push creates one Jira subtask per person.
 - Long pull/push result banners **scroll inside** a short box so the dashboard table stays on screen.
 

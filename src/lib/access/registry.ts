@@ -7,6 +7,8 @@ export interface Squad {
   id: string;
   name: string;
   emEmail: string;
+  /** Product manager emails for this squad (one or more). */
+  pmEmails: string[];
   hidden?: boolean;
 }
 
@@ -26,7 +28,14 @@ const DEFAULT_SQUAD_ID = appEnv.defaultSquadId;
 const SUPER_ADMIN_EMAIL = authEnv.superAdminEmail;
 
 const defaultRegistry = (): AccessRegistry => ({
-  squads: [{ id: DEFAULT_SQUAD_ID, name: "Ventures", emEmail: SUPER_ADMIN_EMAIL || "admin@localhost" }],
+  squads: [
+    {
+      id: DEFAULT_SQUAD_ID,
+      name: "Ventures",
+      emEmail: SUPER_ADMIN_EMAIL || "admin@localhost",
+      pmEmails: [],
+    },
+  ],
   users: SUPER_ADMIN_EMAIL
     ? [{ email: SUPER_ADMIN_EMAIL, role: "super_admin", squadId: DEFAULT_SQUAD_ID }]
     : [],
@@ -34,6 +43,15 @@ const defaultRegistry = (): AccessRegistry => ({
 });
 
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
+
+const normalizePmEmails = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  const emails = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => normalizeEmail(item))
+    .filter(Boolean);
+  return emails.filter((email, index, arr) => arr.indexOf(email) === index).slice(0, 20);
+};
 const normalizeSquadId = (squadId: string | null | undefined): string => {
   const normalized = (squadId ?? "").trim().toLowerCase();
   if (!normalized || normalized === "default") {
@@ -65,6 +83,7 @@ const normalizeRegistry = (value: AccessRegistry): AccessRegistry => {
       id: normalizeSquadId(item.id),
       name: item.name.trim() || "Unnamed Squad",
       emEmail: normalizeEmail(item.emEmail ?? ""),
+      pmEmails: normalizePmEmails(item.pmEmails),
       hidden: Boolean(item.hidden),
     }));
   const uniqueSquads = squads.filter(
@@ -110,12 +129,18 @@ async function loadRegistryFromDb(): Promise<AccessRegistry | null> {
     return null;
   }
   return {
-    squads: squads.map((s) => ({
-      id: s.id,
-      name: s.name,
-      emEmail: s.emEmail,
-      hidden: s.hidden,
-    })),
+    squads: squads.map((s) => {
+      const pmEmails = Array.isArray((s as { pmEmails?: string[] }).pmEmails)
+        ? ((s as { pmEmails?: string[] }).pmEmails as string[])
+        : [];
+      return {
+        id: s.id,
+        name: s.name,
+        emEmail: s.emEmail,
+        pmEmails,
+        hidden: s.hidden,
+      };
+    }),
     users: users.map((u) => ({
       email: u.email,
       role: u.role as UserRole,
@@ -176,11 +201,13 @@ export const writeAccessRegistry = async (
           id: squad.id,
           name: squad.name,
           emEmail: squad.emEmail,
+          pmEmails: squad.pmEmails,
           hidden: Boolean(squad.hidden),
         },
         update: {
           name: squad.name,
           emEmail: squad.emEmail,
+          pmEmails: squad.pmEmails,
           hidden: Boolean(squad.hidden),
         },
       });

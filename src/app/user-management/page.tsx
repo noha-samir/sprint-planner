@@ -29,12 +29,30 @@ type DraftUser = UserAccount & {
   savedEmail: string | null;
 };
 
-const toDraftSquad = (squad: Squad): DraftSquad => ({ ...squad });
+const normalizePmEmails = (emails: string[] | undefined): string[] => {
+  const normalized = (emails ?? [])
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
+  return normalized.filter((email, index, arr) => arr.indexOf(email) === index);
+};
+
+const pmEmailsEqual = (a: string[] | undefined, b: string[] | undefined) => {
+  const left = normalizePmEmails(a);
+  const right = normalizePmEmails(b);
+  if (left.length !== right.length) return false;
+  return left.every((email, index) => email === right[index]);
+};
+
+const toDraftSquad = (squad: Squad): DraftSquad => ({
+  ...squad,
+  pmEmails: normalizePmEmails(squad.pmEmails),
+});
 
 const toAccessSquad = (squad: DraftSquad): Squad => ({
   id: squad.id,
   name: squad.name,
   emEmail: squad.emEmail,
+  pmEmails: normalizePmEmails(squad.pmEmails),
   ...(squad.hidden !== undefined ? { hidden: squad.hidden } : {}),
 });
 
@@ -79,6 +97,7 @@ const nextSquadId = (squads: DraftSquad[]): string => {
 const squadEqual = (a: DraftSquad, b: DraftSquad) =>
   a.name.trim() === b.name.trim() &&
   a.emEmail.trim().toLowerCase() === b.emEmail.trim().toLowerCase() &&
+  pmEmailsEqual(a.pmEmails, b.pmEmails) &&
   Boolean(a.hidden) === Boolean(b.hidden);
 
 const userEqual = (a: Pick<UserAccount, "email" | "role" | "squadId">, b: Pick<UserAccount, "email" | "role" | "squadId">) =>
@@ -292,8 +311,11 @@ export default function UserManagementPage() {
   const saveSquad = async (squadId: string) => {
     const squad = squads.find((item) => item.id === squadId);
     if (!squad) return;
-    if (!squad.name.trim() || !squad.emEmail.trim()) {
-      setStatusMessage({ tone: "error", text: "Squad name and EM email are required before saving." });
+    if (!squad.name.trim() || !squad.emEmail.trim() || normalizePmEmails(squad.pmEmails).length === 0) {
+      setStatusMessage({
+        tone: "error",
+        text: "Squad name, EM email, and at least one PM email are required before saving.",
+      });
       return;
     }
     if (!isSquadDirty(squad)) return;
@@ -670,6 +692,7 @@ export default function UserManagementPage() {
                     id: nextSquadId(current),
                     name: "",
                     emEmail: "",
+                    pmEmails: [],
                   },
                 ]);
                 setStatusMessage({ tone: "info", text: "New squad added — fill details, then Save on that card." });
@@ -764,6 +787,83 @@ export default function UserManagementPage() {
                             }
                           />
                         </label>
+                      </div>
+
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                          Squad PMs
+                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          {(squad.pmEmails ?? []).map((email) => (
+                            <span
+                              key={email}
+                              className="inline-flex max-w-full items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-800"
+                            >
+                              <span className="truncate">{email}</span>
+                              {canManageUsers ? (
+                                <button
+                                  type="button"
+                                  className="shrink-0 text-slate-400 hover:text-slate-700"
+                                  aria-label={`Remove ${email}`}
+                                  onClick={() =>
+                                    updateSquad(squad.id, {
+                                      pmEmails: (squad.pmEmails ?? []).filter((item) => item !== email),
+                                    })
+                                  }
+                                >
+                                  ×
+                                </button>
+                              ) : null}
+                            </span>
+                          ))}
+                        </div>
+                        {canManageUsers ? (
+                          <form
+                            className="flex gap-1"
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              const form = event.currentTarget;
+                              const input = form.elements.namedItem("pmEmail") as HTMLInputElement | null;
+                              const next = (input?.value ?? "").trim().toLowerCase();
+                              if (!next || !next.includes("@")) {
+                                setStatusMessage({
+                                  tone: "error",
+                                  text: "Enter a valid PM email before adding.",
+                                });
+                                return;
+                              }
+                              if ((squad.pmEmails ?? []).includes(next)) {
+                                input!.value = "";
+                                return;
+                              }
+                              if ((squad.pmEmails ?? []).length >= 20) {
+                                setStatusMessage({
+                                  tone: "error",
+                                  text: "A squad can have at most 20 PM emails.",
+                                });
+                                return;
+                              }
+                              updateSquad(squad.id, {
+                                pmEmails: [...(squad.pmEmails ?? []), next],
+                              });
+                              input!.value = "";
+                            }}
+                          >
+                            <input
+                              name="pmEmail"
+                              type="email"
+                              className="field-input min-w-0 flex-1 px-2 py-1 text-[13px]"
+                              placeholder="pm@example.com"
+                              disabled={!canManageUsers}
+                            />
+                            <button type="submit" className="btn-secondary shrink-0 px-2 py-1 text-[11px]">
+                              Add
+                            </button>
+                          </form>
+                        ) : null}
+                        {(squad.pmEmails ?? []).length === 0 ? (
+                          <p className="text-[10px] text-amber-700">At least one PM email is required.</p>
+                        ) : null}
                       </div>
 
                       <div className="flex flex-wrap items-center justify-between gap-1.5">

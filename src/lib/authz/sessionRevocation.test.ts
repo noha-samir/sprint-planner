@@ -3,7 +3,7 @@ import type { AccessRegistry } from "@/lib/access/registry";
 import { emailsNeedingSessionRevoke } from "./sessionRevocation";
 
 const base = (): AccessRegistry => ({
-  squads: [{ id: "ventures", name: "Ventures", emEmail: "admin@example.com", hidden: false }],
+  squads: [{ id: "ventures", name: "Ventures", emEmail: "admin@example.com", pmEmails: [], hidden: false }],
   users: [
     { email: "admin@example.com", role: "super_admin", squadId: "ventures" },
     { email: "user@example.com", role: "reviewer", squadId: "ventures" },

@@ -762,6 +762,10 @@ body {
     @apply border-teal-200/90 bg-teal-50 text-teal-800;
   }
 
+  .task-flag-chip-type-pm {
+    @apply border-sky-200/90 bg-sky-50 text-sky-800;
+  }
+
   .task-action-feedback {
     @apply flex shrink-0 items-center justify-between gap-3 rounded-xl border border-teal-300 bg-teal-50 px-3 py-2 text-sm font-medium text-teal-950 shadow-sm;
   }
