@@ -6,6 +6,7 @@ import { readSquadJiraConfig } from "@/lib/integrations/jira/configStore";
 import { JiraApiError } from "@/lib/integrations/jira/client";
 import { syncTaskFromJira } from "@/lib/integrations/jira/pullFromJira";
 import { resolveSquadEmAccountId } from "@/lib/integrations/jira/squadEmAccount";
+import { resolveSquadPmAccountIds } from "@/lib/integrations/jira/squadPmNames";
 import { parseJiraSingleTaskBody } from "@/lib/validation/apiBodies";
 
 export async function POST(request: Request, context: { params: Promise<{ taskId: string }> }) {
@@ -35,10 +36,13 @@ export async function POST(request: Request, context: { params: Promise<{ taskId
 
   const squadConfig = await readSquadJiraConfig(authResult.squadId);
   const plannerPeople = body.plannerPeople ?? body.plannerNames ?? [];
-  const emAccountId = await resolveSquadEmAccountId(authResult.squadId);
+  const [emAccountId, pmAccountIds] = await Promise.all([
+    resolveSquadEmAccountId(authResult.squadId),
+    resolveSquadPmAccountIds(authResult.squadId),
+  ]);
 
   try {
-    const result = await syncTaskFromJira(task, squadConfig, plannerPeople, emAccountId);
+    const result = await syncTaskFromJira(task, squadConfig, plannerPeople, emAccountId, pmAccountIds);
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof JiraApiError) {

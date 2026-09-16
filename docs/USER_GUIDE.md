@@ -41,7 +41,7 @@ flowchart TB
 ## Tabs
 
 ### Dashboard (`/`)
-Plan the sprint table: story link, BE/FE/Mobile/Integration/QC, PM + buffer, status, release dates, flags, tools (timeline modal, Jira updates). **Owner** filter: All / EM / Team / PM — Team excludes EM and squad-PM stories; PM shows stories whose Product Managers include a squad PM from User Management.
+Plan the sprint table: story link, BE/FE/Mobile/Integration/QC, PM + buffer, status, release dates, flags, tools (timeline modal, Jira updates). **Owner** filter: All / EM / Team / PM — Team excludes EM and squad-PM stories; PM shows stories whose **Jira assignee** is a squad PM (User Management emails), or whose Product Managers column includes one.
 
 ### Timeline (`/timeline`)
 Visual phase schedule for the active board.

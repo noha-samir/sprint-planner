@@ -257,6 +257,8 @@ model Task {
   issueType         String?
   /** True when Jira assignee or EM field matches the squad EM. */
   isEmStory           Boolean         @default(false)
+  /** True when Jira assignee matches a squad Product Manager (User Management pmEmails). */
+  isPmStory           Boolean         @default(false)
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 

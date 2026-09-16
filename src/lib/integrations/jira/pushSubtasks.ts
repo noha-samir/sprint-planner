@@ -31,6 +31,7 @@ export {
   formatBulkSyncConfirmMessage,
   formatBulkSyncSummary,
   bulkSyncHasPartialWarnings,
+  bulkSyncHasActionErrors,
 } from "./bulkSyncMessages";
 
 export interface SyncTaskToJiraResult {
@@ -165,7 +166,7 @@ export const syncTaskToJira = async (
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to sync Jira status";
-    warnings.push(`Status sync failed for ${parentIssueKey}: ${message}`);
+    syncErrors.push(`Status sync failed for ${parentIssueKey}: ${message}`);
   }
 
   return {

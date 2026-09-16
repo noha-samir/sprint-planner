@@ -1,5 +1,11 @@
 import type { Task } from "@/lib/scheduler/types";
 import type { TaskJiraMeta } from "./types";
+import {
+  formatGroupedStoryMessages,
+  partitionMessages,
+  storyCountLabel,
+  type StoryMessage,
+} from "./bulkNotificationFormat";
 
 export interface BulkPullTaskResult {
   taskId: string;
@@ -26,8 +32,6 @@ export const JIRA_BULK_PULL_SKIP_REASON = {
 } as const;
 
 const storyLabel = (row: BulkPullTaskResult): string => row.storyName.trim() || row.taskId;
-
-const storyCountLabel = (count: number): string => (count === 1 ? "1 story" : `${count} stories`);
 
 export const formatBulkPullConfirmMessage = (
   eligibleCount: number,
@@ -65,6 +69,20 @@ export const formatBulkPullConfirmMessage = (
   return parts.join("\n\n");
 };
 
+const collectRowMessages = (result: BulkPullFromJiraResult): StoryMessage[] =>
+  result.results.flatMap((row) =>
+    (row.warnings ?? []).map((message) => ({ story: storyLabel(row), message })),
+  );
+
+/** True when pull left intended updates unfinished (assignees, subtasks, etc.). */
+export const bulkPullHasActionErrors = (result: BulkPullFromJiraResult): boolean => {
+  if (result.failed > 0) return true;
+  return partitionMessages(collectRowMessages(result)).actionFailures.length > 0;
+};
+
+/**
+ * User-friendly bulk pull result summary — groups identical issues under one message.
+ */
 export const formatBulkPullSummary = (result: BulkPullFromJiraResult): string => {
   const noLink = result.results.filter(
     (row) => row.skipped && row.skipReason === JIRA_BULK_PULL_SKIP_REASON.NO_LINK,
@@ -72,9 +90,7 @@ export const formatBulkPullSummary = (result: BulkPullFromJiraResult): string =>
   const failedRows = result.results.filter((row) => !row.ok && !row.skipped);
   const discopedRows = failedRows.filter((row) => row.error === JIRA_BULK_PULL_SKIP_REASON.DISCOPED);
   const jiraFailedRows = failedRows.filter((row) => row.error !== JIRA_BULK_PULL_SKIP_REASON.DISCOPED);
-  const warningLines = result.results.flatMap((row) =>
-    (row.warnings ?? []).map((warning) => `• ${storyLabel(row)}: ${warning}`),
-  );
+  const { actionFailures, softWarnings } = partitionMessages(collectRowMessages(result));
 
   const lines: string[] = [];
   if (result.synced > 0) {
@@ -85,26 +101,38 @@ export const formatBulkPullSummary = (result: BulkPullFromJiraResult): string =>
 
   if (noLink.length > 0) {
     lines.push(
-      `${storyCountLabel(noLink.length)} not pulled — add a Jira link:\n${noLink.map((row) => `• ${storyLabel(row)}`).join("\n")}`,
+      `${storyCountLabel(noLink.length)} not pulled — add a Jira link:\n${noLink
+        .map((row) => `• ${storyLabel(row)}`)
+        .join("\n")}`,
     );
   }
 
   if (discopedRows.length > 0) {
     lines.push(
-      `Errors — Discoped stories are not synced from Jira:\n${discopedRows.map((row) => `• ${storyLabel(row)}`).join("\n")}`,
+      `Errors — Discoped (not pulled):\n${discopedRows.map((row) => `• ${storyLabel(row)}`).join("\n")}`,
     );
   }
 
   if (jiraFailedRows.length > 0) {
+    const grouped = formatGroupedStoryMessages(
+      jiraFailedRows.map((row) => ({
+        story: storyLabel(row),
+        message: row.error ?? "Unknown error",
+      })),
+    );
     lines.push(
-      `${storyCountLabel(jiraFailedRows.length)} failed — Jira returned an error:\n${jiraFailedRows
-        .map((row) => `• ${storyLabel(row)}: ${row.error ?? "Unknown error"}`)
-        .join("\n")}`,
+      `Errors — Jira returned an error (${storyCountLabel(jiraFailedRows.length)}):\n${grouped}`,
     );
   }
 
-  if (warningLines.length > 0) {
-    lines.push(`Warnings:\n${warningLines.join("\n")}`);
+  if (actionFailures.length > 0) {
+    lines.push(
+      `Errors — some updates did not apply:\n${formatGroupedStoryMessages(actionFailures)}`,
+    );
+  }
+
+  if (softWarnings.length > 0) {
+    lines.push(`Warnings:\n${formatGroupedStoryMessages(softWarnings)}`);
   }
 
   return lines.join("\n\n");

@@ -225,6 +225,7 @@ export async function readSquadPlannerState(squadId: string): Promise<Record<str
         releaseGroup: task.releaseGroup ?? undefined,
         issueType: task.issueType ?? undefined,
         isEmStory: task.isEmStory,
+        isPmStory: task.isPmStory,
         jira: task.jiraLink
           ? {
               parentIssueKey: task.jiraLink.parentIssueKey,
@@ -550,6 +551,7 @@ export async function writeSquadPlannerState(
           releaseGroup: typeof task.releaseGroup === "string" ? task.releaseGroup : null,
           issueType: typeof task.issueType === "string" && task.issueType.trim() ? task.issueType.trim() : null,
           isEmStory: Boolean(task.isEmStory),
+          isPmStory: Boolean(task.isPmStory),
         })),
       });
     }

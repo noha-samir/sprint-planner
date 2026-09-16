@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Task" ADD COLUMN "isPmStory" BOOLEAN NOT NULL DEFAULT false;

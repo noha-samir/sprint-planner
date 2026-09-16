@@ -108,7 +108,7 @@ describe("bulkSyncTasksToJira", () => {
     });
     expect(createJiraSubtask).toHaveBeenCalledTimes(1);
     const summary = formatBulkSyncSummary(result);
-    expect(summary).toContain("Errors — Discoped stories are not synced to Jira");
+    expect(summary).toContain("Errors — Discoped (not synced):");
     expect(summary).toContain("• Old Story");
   });
 
@@ -141,10 +141,11 @@ describe("bulkSyncTasksToJira", () => {
     expect(createJiraSubtask).toHaveBeenCalled();
     const summary = formatBulkSyncSummary(result);
     expect(summary).toContain("Warnings:");
-    expect(summary.indexOf("Warnings — some subtasks were not created")).toBeGreaterThan(
-      summary.indexOf("Warnings:"),
-    );
+    expect(summary).toContain("Errors — some updates did not apply:");
     expect(summary).toContain('BE has 5h on "Zero FE" but no assignee');
+    expect(summary.indexOf("Warnings:")).toBeGreaterThan(
+      summary.indexOf("Errors — some updates did not apply:"),
+    );
   });
 
   it("formatBulkSyncSummary uses plain language for not synced vs failed", () => {
@@ -201,8 +202,9 @@ describe("bulkSyncTasksToJira", () => {
     });
     expect(summary).toContain("not synced — add a Jira link");
     expect(summary).toContain("not synced — add an FE/BE assignee or FE/BE/QC hours");
-    expect(summary).toContain("failed — Jira returned an error");
-    expect(summary).toContain("• Story C: Permission denied");
+    expect(summary).toContain("Errors — Jira returned an error");
+    expect(summary).toContain("• Permission denied");
+    expect(summary).toContain("— Story C");
   });
 
   it("formatBulkSyncConfirmMessage explains left-out stories", () => {

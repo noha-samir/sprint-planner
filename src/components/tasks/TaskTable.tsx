@@ -21,19 +21,21 @@ import {
 } from "@/lib/planner/taskIssueFilters";
 import { isTaskEligibleForJiraPull, isTaskEligibleForJiraSync, resolveTaskForJiraSync } from "@/lib/integrations/jira/syncEligibility";
 import { JIRA_SYNC_ADDED_TAG } from "@/lib/integrations/jira/jiraSyncTag";
-import { formatBulkSyncConfirmMessage, formatBulkSyncSummary, bulkSyncHasPartialWarnings, type BulkSyncTaskResult } from "@/lib/integrations/jira/bulkSyncMessages";
+import { formatBulkSyncConfirmMessage, formatBulkSyncSummary, bulkSyncHasActionErrors, type BulkSyncTaskResult } from "@/lib/integrations/jira/bulkSyncMessages";
 import {
   formatBulkPullConfirmMessage,
   formatBulkPullSummary,
+  bulkPullHasActionErrors,
   type BulkPullTaskResult,
 } from "@/lib/integrations/jira/bulkPullMessages";
+import { isActionFailureMessage } from "@/lib/integrations/jira/bulkNotificationFormat";
 import { getCurrentStoryPhase, getStatusPhase, type StoryPhase } from "@/lib/scheduler/currentPhase";
 import { effectiveMobileHours, mobileAppLabel } from "@/lib/scheduler/mobilePlatform";
 import { storyPhasePlanFromTask } from "@/lib/scheduler/storyTimelineEntries";
 import { getTasksNeedingRemark } from "@/lib/planner/pendingMarkProgress";
 import { copySelectedStoriesToClipboard } from "@/lib/planner/copySelectedStories";
 import { sortTasksForDashboard } from "@/lib/planner/dashboardTaskOrder";
-import { isSquadPmStory } from "@/lib/planner/pmStoryFlag";
+import { isOwnerPmStory } from "@/lib/planner/pmStoryFlag";
 import { buildReleaseGroupColorMap } from "@/lib/planner/releaseGroupColors";
 import { flushPlannerStateToServer } from "@/lib/planner/flushPlannerState";
 import {
@@ -353,7 +355,7 @@ export function TaskTable() {
   );
   const anyEmStoryMarked = useMemo(() => tasks.some((task) => Boolean(task.isEmStory)), [tasks]);
   const anyPmStoryMarked = useMemo(
-    () => tasks.some((task) => isSquadPmStory(task.productManagers, squadPmNames)),
+    () => tasks.some((task) => isOwnerPmStory(task, squadPmNames)),
     [tasks, squadPmNames],
   );
   const [selectedTimelineTaskId, setSelectedTimelineTaskId] = useState<string | null>(null);
@@ -932,19 +934,32 @@ export function TaskTable() {
         failed,
         skipped: Math.max(0, selectedTasksForSync.length - eligibleTasks.length),
       });
-      const hasAssigneeErrors = results.some((row) => (row.errors?.length ?? 0) > 0);
+      const syncPayload = {
+        results,
+        synced,
+        failed,
+        skipped: Math.max(0, selectedTasksForSync.length - eligibleTasks.length),
+      };
       if (synced > 0) {
         setJiraSyncPhase("saving");
         const saved = await flushPlannerStateToServer(activeSquadId);
         if (!saved) {
           finishJiraSync({
-            summary: `${summary}\nWarning: changes are on screen but failed to save to the server — wait a moment before refreshing.`,
+            summary: `${summary}\n\nErrors — planner save failed:\n• Changes are on screen but failed to save to the server — wait a moment before refreshing.`,
             isError: true,
           });
           return;
         }
       }
-      finishJiraSync({ summary, isError: failed > 0, isWarning: bulkSyncHasPartialWarnings({ results, synced, failed, skipped: Math.max(0, selectedTasksForSync.length - eligibleTasks.length) }) || hasAssigneeErrors });
+      finishJiraSync({
+        summary,
+        isError: bulkSyncHasActionErrors(syncPayload),
+        isWarning:
+          !bulkSyncHasActionErrors(syncPayload) &&
+          results.some((row) =>
+            (row.warnings ?? []).some((message) => !isActionFailureMessage(message)),
+          ),
+      });
     });
   };
 
@@ -969,6 +984,7 @@ export function TaskTable() {
         storyLink: string;
         issueType?: string | null;
         isEmStory?: boolean;
+        isPmStory?: boolean;
         feHours?: number; beHours?: number; qcHours?: number; androidHours?: number; iosHours?: number;
         feDevs?: string[]; beDevs?: string[]; qcs?: string[]; androidDevs?: string[]; iosDevs?: string[];
       }> = [];
@@ -997,6 +1013,7 @@ export function TaskTable() {
             storyLink: string;
             issueType?: string | null;
             isEmStory?: boolean;
+            isPmStory?: boolean;
             feHours?: number;
             beHours?: number;
             qcHours?: number;
@@ -1087,6 +1104,7 @@ export function TaskTable() {
             qcHours: story.qcHours ?? 0,
             issueType: story.issueType ?? undefined,
             isEmStory: story.isEmStory ?? false,
+            isPmStory: story.isPmStory ?? false,
             tags: [JIRA_SYNC_ADDED_TAG],
             warnings: [],
             isValid: true,
@@ -1173,12 +1191,13 @@ export function TaskTable() {
         missingStories.length > 0
           ? `Added ${missingStories.length === 1 ? "1 story" : `${missingStories.length} stories`} from Jira that ${missingStories.length === 1 ? "was" : "were"} not on the dashboard.`
           : "";
-      const summary = [importedLine, formatBulkPullSummary({
+      const pullPayload = {
         results,
         synced,
         failed,
         skipped: Math.max(0, selectedTasksForSync.length - eligibleTasks.length),
-      })]
+      };
+      const summary = [importedLine, formatBulkPullSummary(pullPayload), discoverWarning ? `Warnings:\n• ${discoverWarning}` : ""]
         .filter(Boolean)
         .join("\n\n");
       if (synced > 0 || missingStories.length > 0) {
@@ -1186,18 +1205,22 @@ export function TaskTable() {
         const saved = await flushPlannerStateToServer(activeSquadId);
         if (!saved) {
           finishJiraSync({
-            summary: `${summary}\nWarning: pull results are on screen but failed to save to the server — wait a moment before refreshing.`,
+            summary: `${summary}\n\nErrors — planner save failed:\n• Pull results are on screen but failed to save to the server — wait a moment before refreshing.`,
             isError: true,
           });
           return;
         }
       }
+      const hasActionErrors = bulkPullHasActionErrors(pullPayload);
+      const hasSoftWarnings =
+        Boolean(discoverWarning) ||
+        results.some((row) =>
+          (row.warnings ?? []).some((message) => !isActionFailureMessage(message)),
+        );
       finishJiraSync({
         summary,
-        isError: failed > 0,
-        isWarning:
-          failed === 0 &&
-          (Boolean(discoverWarning) || results.some((row) => (row.warnings?.length ?? 0) > 0)),
+        isError: hasActionErrors,
+        isWarning: !hasActionErrors && hasSoftWarnings,
       });
     });
   };
@@ -1213,7 +1236,7 @@ export function TaskTable() {
       if (sprintFilter === "currentSprint") return !task.carryToNextSprint;
       return true;
     }).filter((task) => {
-      const pmStory = isSquadPmStory(task.productManagers, squadPmNames);
+      const pmStory = isOwnerPmStory(task, squadPmNames);
       if (emFilter === "em" && !task.isEmStory) return false;
       if (emFilter === "pm" && !pmStory) return false;
       if (emFilter === "non-em" && (task.isEmStory || pmStory)) return false;
@@ -1810,7 +1833,7 @@ export function TaskTable() {
                         {
                           value: "pm" as const,
                           label: "PM",
-                          hint: "Assigned to this squad’s PM(s)",
+                          hint: "Jira assignee is a squad PM (or Product Managers column)",
                         },
                       ] as const
                     ).map((option) => {
@@ -2398,7 +2421,7 @@ export function TaskTable() {
                         : emFilter === "pm" && squadPmNames.length === 0
                           ? "No squad PM names resolved yet. Add PM emails in User Management and map those PMs on People → Jira assignees."
                           : emFilter === "pm" && !anyPmStoryMarked
-                            ? "No stories assigned to this squad’s PM(s). Set Product Managers on the story, or adjust Squad PMs in User Management."
+                            ? "No PM stories marked yet. Pull from Jira once to mark stories whose Jira assignee is a squad PM (User Management emails) — or set Product Managers on the story."
                             : "No tasks match the current filters."}
                     </span>
                     <button
@@ -2524,7 +2547,7 @@ export function TaskTable() {
                       {isEditor ||
                       task.issueType ||
                       task.isEmStory ||
-                      isSquadPmStory(task.productManagers, squadPmNames) ||
+                      isOwnerPmStory(task, squadPmNames) ||
                       (task.tags?.length ?? 0) > 0 ||
                       todoLineCount > 0 ? (
                         <div className="story-fields-menu story-fields-menu-below">
@@ -2544,10 +2567,10 @@ export function TaskTable() {
                               <span className="task-flag-chip-label">EM</span>
                             </span>
                           ) : null}
-                          {isSquadPmStory(task.productManagers, squadPmNames) ? (
+                          {isOwnerPmStory(task, squadPmNames) ? (
                             <span
                               className="task-flag-chip task-story-type-chip task-flag-chip-type-pm"
-                              title="Story lists a Product Manager from this squad’s PM list (User Management)"
+                              title="Jira assignee matches a squad Product Manager (User Management), or the story lists that PM"
                             >
                               <span className="task-flag-chip-label">PM</span>
                             </span>

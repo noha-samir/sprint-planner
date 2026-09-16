@@ -13,7 +13,9 @@ import {
 } from "@/lib/integrations/jira/discoverEmStories";
 import { resolveHoursForDiscoveredTask } from "@/lib/integrations/jira/pullFromJira";
 import { resolveIsEmStory } from "@/lib/integrations/jira/emStoryFlag";
+import { resolveIsPmStory } from "@/lib/planner/pmStoryFlag";
 import { resolveSquadEmAccountId } from "@/lib/integrations/jira/squadEmAccount";
+import { resolveSquadPmAccountIds } from "@/lib/integrations/jira/squadPmNames";
 
 const discoverEmStoriesSchema = z.object({
   existingIssueKeys: z.array(z.string().max(80)).max(500).optional(),
@@ -51,7 +53,10 @@ export async function POST(request: Request) {
 
   try {
     const credentials = await requireJiraApiCredentials(authResult.squadId);
-    const emAccountId = await resolveSquadEmAccountId(authResult.squadId);
+    const [emAccountId, pmAccountIds] = await Promise.all([
+      resolveSquadEmAccountId(authResult.squadId),
+      resolveSquadPmAccountIds(authResult.squadId),
+    ]);
 
     const [storiesResult, standaloneTasks] = await Promise.all([
       discoverEmStoriesFromJira(credentials, squadConfig, existingKeys),
@@ -78,6 +83,7 @@ export async function POST(request: Request) {
           storyLink: item.storyLink,
           issueType: item.issueType ?? null,
           isEmStory: resolveIsEmStory(emAccountId, item.assigneeAccountId, null),
+          isPmStory: resolveIsPmStory(pmAccountIds, item.assigneeAccountId),
           ...hours,
         };
       }),

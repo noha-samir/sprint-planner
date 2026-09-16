@@ -1,4 +1,10 @@
 import type { TaskJiraMeta } from "./types";
+import {
+  formatGroupedStoryMessages,
+  partitionMessages,
+  storyCountLabel,
+  type StoryMessage,
+} from "./bulkNotificationFormat";
 
 export interface BulkSyncTaskResult {
   taskId: string;
@@ -31,8 +37,6 @@ export type JiraBulkSkipReason = (typeof JIRA_BULK_SKIP_REASON)[keyof typeof JIR
 const storyLabel = (row: Pick<BulkSyncTaskResult, "storyName" | "taskId">): string =>
   row.storyName.trim() || row.taskId;
 
-const storyCountLabel = (count: number): string => (count === 1 ? "1 story" : `${count} stories`);
-
 /**
  * Confirm dialog before bulk sync — explains what will sync vs be left out.
  */
@@ -61,8 +65,25 @@ export const formatBulkSyncConfirmMessage = (
   return parts.join("\n\n");
 };
 
+const collectWarningMessages = (result: BulkSyncToJiraResult): StoryMessage[] =>
+  result.results.flatMap((row) =>
+    (row.warnings ?? []).map((message) => ({ story: storyLabel(row), message })),
+  );
+
+const collectErrorMessages = (result: BulkSyncToJiraResult): StoryMessage[] =>
+  result.results.flatMap((row) =>
+    (row.errors ?? []).map((message) => ({ story: storyLabel(row), message })),
+  );
+
+/** True when push left intended updates unfinished (subtasks, assignees, status, etc.). */
+export const bulkSyncHasActionErrors = (result: BulkSyncToJiraResult): boolean => {
+  if (result.failed > 0) return true;
+  if (result.results.some((row) => (row.errors?.length ?? 0) > 0)) return true;
+  return partitionMessages(collectWarningMessages(result)).actionFailures.length > 0;
+};
+
 /**
- * User-friendly bulk sync result summary for the UI.
+ * User-friendly bulk sync result summary — groups identical issues under one message.
  */
 export const formatBulkSyncSummary = (result: BulkSyncToJiraResult): string => {
   const noLink = result.results.filter(
@@ -74,12 +95,9 @@ export const formatBulkSyncSummary = (result: BulkSyncToJiraResult): string => {
   const failedRows = result.results.filter((row) => !row.ok && !row.skipped);
   const discopedRows = failedRows.filter((row) => row.error === JIRA_BULK_SKIP_REASON.DISCOPED);
   const jiraFailedRows = failedRows.filter((row) => row.error !== JIRA_BULK_SKIP_REASON.DISCOPED);
-  const warningLines = result.results.flatMap((row) =>
-    (row.warnings ?? []).map((warning) => `• ${storyLabel(row)}: ${warning}`),
-  );
-  const assigneeErrorLines = result.results.flatMap((row) =>
-    (row.errors ?? []).map((error) => `• ${error}`),
-  );
+  const rowErrors = collectErrorMessages(result);
+  const { actionFailures, softWarnings } = partitionMessages(collectWarningMessages(result));
+  const allActionFailures = [...rowErrors, ...actionFailures];
 
   const lines: string[] = [];
 
@@ -91,36 +109,46 @@ export const formatBulkSyncSummary = (result: BulkSyncToJiraResult): string => {
 
   if (noLink.length > 0) {
     lines.push(
-      `${storyCountLabel(noLink.length)} not synced — add a Jira link:\n${noLink.map((row) => `• ${storyLabel(row)}`).join("\n")}`,
+      `${storyCountLabel(noLink.length)} not synced — add a Jira link:\n${noLink
+        .map((row) => `• ${storyLabel(row)}`)
+        .join("\n")}`,
     );
   }
 
   if (noHours.length > 0) {
     lines.push(
-      `${storyCountLabel(noHours.length)} not synced — add an FE/BE assignee or FE/BE/QC hours:\n${noHours.map((row) => `• ${storyLabel(row)}`).join("\n")}`,
+      `${storyCountLabel(noHours.length)} not synced — add an FE/BE assignee or FE/BE/QC hours:\n${noHours
+        .map((row) => `• ${storyLabel(row)}`)
+        .join("\n")}`,
     );
   }
 
   if (discopedRows.length > 0) {
     lines.push(
-      `Errors — Discoped stories are not synced to Jira:\n${discopedRows.map((row) => `• ${storyLabel(row)}`).join("\n")}`,
+      `Errors — Discoped (not synced):\n${discopedRows.map((row) => `• ${storyLabel(row)}`).join("\n")}`,
     );
   }
 
   if (jiraFailedRows.length > 0) {
+    const grouped = formatGroupedStoryMessages(
+      jiraFailedRows.map((row) => ({
+        story: storyLabel(row),
+        message: row.error ?? "Unknown error",
+      })),
+    );
     lines.push(
-      `${storyCountLabel(jiraFailedRows.length)} failed — Jira returned an error:\n${jiraFailedRows.map((row) => `• ${storyLabel(row)}: ${row.error ?? "Unknown error"}`).join("\n")}`,
+      `Errors — Jira returned an error (${storyCountLabel(jiraFailedRows.length)}):\n${grouped}`,
     );
   }
 
-  if (warningLines.length > 0) {
-    lines.push(`Warnings:\n${warningLines.join("\n")}`);
+  if (allActionFailures.length > 0) {
+    lines.push(
+      `Errors — some updates did not apply:\n${formatGroupedStoryMessages(allActionFailures)}`,
+    );
   }
 
-  if (assigneeErrorLines.length > 0) {
-    lines.push(
-      `Warnings — some subtasks were not created/updated (fix assignees or Jira errors and sync again):\n${assigneeErrorLines.join("\n")}`,
-    );
+  if (softWarnings.length > 0) {
+    lines.push(`Warnings:\n${formatGroupedStoryMessages(softWarnings)}`);
   }
 
   if (
@@ -128,8 +156,8 @@ export const formatBulkSyncSummary = (result: BulkSyncToJiraResult): string => {
     noLink.length === 0 &&
     noHours.length === 0 &&
     failedRows.length === 0 &&
-    warningLines.length === 0 &&
-    assigneeErrorLines.length === 0
+    allActionFailures.length === 0 &&
+    softWarnings.length === 0
   ) {
     lines.push("Every visible story with a link and hours is up to date.");
   }
@@ -137,10 +165,7 @@ export const formatBulkSyncSummary = (result: BulkSyncToJiraResult): string => {
   return lines.join("\n\n");
 };
 
-/** True when push partially succeeded but some subtasks/assignees failed. */
+/** @deprecated Prefer bulkSyncHasActionErrors — kept for call sites that mean partial issues. */
 export const bulkSyncHasPartialWarnings = (result: BulkSyncToJiraResult): boolean =>
-  result.results.some(
-    (row) =>
-      (row.ok && ((row.errors?.length ?? 0) > 0 || (row.warnings?.length ?? 0) > 0)) ||
-      false,
-  );
+  bulkSyncHasActionErrors(result) ||
+  result.results.some((row) => row.ok && (row.warnings?.length ?? 0) > 0);

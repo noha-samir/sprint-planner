@@ -23,6 +23,7 @@ import {
   type BulkPullTaskResult,
 } from "./bulkPullMessages";
 import { resolveIsEmStory } from "./emStoryFlag";
+import { resolveIsPmStory } from "@/lib/planner/pmStoryFlag";
 
 export type { BulkPullTaskResult, BulkPullFromJiraResult } from "./bulkPullMessages";
 export {
@@ -242,12 +243,14 @@ const toPlannerPeople = (
 /**
  * Pull parent status, QC/hours, and FE/BE/MO subtask assignees/hours into a planner patch.
  * emAccountId: resolved EM Jira account ID used to set isEmStory on the task.
+ * pmAccountIds: resolved squad PM Jira account IDs used to set isPmStory on the task.
  */
 export const syncTaskFromJira = async (
   task: Task,
   squadConfig: SquadJiraConfig,
   plannerPeople: PlannerPersonRef[] | string[] = [],
   emAccountId?: string | null,
+  pmAccountIds?: string[] | null,
 ): Promise<SyncTaskFromJiraResult> => {
   if (isDiscopedTaskStatus(task.status)) {
     throw new JiraApiError("Discoped stories are not synced from Jira", 400);
@@ -294,6 +297,7 @@ export const syncTaskFromJira = async (
 
   const assigneeAccountId = (parentFields.assignee as { accountId?: string } | null | undefined)?.accountId?.trim();
   patch.isEmStory = resolveIsEmStory(emAccountId, assigneeAccountId, null);
+  patch.isPmStory = resolveIsPmStory(pmAccountIds, assigneeAccountId);
 
   const qcHours = hoursFromJiraNumberField(parentFields[fieldIds.testingEstimateHours.trim()]);
   if (qcHours != null) {
@@ -476,12 +480,14 @@ export const syncTaskFromJira = async (
 /**
  * Pull many stories from Jira sequentially.
  * emAccountId: if provided, sets isEmStory on each task based on Jira assignee comparison.
+ * pmAccountIds: if provided, sets isPmStory when assignee matches a squad PM.
  */
 export const bulkPullTasksFromJira = async (
   tasks: Task[],
   squadConfig: SquadJiraConfig,
   plannerPeople: PlannerPersonRef[] | string[] = [],
   emAccountId?: string | null,
+  pmAccountIds?: string[] | null,
 ): Promise<BulkPullFromJiraResult> => {
   const results: BulkPullTaskResult[] = [];
   let synced = 0;
@@ -512,7 +518,7 @@ export const bulkPullTasksFromJira = async (
     }
 
     try {
-      const result = await syncTaskFromJira(task, squadConfig, plannerPeople, emAccountId);
+      const result = await syncTaskFromJira(task, squadConfig, plannerPeople, emAccountId, pmAccountIds);
       synced += 1;
       results.push({
         taskId: task.id,

@@ -19,7 +19,10 @@ export interface BulkPasteRow {
   qcHours?: number;
   tags?: string[];
   issueType?: string;
+  /** Set when Jira discover marks the story assignee as the squad EM. */
   isEmStory?: boolean;
+  /** Set when Jira discover marks the story assignee as a squad PM. */
+  isPmStory?: boolean;
   warnings: string[];
   isValid: boolean;
 }

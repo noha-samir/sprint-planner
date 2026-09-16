@@ -253,6 +253,7 @@ body {
   .jira-sync-banner-summary {
     @apply mt-1 min-h-0 flex-1 overflow-x-hidden overflow-y-auto whitespace-pre-line text-[12px] leading-snug;
     overscroll-behavior: contain;
+    max-height: min(40vh, 18rem);
   }
 
   .jira-sync-banner-dismiss {

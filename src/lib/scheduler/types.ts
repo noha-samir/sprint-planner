@@ -64,6 +64,8 @@ export interface Task {
   issueType?: string;
   /** True when the Jira story assignee is the squad's Engineering Manager. */
   isEmStory?: boolean;
+  /** True when the Jira story assignee is one of this squad’s Product Managers. */
+  isPmStory?: boolean;
   /** Sync metadata after pushing subtasks to Jira. */
   jira?: {
     parentIssueKey: string;

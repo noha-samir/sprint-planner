@@ -5,6 +5,7 @@ import { requireWriteAccess } from "@/lib/integrations/jira/apiAuth";
 import { readSquadJiraConfig } from "@/lib/integrations/jira/configStore";
 import { bulkPullTasksFromJira } from "@/lib/integrations/jira/pullFromJira";
 import { resolveSquadEmAccountId } from "@/lib/integrations/jira/squadEmAccount";
+import { resolveSquadPmAccountIds } from "@/lib/integrations/jira/squadPmNames";
 import { z } from "zod";
 import { jiraTasksArraySchema } from "@/lib/validation/apiBodies";
 
@@ -37,13 +38,17 @@ export async function POST(request: Request) {
 
   const squadConfig = await readSquadJiraConfig(authResult.squadId);
   const plannerPeople = body.plannerPeople ?? body.plannerNames ?? [];
-  const emAccountId = await resolveSquadEmAccountId(authResult.squadId);
+  const [emAccountId, pmAccountIds] = await Promise.all([
+    resolveSquadEmAccountId(authResult.squadId),
+    resolveSquadPmAccountIds(authResult.squadId),
+  ]);
 
   const result = await bulkPullTasksFromJira(
     body.tasks as unknown as Task[],
     squadConfig,
     plannerPeople,
     emAccountId,
+    pmAccountIds,
   );
   return NextResponse.json(result);
 }

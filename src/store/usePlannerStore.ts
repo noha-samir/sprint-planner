@@ -643,7 +643,7 @@ export const usePlannerStore = create<PlannerState>()(
           return [];
         }
 
-        const newTasks = validDrafts.map((draft) =>
+        const newTasks = validDrafts.map((draft: BulkPasteRow) =>
           normalizeTask({
             ...emptyTask(),
             storyName: draft.storyName,
@@ -664,7 +664,8 @@ export const usePlannerStore = create<PlannerState>()(
             qcHours: draft.qcHours ?? 0,
             tags: Array.isArray(draft.tags) ? [...new Set(draft.tags.map((tag) => tag.trim()).filter(Boolean))] : [],
             issueType: draft.issueType,
-            isEmStory: draft.isEmStory,
+            isEmStory: draft.isEmStory ?? false,
+            isPmStory: draft.isPmStory ?? false,
           }),
         );
 

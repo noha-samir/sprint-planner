@@ -19,11 +19,12 @@ const reverseAssigneeMap = (assigneeMap: Record<string, string>): Map<string, st
 export type SquadPmResolution = {
   pmEmails: string[];
   pmNames: string[];
+  pmAccountIds: string[];
 };
 
 /**
- * Resolve User Management squad PM emails to planner roster / Jira display names
- * for Owner filter matching against task.productManagers.
+ * Resolve User Management squad PM emails to Jira account ids and planner roster names.
+ * Account ids drive isPmStory (assignee match); names match task.productManagers.
  */
 export async function resolveSquadPmRosterNames(squadId: string): Promise<SquadPmResolution> {
   const squad = await prisma.squad.findUnique({
@@ -34,7 +35,7 @@ export async function resolveSquadPmRosterNames(squadId: string): Promise<SquadP
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean);
   if (pmEmails.length === 0) {
-    return { pmEmails: [], pmNames: [] };
+    return { pmEmails: [], pmNames: [], pmAccountIds: [] };
   }
 
   let assigneeMap: Record<string, string> = {};
@@ -54,18 +55,24 @@ export async function resolveSquadPmRosterNames(squadId: string): Promise<SquadP
   }
 
   const pmNames: string[] = [];
-  const seen = new Set<string>();
+  const pmAccountIds: string[] = [];
+  const seenNames = new Set<string>();
+  const seenAccounts = new Set<string>();
 
   for (const email of pmEmails) {
     if (!credentials) break;
     try {
       const accountId = await resolveEmJiraAccountId(credentials, email);
       if (!accountId) continue;
+      if (!seenAccounts.has(accountId)) {
+        seenAccounts.add(accountId);
+        pmAccountIds.push(accountId);
+      }
       const mappedName = byAccountId.get(accountId)?.trim();
       if (mappedName) {
         const key = mappedName.toLowerCase();
-        if (!seen.has(key)) {
-          seen.add(key);
+        if (!seenNames.has(key)) {
+          seenNames.add(key);
           pmNames.push(mappedName);
         }
         continue;
@@ -74,8 +81,8 @@ export async function resolveSquadPmRosterNames(squadId: string): Promise<SquadP
       const displayName = users[0]?.displayName?.trim();
       if (displayName) {
         const key = displayName.toLowerCase();
-        if (!seen.has(key)) {
-          seen.add(key);
+        if (!seenNames.has(key)) {
+          seenNames.add(key);
           pmNames.push(displayName);
         }
       }
@@ -84,5 +91,11 @@ export async function resolveSquadPmRosterNames(squadId: string): Promise<SquadP
     }
   }
 
-  return { pmEmails, pmNames };
+  return { pmEmails, pmNames, pmAccountIds };
+}
+
+/** Resolve only squad PM Jira account ids (for pull/discover isPmStory). */
+export async function resolveSquadPmAccountIds(squadId: string): Promise<string[]> {
+  const result = await resolveSquadPmRosterNames(squadId);
+  return result.pmAccountIds;
 }
