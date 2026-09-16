@@ -7,12 +7,19 @@ import { applyColorScheme, resolveColorScheme } from "@/lib/ui/colorScheme";
 import { signOutAndClearJiraToken } from "@/lib/authz/signOutClient";
 
 function SessionRevocationWatcher() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
 
   useEffect(() => {
-    if (session?.error !== "SessionRevoked") return;
-    void signOutAndClearJiraToken("/sign-in");
-  }, [session?.error]);
+    if (status !== "authenticated") return;
+    if (session?.error === "SessionRevoked") {
+      void signOutAndClearJiraToken("/sign-in");
+      return;
+    }
+    // Role cleared after expiry/revoke — do not leave the user as a Viewer.
+    if (session?.user?.email && !session.user.role) {
+      void signOutAndClearJiraToken("/sign-in");
+    }
+  }, [session?.error, session?.user?.email, session?.user?.role, status]);
 
   return null;
 }

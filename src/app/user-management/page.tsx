@@ -5,7 +5,7 @@ import { signOutAndClearJiraToken } from "@/lib/authz/signOutClient";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import type { AccessRegistry, Squad, UserAccount } from "@/lib/access/registry";
-import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
+import { sessionCapabilities } from "@/lib/access/control";
 import { userMatchesSquadFilter, type UserSquadFilter } from "@/lib/access/userManagementScope";
 import { getSquadIcon } from "@/lib/ui/squadIcon";
 import { usePlannerStore } from "@/store/usePlannerStore";
@@ -109,8 +109,7 @@ export default function UserManagementPage() {
   const router = useRouter();
   const { data: session, status } = useSession();
   const activeSquadId = usePlannerStore((state) => state.activeSquadId);
-  const caps =
-    session?.user?.role != null ? getCapabilities(plannerAccessContext(session, activeSquadId)) : null;
+  const caps = sessionCapabilities(session, activeSquadId);
   const canManageUsers = Boolean(caps?.canManageUsers);
   const canViewUserManagement = Boolean(caps?.canViewUserManagement);
   const [savedRegistry, setSavedRegistry] = useState<AccessRegistry>(emptyRegistry);

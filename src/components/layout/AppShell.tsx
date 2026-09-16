@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { signOutAndClearJiraToken } from "@/lib/authz/signOutClient";
 import { useSession } from "next-auth/react";
-import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
+import { sessionCapabilities } from "@/lib/access/control";
 import { getSquadIcon } from "@/lib/ui/squadIcon";
 import { usePlannerSaveStore } from "@/store/usePlannerSaveStore";
 import { usePlannerStore } from "@/store/usePlannerStore";
@@ -50,10 +50,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [squadNamesById, setSquadNamesById] = useState<Record<string, string>>({});
   const email = session?.user?.email ?? "";
   const role = session?.user?.role;
+  const sessionEnded = Boolean(session?.error === "SessionRevoked" || (email && !role));
   const capabilities = useMemo(
-    () =>
-      role && session?.user?.email ? getCapabilities(plannerAccessContext(session, activeSquadId)) : null,
-    [role, session, activeSquadId],
+    () => sessionCapabilities(session, activeSquadId),
+    [session, activeSquadId],
   );
   const canManageUsers = capabilities?.canManageUsers ?? false;
   const canWrite = capabilities?.canWrite ?? false;
@@ -75,6 +75,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const initial = email.trim().charAt(0).toUpperCase() || "?";
 
   const contextualRoleLabel = useMemo(() => {
+    if (sessionEnded) return "Signing out…";
+    if (!role) return null;
     if (role === "super_admin") return "Super Admin";
     const sid = activeSquadId ?? session?.user?.squadId ?? "";
     const sr = sid ? session?.user?.squadRoles?.[sid] : undefined;
@@ -83,8 +85,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (sr === "reviewer") return "Viewer";
     if (role === "em") return "Engineering Manager";
     if (role === "editor") return "Editor";
-    return "Viewer";
-  }, [role, activeSquadId, session?.user?.squadId, session?.user?.squadRoles]);
+    if (role === "reviewer") return "Viewer";
+    return null;
+  }, [role, sessionEnded, activeSquadId, session?.user?.squadId, session?.user?.squadRoles]);
 
   useEffect(() => {
     const applySquads = (squads: Array<{ id: string; name: string }>) => {
@@ -205,15 +208,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             >
               {activeSquadLabel}
             </p>
-            <span
-              className={`inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
-                capabilities?.canWrite
-                  ? "border-amber-400/50 bg-amber-400/15 text-amber-100"
-                  : "border-white/20 bg-white/10 text-slate-200"
-              }`}
-            >
-              {contextualRoleLabel}
-            </span>
+            {contextualRoleLabel ? (
+              <span
+                className={`inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                  capabilities?.canWrite
+                    ? "border-amber-400/50 bg-amber-400/15 text-amber-100"
+                    : "border-white/20 bg-white/10 text-slate-200"
+                }`}
+              >
+                {contextualRoleLabel}
+              </span>
+            ) : null}
           </div>
           <button
             type="button"

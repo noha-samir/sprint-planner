@@ -33,6 +33,16 @@ export interface AccessCapabilities {
   canAccessSquad: (squadId: string) => boolean;
 }
 
+const denyAllCapabilities = (): AccessCapabilities => ({
+  canWrite: false,
+  canManageSprintLifecycle: false,
+  canManageUsers: false,
+  canViewUserManagement: false,
+  canAccessOpsTabs: false,
+  canEditOpsTabs: false,
+  canAccessSquad: () => false,
+});
+
 /**
  * Normalize a raw role string from session/registry into a known UserRole.
  * Legacy alias: viewer → reviewer.
@@ -57,7 +67,11 @@ export const normalizeUserRole = (role: string | undefined): UserRole | null => 
  * @returns Capability flags used by UI and write gates
  */
 export const getCapabilities = (access: AccessContext): AccessCapabilities => {
-  const role = normalizeUserRole(access.role) ?? "reviewer";
+  const role = normalizeUserRole(access.role);
+  // Missing/cleared role (expired or revoked session) must not fall back to Viewer.
+  if (!role || !access.email.trim()) {
+    return denyAllCapabilities();
+  }
   const globalAdmin = role === "super_admin" || Boolean(access.globalAdmin);
   const active = sanitizeSquadKey(access.activeSquadId ?? access.squadId ?? null);
   const primary = sanitizeSquadKey(access.squadId ?? null);
@@ -108,31 +122,46 @@ export const getCapabilities = (access: AccessContext): AccessCapabilities => {
   };
 };
 
+type SessionLike = {
+  error?: string;
+  user?: {
+    email?: string | null;
+    role?: string;
+    squadId?: string | null;
+    allowedSquads?: string[];
+    squadRoles?: Record<string, SquadMembershipRole>;
+    globalAdmin?: boolean;
+  } | null;
+} | null;
+
 /**
  * Build AccessContext from a NextAuth session and the active squad in the planner store.
+ * Returns null when the session is missing, revoked, or has no valid role (do not treat as Viewer).
  */
 export function plannerAccessContext(
-  session: {
-    user?: {
-      email?: string | null;
-      role?: string;
-      squadId?: string | null;
-      allowedSquads?: string[];
-      squadRoles?: Record<string, SquadMembershipRole>;
-      globalAdmin?: boolean;
-    } | null;
-  } | null,
+  session: SessionLike,
   activeSquadId: string | null | undefined,
-): AccessContext {
-  const roleRaw = session?.user?.role ?? "reviewer";
-  const role = normalizeUserRole(roleRaw) ?? "reviewer";
+): AccessContext | null {
+  if (!session?.user?.email) return null;
+  if (session.error === "SessionRevoked") return null;
+  const role = normalizeUserRole(session.user.role);
+  if (!role) return null;
   return {
-    email: session?.user?.email ?? "",
+    email: session.user.email,
     role,
-    squadId: session?.user?.squadId ?? null,
-    activeSquadId: activeSquadId ?? session?.user?.squadId ?? null,
-    squadRoles: session?.user?.squadRoles,
-    allowedSquads: session?.user?.allowedSquads,
-    globalAdmin: Boolean(session?.user?.globalAdmin) || role === "super_admin",
+    squadId: session.user.squadId ?? null,
+    activeSquadId: activeSquadId ?? session.user.squadId ?? null,
+    squadRoles: session.user.squadRoles,
+    allowedSquads: session.user.allowedSquads,
+    globalAdmin: Boolean(session.user.globalAdmin) || role === "super_admin",
   };
+}
+
+/** Capabilities for the current session, or null when unsigned / revoked / role cleared. */
+export function sessionCapabilities(
+  session: SessionLike,
+  activeSquadId: string | null | undefined,
+): AccessCapabilities | null {
+  const ctx = plannerAccessContext(session, activeSquadId);
+  return ctx ? getCapabilities(ctx) : null;
 }

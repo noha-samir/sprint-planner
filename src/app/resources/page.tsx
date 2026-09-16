@@ -4,16 +4,14 @@ import { useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { ResourceTable } from "@/components/resources/ResourceTable";
-import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
+import { sessionCapabilities } from "@/lib/access/control";
 import { usePlannerStore } from "@/store/usePlannerStore";
 
 export default function ResourcesPage() {
   const router = useRouter();
   const { data: session, status } = useSession();
   const activeSquadId = usePlannerStore((state) => state.activeSquadId);
-  const canAccessOpsTabs =
-    !!session?.user?.role &&
-    getCapabilities(plannerAccessContext(session, activeSquadId)).canAccessOpsTabs;
+  const canAccessOpsTabs = Boolean(sessionCapabilities(session, activeSquadId)?.canAccessOpsTabs);
 
   useEffect(() => {
     if (status === "loading") return;

@@ -3,7 +3,7 @@
 import { format } from "date-fns";
 import { useSession } from "next-auth/react";
 import { useState } from "react";
-import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
+import { sessionCapabilities } from "@/lib/access/control";
 import { getSprintWindowEnd } from "@/lib/scheduler/calendar";
 import type { ReleaseStrategy } from "@/lib/scheduler/types";
 import { AppearanceToggle } from "@/components/config/AppearanceToggle";
@@ -14,10 +14,7 @@ const clampWorkdayStartHour = (value: number) => Math.max(0, Math.min(23, Math.t
 export function ConfigForm() {
   const { data: session } = useSession();
   const activeSquadId = usePlannerStore((state) => state.activeSquadId);
-  const role = session?.user?.role;
-  const isEditor =
-    !!role &&
-    getCapabilities(plannerAccessContext(session, activeSquadId)).canEditOpsTabs;
+  const isEditor = Boolean(sessionCapabilities(session, activeSquadId)?.canEditOpsTabs);
   const { config, updateConfig } = usePlannerStore();
   const [holidayDate, setHolidayDate] = useState("");
 

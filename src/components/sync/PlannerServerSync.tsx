@@ -2,7 +2,7 @@
 
 import { useSession } from "next-auth/react";
 import { useEffect, useMemo, useRef } from "react";
-import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
+import { sessionCapabilities } from "@/lib/access/control";
 import { flushPlannerStateToServer } from "@/lib/planner/flushPlannerState";
 import { shouldSkipIncomingPlannerSnapshot } from "@/store/replanMerge";
 import { useJiraSyncStore } from "@/store/useJiraSyncStore";
@@ -63,11 +63,7 @@ export function PlannerServerSync() {
 
   const role = session?.user?.role;
   const squadId = session?.user?.squadId ?? null;
-  const canWrite = !!(
-    role &&
-    session?.user?.email &&
-    getCapabilities(plannerAccessContext(session, activeSquadId)).canWrite
-  );
+  const canWrite = Boolean(sessionCapabilities(session, activeSquadId)?.canWrite);
 
   useEffect(() => {
     if (status !== "authenticated" || !hasHydrated) return;

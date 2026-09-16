@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { useSession } from "next-auth/react";
-import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
+import { sessionCapabilities } from "@/lib/access/control";
 import { effectiveMobileHours } from "@/lib/scheduler/mobilePlatform";
 import { getSprintWindowEnd, parseCalendarDate } from "@/lib/scheduler/calendar";
 import { getCurrentStoryPhase, getStatusPhase, type StoryPhase } from "@/lib/scheduler/currentPhase";
@@ -49,9 +49,9 @@ export default function HistoryPage() {
   const currentResources = usePlannerStore((state) => state.resources);
   const currentConfig = usePlannerStore((state) => state.config);
   const restoreSprintFromHistory = usePlannerStore((state) => state.restoreSprintFromHistory);
-  const canRestoreSprint =
-    !!session?.user?.role &&
-    getCapabilities(plannerAccessContext(session, activeSquadId)).canManageSprintLifecycle;
+  const canRestoreSprint = Boolean(
+    sessionCapabilities(session, activeSquadId)?.canManageSprintLifecycle,
+  );
   const [items, setItems] = useState<SprintHistoryListItem[]>([]);
   const [detailById, setDetailById] = useState<Record<string, SprintHistoryEntry>>({});
   const [selectedEntryId, setSelectedEntryId] = useState<string>("");

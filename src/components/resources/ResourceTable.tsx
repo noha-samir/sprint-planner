@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
-import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
+import { sessionCapabilities } from "@/lib/access/control";
 import { getSprintWorkingDayCountInWindow, totalWorkingHoursForSprint } from "@/lib/scheduler/calendar";
 import {
   capacityDayBreakdownCopy,
@@ -42,9 +42,9 @@ export function ResourceTable() {
   const { data: session } = useSession();
   const activeSquadId = usePlannerStore((state) => state.activeSquadId);
   const role = session?.user?.role;
-  const caps = getCapabilities(plannerAccessContext(session, activeSquadId));
-  const isEditor = !!role && caps.canEditOpsTabs;
-  const isSuperAdmin = !!role && caps.canManageUsers;
+  const caps = sessionCapabilities(session, activeSquadId);
+  const isEditor = Boolean(caps?.canEditOpsTabs);
+  const isSuperAdmin = Boolean(caps?.canManageUsers);
   const resources = usePlannerStore((state) => state.resources);
   const config = usePlannerStore((state) => state.config);
   const addMappedResource = usePlannerStore((state) => state.addMappedResource);

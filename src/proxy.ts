@@ -31,10 +31,12 @@ export default auth((req) => {
   }
 
   const revoked = (req.auth as { error?: string } | null)?.error === "SessionRevoked";
-  if (!req.auth || revoked) {
+  const role = (req.auth as { user?: { role?: string } } | null)?.user?.role;
+  const missingRole = Boolean(req.auth && !revoked && !role);
+  if (!req.auth || revoked || missingRole) {
     if (path.startsWith("/api/")) {
       return Response.json(
-        { error: revoked ? "Session revoked" : "Unauthorized" },
+        { error: revoked || missingRole ? "Session revoked" : "Unauthorized" },
         { status: 401 },
       );
     }

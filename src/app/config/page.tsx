@@ -4,15 +4,14 @@ import { useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { ConfigForm } from "@/components/config/ConfigForm";
-import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
+import { sessionCapabilities } from "@/lib/access/control";
 import { usePlannerStore } from "@/store/usePlannerStore";
 
 export default function ConfigPage() {
   const router = useRouter();
   const { data: session, status } = useSession();
   const activeSquadId = usePlannerStore((state) => state.activeSquadId);
-  const caps =
-    session?.user?.role != null ? getCapabilities(plannerAccessContext(session, activeSquadId)) : null;
+  const caps = sessionCapabilities(session, activeSquadId);
   const canOpenConfig = Boolean(caps?.canAccessOpsTabs);
 
   useEffect(() => {

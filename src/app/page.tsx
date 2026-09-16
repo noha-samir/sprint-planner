@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { StartNewSprintModal } from "@/components/tasks/StartNewSprintModal";
 import { TaskTable } from "@/components/tasks/TaskTable";
-import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
+import { sessionCapabilities } from "@/lib/access/control";
 import { usePlannerStore } from "@/store/usePlannerStore";
 
 function NewSprintButton() {
@@ -14,10 +14,8 @@ function NewSprintButton() {
   const activeSquadId = usePlannerStore((state) => state.activeSquadId);
   const [modalOpen, setModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const role = session?.user?.role;
   const canManageSprintLifecycle =
-    !!role &&
-    getCapabilities(plannerAccessContext(session, activeSquadId)).canManageSprintLifecycle;
+    sessionCapabilities(session, activeSquadId)?.canManageSprintLifecycle ?? false;
   if (!canManageSprintLifecycle) {
     return null;
   }

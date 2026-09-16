@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { getCapabilities, normalizeUserRole, type AccessContext } from "./control";
+import {
+  getCapabilities,
+  normalizeUserRole,
+  plannerAccessContext,
+  sessionCapabilities,
+  type AccessContext,
+} from "./control";
 
 describe("normalizeUserRole", () => {
   it("keeps editor as its own role", () => {
@@ -66,5 +72,49 @@ describe("getCapabilities role matrix", () => {
     expect(caps.canViewUserManagement).toBe(true);
     expect(caps.canAccessOpsTabs).toBe(true);
     expect(caps.canEditOpsTabs).toBe(false);
+  });
+
+  it("does not fall back to Viewer capabilities when role is cleared", () => {
+    const caps = getCapabilities({
+      email: "em@example.com",
+      role: "" as AccessContext["role"],
+      squadId: "ventures",
+    });
+    expect(caps.canWrite).toBe(false);
+    expect(caps.canViewUserManagement).toBe(false);
+    expect(caps.canAccessOpsTabs).toBe(false);
+    expect(caps.canAccessSquad("ventures")).toBe(false);
+  });
+});
+
+describe("plannerAccessContext / sessionCapabilities", () => {
+  it("returns null for revoked or role-less sessions instead of Viewer", () => {
+    expect(
+      plannerAccessContext(
+        { error: "SessionRevoked", user: { email: "a@example.com", role: undefined } },
+        "ventures",
+      ),
+    ).toBeNull();
+    expect(
+      plannerAccessContext({ user: { email: "a@example.com", role: undefined } }, "ventures"),
+    ).toBeNull();
+    expect(sessionCapabilities({ user: { email: "a@example.com" } }, "ventures")).toBeNull();
+  });
+
+  it("builds capabilities for a valid EM session", () => {
+    const caps = sessionCapabilities(
+      {
+        user: {
+          email: "em@example.com",
+          role: "em",
+          squadId: "ventures",
+          squadRoles: { ventures: "em" },
+          allowedSquads: ["ventures"],
+        },
+      },
+      "ventures",
+    );
+    expect(caps?.canWrite).toBe(true);
+    expect(caps?.canManageSprintLifecycle).toBe(true);
   });
 });

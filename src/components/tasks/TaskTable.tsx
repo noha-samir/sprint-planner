@@ -10,7 +10,7 @@ import {
   getSprintWindowEnd,
   parseCalendarDate,
 } from "@/lib/scheduler/calendar";
-import { getCapabilities, plannerAccessContext } from "@/lib/access/control";
+import { sessionCapabilities } from "@/lib/access/control";
 import { isJiraStoryLink, buildJiraIssueBrowseUrl, parseJiraIssueKey } from "@/lib/integrations/jira/issueKey";
 import { safeStoryHref } from "@/lib/ui/safeStoryHref";
 import { issueTypeChipClass } from "@/lib/ui/issueTypeChip";
@@ -188,8 +188,7 @@ export function TaskTable() {
   const { data: session } = useSession();
   const activeSquadId = usePlannerStore((state) => state.activeSquadId);
   const role = session?.user?.role;
-  const caps =
-    role && session?.user?.email ? getCapabilities(plannerAccessContext(session, activeSquadId)) : null;
+  const caps = sessionCapabilities(session, activeSquadId);
   const isEditor = Boolean(caps?.canWrite);
   const canManageSprintLifecycle = Boolean(caps?.canManageSprintLifecycle);
   const tasks = usePlannerStore((state) => state.tasks);
