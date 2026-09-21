@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isOwnerPmStory, isSquadPmStory, resolveIsPmStory } from "./pmStoryFlag";
+import {
+  expandSquadPmMatchNames,
+  isOwnerPmStory,
+  isSquadPmStory,
+  resolveIsPmStory,
+} from "./pmStoryFlag";
 
 describe("resolveIsPmStory", () => {
   it("matches Jira assignee against any squad PM account id", () => {
@@ -8,6 +13,26 @@ describe("resolveIsPmStory", () => {
     expect(resolveIsPmStory([], "pm-1")).toBe(false);
     expect(resolveIsPmStory(["pm-1"], null)).toBe(false);
     expect(resolveIsPmStory(null, "pm-1")).toBe(false);
+  });
+});
+
+describe("expandSquadPmMatchNames", () => {
+  it("adds nicknames for matching PM roster people", () => {
+    expect(
+      expandSquadPmMatchNames(["Hala Ahmed"], [
+        { name: "Hala Ahmed", nickname: "Hala", type: "PM" },
+        { name: "Other PM", nickname: "O", type: "PM" },
+      ]),
+    ).toEqual(expect.arrayContaining(["Hala Ahmed", "Hala"]));
+  });
+
+  it("falls back to PM roster when API names are empty", () => {
+    expect(
+      expandSquadPmMatchNames([], [
+        { name: "Ali Rekaby", nickname: null, type: "PM" },
+        { name: "Dev", nickname: null, type: "FE" },
+      ]),
+    ).toEqual(["Ali Rekaby"]);
   });
 });
 
@@ -27,13 +52,63 @@ describe("isSquadPmStory", () => {
 });
 
 describe("isOwnerPmStory", () => {
-  it("is true when isPmStory flag is set even without productManagers", () => {
-    expect(isOwnerPmStory({ isPmStory: true, productManagers: [] }, ["Hala"])).toBe(true);
+  const pmNames = ["Ali Rekaby"];
+  const resources = [{ name: "Ali Rekaby", nickname: null, type: "PM" }];
+
+  it("is true when Jira assignee is a squad PM", () => {
+    expect(isOwnerPmStory({ isPmStory: true, productManagers: [] }, pmNames, resources)).toBe(true);
   });
 
-  it("falls back to productManagers name match", () => {
-    expect(isOwnerPmStory({ isPmStory: false, productManagers: ["Hala"] }, ["hala"])).toBe(true);
-    expect(isOwnerPmStory({ productManagers: ["Dev"] }, ["Hala"])).toBe(false);
+  it("is true when a Story lists a squad PM in Product Managers", () => {
+    expect(
+      isOwnerPmStory(
+        { isPmStory: false, productManagers: ["Ali Rekaby"], issueType: "Story" },
+        pmNames,
+        resources,
+      ),
+    ).toBe(true);
+    expect(
+      isOwnerPmStory(
+        { productManagers: ["Ali Rekaby"] },
+        pmNames,
+        resources,
+      ),
+    ).toBe(true);
+  });
+
+  it("matches Product Managers via PM roster even when API names are empty", () => {
+    expect(
+      isOwnerPmStory(
+        { productManagers: ["Ali Rekaby"], issueType: "Story" },
+        [],
+        [{ name: "Ali Rekaby", nickname: null, type: "PM" }],
+      ),
+    ).toBe(true);
+  });
+
+  it("ignores Product Managers on technical tasks / bugs unless assignee is PM", () => {
+    expect(
+      isOwnerPmStory(
+        {
+          isPmStory: false,
+          productManagers: ["Ali Rekaby"],
+          issueType: "Technical Task",
+        },
+        pmNames,
+        resources,
+      ),
+    ).toBe(false);
+    expect(
+      isOwnerPmStory(
+        {
+          isPmStory: true,
+          productManagers: ["Ali Rekaby"],
+          issueType: "Technical Task",
+        },
+        pmNames,
+        resources,
+      ),
+    ).toBe(true);
   });
 });
 
@@ -41,19 +116,19 @@ describe("isOwnerPmStory", () => {
 function matchesOwnerFilter(
   filter: "all" | "em" | "non-em" | "pm",
   isEmStory: boolean,
-  task: { isPmStory?: boolean; productManagers?: string[] },
+  task: { isPmStory?: boolean; productManagers?: string[]; issueType?: string },
   squadPmNames: string[],
 ): boolean {
   const pmStory = isOwnerPmStory(task, squadPmNames);
   if (filter === "all") return true;
   if (filter === "em") return isEmStory;
-  if (filter === "pm") return pmStory;
+  if (filter === "pm") return pmStory && !isEmStory;
   if (filter === "non-em") return !isEmStory && !pmStory;
   return true;
 }
 
 describe("owner filter matrix", () => {
-  const pmNames = ["Hala"];
+  const pmNames = ["Ali Rekaby"];
 
   it("EM-only story appears in EM, not Team or PM", () => {
     expect(matchesOwnerFilter("em", true, {}, pmNames)).toBe(true);
@@ -67,20 +142,39 @@ describe("owner filter matrix", () => {
     expect(matchesOwnerFilter("non-em", false, { isPmStory: true }, pmNames)).toBe(false);
   });
 
-  it("PM-column story appears in PM via productManagers", () => {
-    expect(matchesOwnerFilter("pm", false, { productManagers: ["Hala"] }, pmNames)).toBe(true);
-    expect(matchesOwnerFilter("non-em", false, { productManagers: ["Hala"] }, pmNames)).toBe(false);
+  it("Story with Rekaby as Product Manager appears in PM", () => {
+    expect(
+      matchesOwnerFilter(
+        "pm",
+        false,
+        { productManagers: ["Ali Rekaby"], issueType: "Story" },
+        pmNames,
+      ),
+    ).toBe(true);
   });
 
-  it("EM+PM story is excluded from Team but included in EM and PM", () => {
+  it("technical task with Rekaby as Product Manager stays out of PM", () => {
+    expect(
+      matchesOwnerFilter(
+        "pm",
+        false,
+        { productManagers: ["Ali Rekaby"], issueType: "Technical Task" },
+        pmNames,
+      ),
+    ).toBe(false);
+    expect(
+      matchesOwnerFilter(
+        "non-em",
+        false,
+        { productManagers: ["Ali Rekaby"], issueType: "Technical Task" },
+        pmNames,
+      ),
+    ).toBe(true);
+  });
+
+  it("EM+PM story stays under EM only (not PM or Team)", () => {
     expect(matchesOwnerFilter("em", true, { isPmStory: true }, pmNames)).toBe(true);
-    expect(matchesOwnerFilter("pm", true, { isPmStory: true }, pmNames)).toBe(true);
+    expect(matchesOwnerFilter("pm", true, { isPmStory: true }, pmNames)).toBe(false);
     expect(matchesOwnerFilter("non-em", true, { isPmStory: true }, pmNames)).toBe(false);
-  });
-
-  it("neither EM nor PM appears in Team only", () => {
-    expect(matchesOwnerFilter("non-em", false, { productManagers: ["Someone Else"] }, pmNames)).toBe(true);
-    expect(matchesOwnerFilter("em", false, { productManagers: ["Someone Else"] }, pmNames)).toBe(false);
-    expect(matchesOwnerFilter("pm", false, { productManagers: ["Someone Else"] }, pmNames)).toBe(false);
   });
 });

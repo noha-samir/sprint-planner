@@ -36,6 +36,7 @@ import { getTasksNeedingRemark } from "@/lib/planner/pendingMarkProgress";
 import { copySelectedStoriesToClipboard } from "@/lib/planner/copySelectedStories";
 import { sortTasksForDashboard } from "@/lib/planner/dashboardTaskOrder";
 import { isOwnerPmStory } from "@/lib/planner/pmStoryFlag";
+import { buildTaskDetailsSummaryChips } from "@/lib/planner/taskDetailsSummary";
 import { buildReleaseGroupColorMap } from "@/lib/planner/releaseGroupColors";
 import { flushPlannerStateToServer } from "@/lib/planner/flushPlannerState";
 import {
@@ -230,6 +231,7 @@ export function TaskTable() {
   const [isMarkingProgress, setIsMarkingProgress] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [expandedJiraTaskIds, setExpandedJiraTaskIds] = useState<string[]>([]);
+  const [expandedDetailsTaskIds, setExpandedDetailsTaskIds] = useState<string[]>([]);
   const [mobileOptionsOpen, setMobileOptionsOpen] = useState<{
     taskId: string;
     trigger: HTMLElement;
@@ -266,6 +268,7 @@ export function TaskTable() {
   const [sprintFilter, setSprintFilter] = useState<"all" | "currentSprint" | "nextSprint">("currentSprint");
   const [emFilter, setEmFilter] = useState<"all" | "em" | "non-em" | "pm">("all");
   const [squadPmNames, setSquadPmNames] = useState<string[]>([]);
+  const [squadPmReady, setSquadPmReady] = useState(false);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [kindFilter, setKindFilter] = useState<"all" | "stories" | "standalone">("all");
   const [typeFilterOpen, setTypeFilterOpen] = useState(false);
@@ -308,6 +311,7 @@ export function TaskTable() {
   useEffect(() => {
     if (!activeSquadId) {
       setSquadPmNames([]);
+      setSquadPmReady(false);
       return;
     }
     let cancelled = false;
@@ -317,16 +321,25 @@ export function TaskTable() {
           headers: { "x-squad-id": activeSquadId },
           cache: "no-store",
         });
+        if (cancelled) return;
         if (!response.ok) {
-          if (!cancelled) setSquadPmNames([]);
+          setSquadPmNames([]);
+          setSquadPmReady(false);
           return;
         }
-        const body = (await response.json()) as { pmNames?: string[] };
-        if (!cancelled) {
-          setSquadPmNames(Array.isArray(body.pmNames) ? body.pmNames : []);
-        }
+        const body = (await response.json()) as {
+          pmNames?: string[];
+          pmAccountIds?: string[];
+        };
+        const names = Array.isArray(body.pmNames) ? body.pmNames : [];
+        const accountIds = Array.isArray(body.pmAccountIds) ? body.pmAccountIds : [];
+        setSquadPmNames(names);
+        setSquadPmReady(names.length > 0 || accountIds.length > 0);
       } catch {
-        if (!cancelled) setSquadPmNames([]);
+        if (!cancelled) {
+          setSquadPmNames([]);
+          setSquadPmReady(false);
+        }
       }
     };
     void loadSquadPms();
@@ -334,6 +347,53 @@ export function TaskTable() {
       cancelled = true;
     };
   }, [activeSquadId]);
+
+  const issueKeyFingerprint = useMemo(
+    () =>
+      tasks
+        .map((task) => parseJiraIssueKey(task.storyLink))
+        .filter((key): key is string => Boolean(key))
+        .sort()
+        .join(","),
+    [tasks],
+  );
+
+  useEffect(() => {
+    if (!activeSquadId || !issueKeyFingerprint) return;
+    let cancelled = false;
+    const refreshPmFlags = async () => {
+      const issueKeys = issueKeyFingerprint.split(",").filter(Boolean);
+      if (issueKeys.length === 0) return;
+      try {
+        const response = await fetch("/api/squad-pms/refresh", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-squad-id": activeSquadId,
+          },
+          body: JSON.stringify({ issueKeys }),
+        });
+        if (!response.ok || cancelled) return;
+        const body = (await response.json()) as { flags?: Record<string, boolean> };
+        const flags = body.flags ?? {};
+        const { tasks: latest, updateTask: patchTask } = usePlannerStore.getState();
+        for (const task of latest) {
+          const key = parseJiraIssueKey(task.storyLink);
+          if (!key || !Object.prototype.hasOwnProperty.call(flags, key)) continue;
+          const next = Boolean(flags[key]);
+          if (Boolean(task.isPmStory) !== next) {
+            patchTask(task.id, { isPmStory: next });
+          }
+        }
+      } catch {
+        // Keep existing flags when Jira refresh is unavailable.
+      }
+    };
+    void refreshPmFlags();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSquadId, issueKeyFingerprint]);
 
   const feOptions = resources.filter((item) => item.type === "FE");
   const beOptions = resources.filter((item) => item.type === "BE");
@@ -354,8 +414,11 @@ export function TaskTable() {
   );
   const anyEmStoryMarked = useMemo(() => tasks.some((task) => Boolean(task.isEmStory)), [tasks]);
   const anyPmStoryMarked = useMemo(
-    () => tasks.some((task) => isOwnerPmStory(task, squadPmNames)),
-    [tasks, squadPmNames],
+    () =>
+      tasks.some(
+        (task) => !task.isEmStory && isOwnerPmStory(task, squadPmNames, resources),
+      ),
+    [tasks, squadPmNames, resources],
   );
   const [selectedTimelineTaskId, setSelectedTimelineTaskId] = useState<string | null>(null);
   const selectedTimelineTask = useMemo(
@@ -1235,9 +1298,10 @@ export function TaskTable() {
       if (sprintFilter === "currentSprint") return !task.carryToNextSprint;
       return true;
     }).filter((task) => {
-      const pmStory = isOwnerPmStory(task, squadPmNames);
+      const pmStory = isOwnerPmStory(task, squadPmNames, resources);
       if (emFilter === "em" && !task.isEmStory) return false;
-      if (emFilter === "pm" && !pmStory) return false;
+      // PM bucket: assignee is PM, or Story lists a squad PM; EM stays under Owner → EM.
+      if (emFilter === "pm" && (!pmStory || task.isEmStory)) return false;
       if (emFilter === "non-em" && (task.isEmStory || pmStory)) return false;
       if (!taskMatchesIssueTypeFilter(task, typeFilter)) return false;
       if (kindFilter === "standalone" && !isParentlessPlannerTask(task)) return false;
@@ -1252,7 +1316,7 @@ export function TaskTable() {
         ? plannerMeta.dashboardTaskOrder
         : null;
     return sortTasksForDashboard(filtered, releaseDateById, pinnedOrder);
-  }, [tasks, safeResult.tasks, visibleStatuses, sprintFilter, emFilter, typeFilter, kindFilter, isUatTrackingEnabled, plannerMeta.dashboardTaskOrder, squadPmNames]);
+  }, [tasks, safeResult.tasks, visibleStatuses, sprintFilter, emFilter, typeFilter, kindFilter, isUatTrackingEnabled, plannerMeta.dashboardTaskOrder, squadPmNames, resources]);
 
   useEffect(() => {
     if (!focusTaskId) return;
@@ -1274,6 +1338,9 @@ export function TaskTable() {
   // eslint-disable-next-line react-hooks/preserve-manual-memoization -- Set identity for selection checks
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const expandedJiraTaskIdSet = useMemo(() => new Set(expandedJiraTaskIds), [expandedJiraTaskIds]);
+  const expandedDetailsTaskIdSet = useMemo(() => new Set(expandedDetailsTaskIds), [expandedDetailsTaskIds]);
+  const allVisibleDetailsExpanded =
+    orderedTasks.length > 0 && orderedTasks.every((task) => expandedDetailsTaskIdSet.has(task.id));
   const visibleSelectedCount = useMemo(
     () => orderedTasks.filter((task) => selectedTaskIdSet.has(task.id)).length,
     [orderedTasks, selectedTaskIdSet],
@@ -1298,6 +1365,10 @@ export function TaskTable() {
       const next = current.filter((id) => visibleIds.has(id));
       return next.length === current.length ? current : next;
     });
+    setExpandedDetailsTaskIds((current) => {
+      const next = current.filter((id) => visibleIds.has(id));
+      return next.length === current.length ? current : next;
+    });
   }, [orderedTasks]);
 
   const toggleTaskSelected = (taskId: string) => {
@@ -1319,6 +1390,31 @@ export function TaskTable() {
     setExpandedJiraTaskIds((current) =>
       current.includes(taskId) ? current.filter((id) => id !== taskId) : [...current, taskId],
     );
+  };
+
+  const toggleDetailsExpanded = (taskId: string) => {
+    setExpandedDetailsTaskIds((current) =>
+      current.includes(taskId) ? current.filter((id) => id !== taskId) : [...current, taskId],
+    );
+  };
+
+  const expandDetailsForVisible = () => {
+    setExpandedDetailsTaskIds((current) => [
+      ...new Set([...current, ...orderedTasks.map((task) => task.id)]),
+    ]);
+  };
+
+  const collapseDetailsForVisible = () => {
+    const visibleIds = new Set(orderedTasks.map((task) => task.id));
+    setExpandedDetailsTaskIds((current) => current.filter((id) => !visibleIds.has(id)));
+  };
+
+  const toggleDetailsForVisible = () => {
+    if (allVisibleDetailsExpanded) {
+      collapseDetailsForVisible();
+    } else {
+      expandDetailsForVisible();
+    }
   };
 
   const positionMobileOptions = (trigger: HTMLElement) => {
@@ -1827,12 +1923,12 @@ export function TaskTable() {
                         {
                           value: "non-em" as const,
                           label: "Team",
-                          hint: "Not EM and not a squad PM story",
+                          hint: "Engineers / QC — excludes EM and PM-owned",
                         },
                         {
                           value: "pm" as const,
                           label: "PM",
-                          hint: "Jira assignee is a squad PM (or Product Managers column)",
+                          hint: "Assignee is a squad PM, or Story Product Manager is",
                         },
                       ] as const
                     ).map((option) => {
@@ -2387,40 +2483,47 @@ export function TaskTable() {
                     <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">#</span>
                   )}
                 </th>
-              <th className="w-[14%] text-center">Story</th>
-              <th className="w-[7%] text-center">Backend</th>
-              <th className="w-[7%] text-center">Frontend</th>
-              <th className="w-[15%] text-center">Mobile</th>
-              <th className="w-[8%] text-center">Integration</th>
-              <th className="w-[7%] text-center">QC</th>
-              <th className="w-[8%] text-center leading-tight">
-                <div className="flex flex-col items-center gap-0">
-                  <span>PM</span>
-                  <span className="text-[9px] font-normal normal-case text-slate-500">/ Buffer</span>
+              <th className="w-[18%] text-center">Story</th>
+              <th className="w-[42%] text-center leading-tight">
+                <div className="flex flex-col items-center justify-center gap-1">
+                  <span>Details</span>
+                  <button
+                    type="button"
+                    className="task-details-header-toggle"
+                    disabled={orderedTasks.length === 0}
+                    onClick={toggleDetailsForVisible}
+                    title={
+                      allVisibleDetailsExpanded
+                        ? "Hide phase editors for all visible stories"
+                        : "Show phase editors for all visible stories"
+                    }
+                  >
+                    {allVisibleDetailsExpanded ? "Hide all ▴" : "Show all ▾"}
+                  </button>
                 </div>
               </th>
-              <th className="w-[7%] text-center">Status</th>
-              <th className="w-[11%] text-center leading-tight">
+              <th className="w-[8%] text-center">Status</th>
+              <th className="w-[12%] text-center leading-tight">
                 <div className="flex flex-col items-center justify-center gap-0.5">
                   <span>Release Dates</span>
                 </div>
               </th>
-              <th className="w-[6%] text-center">Flags</th>
+              <th className="w-[7%] text-center">Flags</th>
               <th className="w-[9%] text-center">Tools</th>
             </tr>
           </thead>
           <tbody>
             {orderedTasks.length === 0 ? (
               <tr>
-                <td colSpan={12} className="p-4 text-center text-sm text-slate-600">
+                <td colSpan={7} className="p-4 text-center text-sm text-slate-600">
                   <div className="flex flex-col items-center gap-2">
                     <span>
                       {emFilter === "em" && !anyEmStoryMarked
                         ? "No EM stories marked yet. Pull from Jira once to mark stories whose Jira assignee is this squad’s EM (User Management email) — refresh keeps those marks."
-                        : emFilter === "pm" && squadPmNames.length === 0
-                          ? "No squad PM names resolved yet. Add PM emails in User Management and map those PMs on People → Jira assignees."
+                        : emFilter === "pm" && !squadPmReady
+                          ? "No squad PMs resolved yet. Add PM people on the roster (or PM emails in User Management) and map them on People → Jira assignees."
                           : emFilter === "pm" && !anyPmStoryMarked
-                            ? "No PM stories marked yet. Pull from Jira once to mark stories whose Jira assignee is a squad PM (User Management emails) — or set Product Managers on the story."
+                            ? "No PM-owned stories found. Stories whose assignee is a squad PM, or Stories with that PM in Product Managers, appear here."
                             : "No tasks match the current filters."}
                     </span>
                     <button
@@ -2454,6 +2557,8 @@ export function TaskTable() {
               const todoLineCount = splitTodoLines(task.taskNotes).length;
               const needsMarkProgress = pendingMarkProgressIds.has(task.id);
               const taskNumber = taskIndex + 1;
+              const detailsExpanded = expandedDetailsTaskIdSet.has(task.id);
+              const detailsChips = buildTaskDetailsSummaryChips(task);
               return (
                 <tr
                   key={task.id}
@@ -2546,7 +2651,7 @@ export function TaskTable() {
                       {isEditor ||
                       task.issueType ||
                       task.isEmStory ||
-                      isOwnerPmStory(task, squadPmNames) ||
+                      isOwnerPmStory(task, squadPmNames, resources) ||
                       (task.tags?.length ?? 0) > 0 ||
                       todoLineCount > 0 ? (
                         <div className="story-fields-menu story-fields-menu-below">
@@ -2566,10 +2671,10 @@ export function TaskTable() {
                               <span className="task-flag-chip-label">EM</span>
                             </span>
                           ) : null}
-                          {isOwnerPmStory(task, squadPmNames) ? (
+                          {isOwnerPmStory(task, squadPmNames, resources) ? (
                             <span
                               className="task-flag-chip task-story-type-chip task-flag-chip-type-pm"
-                              title="Jira assignee matches a squad Product Manager (User Management), or the story lists that PM"
+                              title="Jira assignee is a squad PM, or this Story lists that PM in Product Managers"
                             >
                               <span className="task-flag-chip-label">PM</span>
                             </span>
@@ -2649,7 +2754,31 @@ export function TaskTable() {
                       ) : null}
                     </div>
                   </td>
-                  <td className="min-w-0">
+                  <td className="task-details-col align-top">
+                    <div className="task-details-cell">
+                      <div className="task-details-summary">
+                        <div className="task-details-chips" title={detailsChips.map((chip) => chip.label).join(" · ")}>
+                          {detailsChips.length > 0 ? (
+                            detailsChips.map((chip) => (
+                              <span key={chip.key} className="task-details-chip">
+                                {chip.label}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="task-details-empty">No estimates</span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className="task-details-row-toggle"
+                          aria-expanded={detailsExpanded}
+                          onClick={() => toggleDetailsExpanded(task.id)}
+                        >
+                          {detailsExpanded ? "Hide ▴" : "Details ▾"}
+                        </button>
+                      </div>
+                      {detailsExpanded ? (
+                      <div className="task-details-grid">
                     <div className={`phase-be w-full min-w-0 ${phaseClass("BE")}`}>
                       <div className="phase-box-header">
                         <div className="phase-col-label">BE Devs</div>
@@ -2723,8 +2852,6 @@ export function TaskTable() {
                         ))}
                       </div>
                     </div>
-                  </td>
-                  <td className="min-w-0">
                     <div className={`phase-fe w-full min-w-0 ${phaseClass("FE")}`}>
                       <div className="phase-box-header">
                         <div className="phase-col-label">FE Devs</div>
@@ -2798,9 +2925,7 @@ export function TaskTable() {
                         ))}
                       </div>
                     </div>
-                  </td>
-                  <td className="min-w-0">
-                    <div className="mobile-phase-row">
+                    <div className={`mobile-phase-row${task.needsIos ? " task-details-span-2" : ""}`}>
                       <div
                         className={`mobile-phase-platforms${task.needsIos ? " mobile-phase-platforms-split" : ""}`}
                       >
@@ -3087,8 +3212,6 @@ export function TaskTable() {
                         ) : null}
                       </div>
                     </div>
-                  </td>
-                  <td className="min-w-0">
                     <div className={`phase-int w-full min-w-0 ${phaseClass("Integration")}`}>
                       <div className="phase-box-header">
                         <div className="phase-col-label">Integration</div>
@@ -3230,8 +3353,6 @@ export function TaskTable() {
                         ) : null}
                       </div>
                     </div>
-                  </td>
-                  <td className="min-w-0">
                     <div className={`phase-qc w-full min-w-0 ${phaseClass("QC")}`}>
                       <div className="phase-box-header">
                         <div className="phase-col-label">QC Eng</div>
@@ -3305,8 +3426,6 @@ export function TaskTable() {
                         ))}
                       </div>
                     </div>
-                  </td>
-                  <td className="min-w-0 align-top">
                     <div className="flex min-w-0 flex-col gap-1">
                       <div className="phase-pm w-full min-w-0">
                         <div className="phase-box-header">
@@ -3413,6 +3532,9 @@ export function TaskTable() {
                           onChange={(value) => updateTask(task.id, { bufferHours: clampHours(value ?? 0) })}
                         />
                       </div>
+                    </div>
+                      </div>
+                      ) : null}
                     </div>
                   </td>
                   <td className="align-top">

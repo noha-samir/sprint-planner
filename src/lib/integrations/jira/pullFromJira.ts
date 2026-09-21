@@ -296,8 +296,13 @@ export const syncTaskFromJira = async (
   }
 
   const assigneeAccountId = (parentFields.assignee as { accountId?: string } | null | undefined)?.accountId?.trim();
-  patch.isEmStory = resolveIsEmStory(emAccountId, assigneeAccountId, null);
-  patch.isPmStory = resolveIsPmStory(pmAccountIds, assigneeAccountId);
+  // Only update ownership flags when identity is resolved — empty ids would wrongly clear them.
+  if (emAccountId?.trim()) {
+    patch.isEmStory = resolveIsEmStory(emAccountId, assigneeAccountId, null);
+  }
+  if (pmAccountIds && pmAccountIds.length > 0) {
+    patch.isPmStory = resolveIsPmStory(pmAccountIds, assigneeAccountId);
+  }
 
   const qcHours = hoursFromJiraNumberField(parentFields[fieldIds.testingEstimateHours.trim()]);
   if (qcHours != null) {
