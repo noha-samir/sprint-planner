@@ -1,11 +1,30 @@
 "use client";
 
 import { useState } from "react";
+import { format } from "date-fns";
 import { useSession } from "next-auth/react";
 import { StartNewSprintModal } from "@/components/tasks/StartNewSprintModal";
 import { TaskTable } from "@/components/tasks/TaskTable";
 import { sessionCapabilities } from "@/lib/access/control";
+import { getSprintWindowEnd, parseCalendarDate } from "@/lib/scheduler/calendar";
 import { usePlannerStore } from "@/store/usePlannerStore";
+
+function SprintWindowSummary() {
+  const hasHydrated = usePlannerStore((state) => state.hasHydrated);
+  const config = usePlannerStore((state) => state.config);
+  if (!hasHydrated) {
+    return <span className="dashboard-sprint-window">Sprint window</span>;
+  }
+  return (
+    <span className="dashboard-sprint-window">
+      Sprint start {format(parseCalendarDate(config.sprintStartDate), "EEE dd MMM, yyyy")}
+      <span className="dashboard-sprint-window-sep" aria-hidden>
+        ·
+      </span>
+      Window ends {format(getSprintWindowEnd(config), "EEE dd MMM, yyyy")}
+    </span>
+  );
+}
 
 function NewSprintButton() {
   const { data: session } = useSession();
@@ -67,12 +86,15 @@ function NewSprintButton() {
 export default function Home() {
   return (
     <main className="mx-auto flex h-full min-h-0 w-full min-w-0 max-w-full flex-1 flex-col gap-2 overflow-hidden md:gap-3">
-      <div className="flex shrink-0 items-center justify-between gap-3">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <h1 className="section-title">Dashboard</h1>
           <p className="mt-0.5 text-sm text-slate-500">Plan sprint tasks with FE/BE/QC parallel scheduling.</p>
         </div>
-        <NewSprintButton />
+        <div className="dashboard-sprint-actions">
+          <SprintWindowSummary />
+          <NewSprintButton />
+        </div>
       </div>
       <section className="page-card flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-2 md:p-3">
         <TaskTable />

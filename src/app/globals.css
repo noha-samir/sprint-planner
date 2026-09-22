@@ -337,6 +337,18 @@ body {
     @apply text-2xl font-semibold tracking-tight text-slate-900;
   }
 
+  .dashboard-sprint-actions {
+    @apply flex min-w-0 flex-wrap items-center justify-end gap-2 sm:gap-3;
+  }
+
+  .dashboard-sprint-window {
+    @apply max-w-full rounded-xl border border-blue-300 bg-blue-100/80 px-3 py-2 text-left text-sm font-medium leading-snug text-blue-900;
+  }
+
+  .dashboard-sprint-window-sep {
+    @apply mx-1.5 text-blue-800/70;
+  }
+
   .btn-primary {
     @apply rounded-xl px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:shadow-md hover:brightness-110 active:brightness-95;
     background-color: var(--primary);
@@ -374,7 +386,42 @@ body {
   }
 
   .task-table-toolbar-actions {
-    @apply shrink-0 sm:ml-auto;
+    @apply ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2;
+  }
+
+  .task-table-toolbar-details-btn {
+    @apply inline-flex min-w-[10.5rem] shrink-0 items-center justify-center gap-1.5;
+  }
+
+  .toolbar-est-btn {
+    @apply rounded-xl border border-orange-200 px-3 py-2 text-sm font-semibold text-orange-900 shadow-sm transition duration-200 ease-out;
+    background: linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%);
+  }
+
+  .toolbar-est-btn:hover:not(:disabled) {
+    @apply border-orange-300 text-orange-950;
+    background: linear-gradient(180deg, #ffedd5 0%, #fed7aa 100%);
+  }
+
+  .toolbar-est-btn:disabled {
+    @apply cursor-not-allowed opacity-45;
+  }
+
+  .toolbar-est-btn-on {
+    @apply border-orange-300 text-orange-950;
+    background: linear-gradient(180deg, #ffedd5 0%, #fdba74 100%);
+    box-shadow:
+      0 1px 3px rgb(251 146 60 / 0.28),
+      inset 0 1px 0 rgb(255 255 255 / 0.55);
+  }
+
+  .toolbar-est-btn-on:hover:not(:disabled) {
+    @apply border-orange-400;
+    background: linear-gradient(180deg, #fed7aa 0%, #fb923c 100%);
+  }
+
+  .toolbar-est-btn-chevron {
+    @apply text-[13px] font-bold leading-none opacity-80;
   }
 
   .task-table-toolbar-group-label {
@@ -803,6 +850,39 @@ body {
     @apply border-emerald-700 bg-emerald-600 text-white hover:border-emerald-800 hover:bg-emerald-700;
   }
 
+  /* Show Est. — soft baby orange (shared with toolbar) */
+  .tools-est-btn {
+    @apply inline-flex items-center justify-center gap-1 border-orange-200 text-orange-900 shadow-sm;
+    background: linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%);
+  }
+
+  .tools-est-btn:hover:not(:disabled) {
+    @apply border-orange-300 text-orange-950;
+    background: linear-gradient(180deg, #ffedd5 0%, #fed7aa 100%);
+  }
+
+  /* Hide Est. — brighter baby orange, same as toolbar-on */
+  .tools-est-btn-on {
+    @apply border-orange-300 text-orange-950;
+    background: linear-gradient(180deg, #ffedd5 0%, #fdba74 100%);
+    box-shadow:
+      0 1px 3px rgb(251 146 60 / 0.28),
+      inset 0 1px 0 rgb(255 255 255 / 0.55);
+  }
+
+  .tools-est-btn-on:hover:not(:disabled) {
+    @apply border-orange-400;
+    background: linear-gradient(180deg, #fed7aa 0%, #fb923c 100%);
+  }
+
+  .tools-est-btn-label {
+    @apply min-w-0 truncate;
+  }
+
+  .tools-est-btn-chevron {
+    @apply shrink-0 text-[10px] font-bold leading-none opacity-80;
+  }
+
   .sidebar-user-panel {
     @apply w-full min-w-0 max-w-full overflow-hidden rounded-2xl border p-3 shadow-inner;
     border-color: color-mix(in srgb, var(--sidebar-title) 18%, transparent);
@@ -942,15 +1022,15 @@ body {
   }
 
   /* Compact multi-task rows: less padding/gaps, same font sizes */
-  .task-table-fit .phase-be,
-  .task-table-fit .phase-fe,
-  .task-table-fit .phase-mo,
-  .task-table-fit .phase-android,
-  .task-table-fit .phase-ios,
-  .task-table-fit .phase-int,
-  .task-table-fit .phase-qc,
-  .task-table-fit .phase-pm,
-  .task-table-fit .phase-buffer {
+  .task-table-fit .phase-be:not(.task-details-chip),
+  .task-table-fit .phase-fe:not(.task-details-chip),
+  .task-table-fit .phase-mo:not(.task-details-chip),
+  .task-table-fit .phase-android:not(.task-details-chip),
+  .task-table-fit .phase-ios:not(.task-details-chip),
+  .task-table-fit .phase-int:not(.task-details-chip),
+  .task-table-fit .phase-qc:not(.task-details-chip),
+  .task-table-fit .phase-pm:not(.task-details-chip),
+  .task-table-fit .phase-buffer:not(.task-details-chip) {
     @apply box-border space-y-0.5 rounded-md border border-slate-500 p-0.5;
     font-size: 1em;
   }
@@ -1435,6 +1515,15 @@ body {
     @apply hover:border-indigo-400 hover:bg-indigo-500 active:scale-[0.98];
   }
 
+  .story-header-details-btn {
+    @apply inline-flex w-full items-center justify-center gap-0.5 rounded-md border border-slate-300 bg-white px-1 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-700 shadow-sm transition;
+    @apply hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 active:scale-[0.98];
+  }
+
+  .story-header-details-btn-on {
+    @apply border-emerald-400 bg-emerald-50 text-emerald-900;
+  }
+
   .story-header-act-btn-open {
     @apply border-indigo-300 bg-indigo-500 ring-2 ring-indigo-200/80;
   }
@@ -1477,6 +1566,10 @@ body {
 
   .story-fields-menu-btn {
     @apply inline-flex items-center gap-0.5 rounded border border-transparent bg-transparent px-1 py-px text-[11px] font-semibold text-slate-500 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800;
+  }
+
+  .story-est-edit-group {
+    @apply inline-flex shrink-0 items-center gap-1;
   }
 
   .story-actions-row {
@@ -1589,6 +1682,10 @@ body {
     @apply border-blue-300 bg-blue-50 text-blue-950;
   }
 
+  .story-est-btn-open {
+    @apply border-blue-100 bg-blue-50/80 text-blue-950;
+  }
+
   .story-fields-menu-panel {
     @apply w-[15.5rem] space-y-2 rounded-xl border border-slate-200 bg-white p-2 shadow-xl;
   }
@@ -1633,8 +1730,20 @@ body {
     @apply mt-0.5 space-y-0.5 rounded-md border border-emerald-100 bg-emerald-50/70 px-1.5 py-1 text-[11px] text-slate-700;
   }
 
+  .status-col {
+    @apply w-[5.75rem] min-w-[5.75rem] max-w-[5.75rem] p-0.5 align-top;
+  }
+
+  .release-col {
+    @apply w-[8.75rem] min-w-[8.75rem] max-w-[8.75rem] p-0.5 align-top;
+  }
+
+  .flags-col {
+    @apply w-[5.5rem] min-w-[5.5rem] max-w-[5.5rem] p-0.5 align-top;
+  }
+
   .tools-col {
-    @apply relative w-[9%] max-w-[8.25rem] min-w-[7rem] overflow-visible p-0.5;
+    @apply relative w-[5.25rem] min-w-[5.25rem] max-w-[5.25rem] overflow-visible p-0.5;
   }
 
   .tools-col .row-action-btn {
@@ -1742,36 +1851,147 @@ body {
   }
 
   .task-details-col {
-    @apply min-w-0 align-top;
+    @apply w-[20%] min-w-[9.5rem] max-w-[22%] align-top text-center;
   }
 
   .task-details-cell {
-    @apply flex w-full min-w-0 flex-col gap-1.5;
+    @apply flex w-full min-w-0 flex-col items-center gap-1.5;
   }
 
   .task-details-summary {
-    @apply flex w-full min-w-0 items-start gap-1.5;
+    @apply flex w-full min-w-0 flex-col items-center gap-1;
+  }
+
+  .task-details-chip-rows {
+    @apply mx-auto w-[min(100%,7.5rem)] min-w-0;
+  }
+
+  .task-details-chip-row {
+    @apply mb-0.5 grid w-full grid-cols-2 gap-0.5 last:mb-0;
+  }
+
+  .task-details-chip-slot {
+    @apply min-w-0;
+  }
+
+  .task-details-expanded-lead {
+    @apply mb-0.5 flex w-full justify-center;
   }
 
   .task-details-chips {
-    @apply flex min-w-0 flex-1 flex-wrap items-center gap-1;
+    @apply flex min-w-0 flex-1 flex-wrap items-center justify-center gap-1;
   }
 
   .task-details-chip {
-    @apply rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-slate-700;
+    @apply inline-flex h-5 w-full min-w-0 items-center justify-center truncate rounded-md border px-1 py-0 text-[9px] font-semibold tabular-nums leading-none;
   }
 
-  html.color-scheme-dark .task-details-chip {
-    @apply border-slate-600 bg-slate-800 text-slate-200;
+  /* Match expanded phase-box palette (bg / border / text). */
+  .task-details-chip.phase-be {
+    background-color: var(--phase-be-bg);
+    border-color: var(--phase-be-border);
+    color: var(--phase-be-text);
+  }
+
+  .task-details-chip.phase-fe {
+    background-color: var(--phase-fe-bg);
+    border-color: var(--phase-fe-border);
+    color: var(--phase-fe-text);
+  }
+
+  .task-details-chip.phase-android {
+    background-color: var(--phase-android-bg);
+    border-color: var(--phase-android-border);
+    color: var(--phase-android-text);
+  }
+
+  .task-details-chip.phase-int {
+    background-color: var(--phase-int-bg);
+    border-color: var(--phase-int-border);
+    color: var(--phase-int-text);
+  }
+
+  .task-details-chip.phase-qc {
+    background-color: var(--phase-qc-bg);
+    border-color: var(--phase-qc-border);
+    color: var(--phase-qc-text);
+  }
+
+  .task-details-chip.phase-pm {
+    background-color: #e0e7ff;
+    border-color: #6366f1;
+    color: #312e81;
+  }
+
+  .task-details-chip.phase-buffer {
+    background-color: var(--phase-buffer-bg);
+    border-color: var(--phase-buffer-border);
+    color: var(--phase-buffer-text);
+  }
+
+  .task-details-empty {
+    @apply text-center text-[11px] font-medium text-slate-500;
+  }
+
+  .task-details-row-toggle {
+    @apply w-fit shrink-0 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[9px] font-semibold text-slate-700 hover:bg-slate-50;
+  }
+
+  .task-table-fit .task-details-chip.phase-be,
+  .task-table-fit .task-details-chip.phase-fe,
+  .task-table-fit .task-details-chip.phase-android,
+  .task-table-fit .task-details-chip.phase-int,
+  .task-table-fit .task-details-chip.phase-qc,
+  .task-table-fit .task-details-chip.phase-pm,
+  .task-table-fit .task-details-chip.phase-buffer {
+    @apply space-y-0 p-0.5 px-1.5;
+  }
+
+  .task-table-fit .task-details-chip.phase-be {
+    background-color: var(--phase-be-bg);
+    border-color: var(--phase-be-border);
+    color: var(--phase-be-text);
+  }
+
+  .task-table-fit .task-details-chip.phase-fe {
+    background-color: var(--phase-fe-bg);
+    border-color: var(--phase-fe-border);
+    color: var(--phase-fe-text);
+  }
+
+  .task-table-fit .task-details-chip.phase-android {
+    background-color: var(--phase-android-bg);
+    border-color: var(--phase-android-border);
+    color: var(--phase-android-text);
+  }
+
+  .task-table-fit .task-details-chip.phase-int {
+    background-color: var(--phase-int-bg);
+    border-color: var(--phase-int-border);
+    color: var(--phase-int-text);
+  }
+
+  .task-table-fit .task-details-chip.phase-qc {
+    background-color: var(--phase-qc-bg);
+    border-color: var(--phase-qc-border);
+    color: var(--phase-qc-text);
+  }
+
+  .task-table-fit .task-details-chip.phase-pm {
+    background-color: #e0e7ff;
+    border-color: #6366f1;
+    color: #312e81;
+  }
+
+  .task-table-fit .task-details-chip.phase-buffer {
+    background-color: var(--phase-buffer-bg);
+    border-color: var(--phase-buffer-border);
+    color: var(--phase-buffer-text);
   }
 
   html.color-scheme-dark .task-details-row-toggle,
   html.color-scheme-dark .task-details-header-toggle {
     @apply border-slate-600 bg-slate-900 text-slate-200 hover:bg-slate-800;
-  }
-
-  .task-details-empty {
-    @apply text-[11px] font-medium text-slate-500;
   }
 
   .task-details-row-toggle,
@@ -1785,15 +2005,21 @@ body {
 
   .task-details-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 0.375rem;
+    /* Match original phase column ratios: BE 7 / FE 7 / Mobile 15 / Int 8 / QC 7 / PM 8 */
+    grid-template-columns: minmax(0, 7fr) minmax(0, 7fr) minmax(0, 15fr) minmax(0, 8fr) minmax(0, 7fr) minmax(0, 8fr);
+    gap: 0.25rem;
+    align-items: start;
     width: 100%;
     min-width: 0;
   }
 
-  .task-details-grid > .task-details-span-2,
-  .task-details-grid > .mobile-phase-row.task-details-span-2 {
-    grid-column: 1 / -1;
+  .task-details-grid > .phase-be,
+  .task-details-grid > .phase-fe,
+  .task-details-grid > .mobile-phase-row,
+  .task-details-grid > .phase-int,
+  .task-details-grid > .phase-qc,
+  .task-details-grid > .flex {
+    min-width: 0;
   }
 
   .task-table-fit .task-details-chip {
@@ -1989,21 +2215,37 @@ body {
     color: #312e81;
   }
 
+  .phase-pm-buffer-row {
+    @apply flex w-full min-w-0 items-center justify-between gap-1;
+  }
+
+  .phase-pm-buffer-label {
+    @apply shrink-0 text-[9px] font-semibold uppercase leading-none tracking-normal text-slate-600;
+  }
+
+  .task-table-fit tbody tr.task-row > td > .phase-pm-stack {
+    overflow-x: visible;
+  }
+
+  .task-table-fit .phase-pm:not(.task-details-chip) {
+    overflow-x: visible;
+  }
+
   .phase-buffer {
     background-color: var(--phase-buffer-bg);
     border-color: var(--phase-buffer-border);
     color: var(--phase-buffer-text);
   }
 
-  .task-table-fit .phase-be,
-  .task-table-fit .phase-fe,
-  .task-table-fit .phase-mo,
-  .task-table-fit .phase-android,
-  .task-table-fit .phase-ios,
-  .task-table-fit .phase-int,
-  .task-table-fit .phase-qc,
-  .task-table-fit .phase-pm,
-  .task-table-fit .phase-buffer {
+  .task-table-fit .phase-be:not(.task-details-chip),
+  .task-table-fit .phase-fe:not(.task-details-chip),
+  .task-table-fit .phase-mo:not(.task-details-chip),
+  .task-table-fit .phase-android:not(.task-details-chip),
+  .task-table-fit .phase-ios:not(.task-details-chip),
+  .task-table-fit .phase-int:not(.task-details-chip),
+  .task-table-fit .phase-qc:not(.task-details-chip),
+  .task-table-fit .phase-pm:not(.task-details-chip),
+  .task-table-fit .phase-buffer:not(.task-details-chip) {
     border-color: #64748b;
   }
 

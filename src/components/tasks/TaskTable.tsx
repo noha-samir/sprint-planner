@@ -7,8 +7,6 @@ import { useSession } from "next-auth/react";
 import { downloadTasksImportTemplate, parseTasksImportFile } from "@/lib/export/tasksImport";
 import {
   getProductionReleaseDateFrom,
-  getSprintWindowEnd,
-  parseCalendarDate,
 } from "@/lib/scheduler/calendar";
 import { sessionCapabilities } from "@/lib/access/control";
 import { isJiraStoryLink, buildJiraIssueBrowseUrl, parseJiraIssueKey } from "@/lib/integrations/jira/issueKey";
@@ -36,7 +34,7 @@ import { getTasksNeedingRemark } from "@/lib/planner/pendingMarkProgress";
 import { copySelectedStoriesToClipboard } from "@/lib/planner/copySelectedStories";
 import { sortTasksForDashboard } from "@/lib/planner/dashboardTaskOrder";
 import { isOwnerPmStory } from "@/lib/planner/pmStoryFlag";
-import { buildTaskDetailsSummaryChips } from "@/lib/planner/taskDetailsSummary";
+import { buildTaskDetailsSummaryChips, buildTaskDetailsSummaryRows } from "@/lib/planner/taskDetailsSummary";
 import { buildReleaseGroupColorMap } from "@/lib/planner/releaseGroupColors";
 import { flushPlannerStateToServer } from "@/lib/planner/flushPlannerState";
 import {
@@ -197,7 +195,6 @@ export function TaskTable() {
   const result = usePlannerStore((state) => state.result);
   const config = usePlannerStore((state) => state.config);
   const plannerMeta = usePlannerStore((state) => state.plannerMeta);
-  const hasHydrated = usePlannerStore((state) => state.hasHydrated);
   const addTask = usePlannerStore((state) => state.addTask);
   const addTasks = usePlannerStore((state) => state.addTasks);
   const updateTask = usePlannerStore((state) => state.updateTask);
@@ -1339,8 +1336,9 @@ export function TaskTable() {
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const expandedJiraTaskIdSet = useMemo(() => new Set(expandedJiraTaskIds), [expandedJiraTaskIds]);
   const expandedDetailsTaskIdSet = useMemo(() => new Set(expandedDetailsTaskIds), [expandedDetailsTaskIds]);
-  const allVisibleDetailsExpanded =
-    orderedTasks.length > 0 && orderedTasks.every((task) => expandedDetailsTaskIdSet.has(task.id));
+  const detailsColumnsVisible =
+    orderedTasks.length > 0 && orderedTasks.some((task) => expandedDetailsTaskIdSet.has(task.id));
+  const tableColSpan = detailsColumnsVisible ? 12 : 7;
   const visibleSelectedCount = useMemo(
     () => orderedTasks.filter((task) => selectedTaskIdSet.has(task.id)).length,
     [orderedTasks, selectedTaskIdSet],
@@ -1408,6 +1406,9 @@ export function TaskTable() {
     const visibleIds = new Set(orderedTasks.map((task) => task.id));
     setExpandedDetailsTaskIds((current) => current.filter((id) => !visibleIds.has(id)));
   };
+
+  const allVisibleDetailsExpanded =
+    orderedTasks.length > 0 && orderedTasks.every((task) => expandedDetailsTaskIdSet.has(task.id));
 
   const toggleDetailsForVisible = () => {
     if (allVisibleDetailsExpanded) {
@@ -1691,8 +1692,18 @@ export function TaskTable() {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
-      <div className="flex shrink-0 flex-col gap-2">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold text-slate-900">Tasks</h2>
+        <span className="text-sm font-semibold text-slate-700">
+          Stories: <span className="tabular-nums">{totalStoryCount}</span> total
+          {visibleStoryCount !== totalStoryCount ? (
+            <span className="ml-2 font-normal text-slate-500">
+              · <span className="font-medium tabular-nums text-slate-800">{visibleStoryCount}</span> shown
+            </span>
+          ) : null}
+        </span>
+      </div>
+      <div className="flex shrink-0 flex-col gap-2">
         <div className="task-table-toolbar">
           <div className="task-table-toolbar-filters">
             <span className="task-table-toolbar-group-label">Filters</span>
@@ -2184,29 +2195,30 @@ export function TaskTable() {
                 </div>
               ) : null}
             </div>
+            <button
+              type="button"
+              className={`task-table-toolbar-details-btn toolbar-est-btn ${
+                allVisibleDetailsExpanded ? "toolbar-est-btn-on" : ""
+              }`}
+              disabled={orderedTasks.length === 0}
+              aria-pressed={allVisibleDetailsExpanded}
+              title={
+                allVisibleDetailsExpanded
+                  ? "Collapse Backend–PM estimation columns for all visible stories"
+                  : "Expand Backend–PM estimation columns for all visible stories"
+              }
+              onClick={() => {
+                setTasksMenuOpen(false);
+                toggleDetailsForVisible();
+              }}
+            >
+              <span>{allVisibleDetailsExpanded ? "Hide Estimations" : "Show Estimations"}</span>
+              <span className="toolbar-est-btn-chevron" aria-hidden>
+                {allVisibleDetailsExpanded ? "▴" : "▾"}
+              </span>
+            </button>
           </div>
         </div>
-      </div>
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-300 bg-blue-100/80 px-3 py-2 text-sm font-medium text-blue-900">
-        <span className="min-w-0">
-          {hasHydrated ? (
-            <>
-              Sprint start {format(parseCalendarDate(config.sprintStartDate), "EEE dd MMM, yyyy")}
-              <span className="mx-1.5 text-blue-800/70">·</span>
-              Window ends {format(getSprintWindowEnd(config), "EEE dd MMM, yyyy")}
-            </>
-          ) : (
-            <>Sprint window</>
-          )}
-        </span>
-        <span className="text-right font-semibold text-blue-950">
-          Stories: <span className="tabular-nums">{totalStoryCount}</span> total
-          {visibleStoryCount !== totalStoryCount ? (
-            <span className="ml-2 font-normal text-blue-900/80">
-              · <span className="font-medium tabular-nums text-blue-950">{visibleStoryCount}</span> shown
-            </span>
-          ) : null}
-        </span>
       </div>
       <JiraSyncBanner />
       {actionFeedback ? (
@@ -2483,39 +2495,38 @@ export function TaskTable() {
                     <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">#</span>
                   )}
                 </th>
-              <th className="w-[18%] text-center">Story</th>
-              <th className="w-[42%] text-center leading-tight">
-                <div className="flex flex-col items-center justify-center gap-1">
-                  <span>Details</span>
-                  <button
-                    type="button"
-                    className="task-details-header-toggle"
-                    disabled={orderedTasks.length === 0}
-                    onClick={toggleDetailsForVisible}
-                    title={
-                      allVisibleDetailsExpanded
-                        ? "Hide phase editors for all visible stories"
-                        : "Show phase editors for all visible stories"
-                    }
-                  >
-                    {allVisibleDetailsExpanded ? "Hide all ▴" : "Show all ▾"}
-                  </button>
-                </div>
-              </th>
-              <th className="w-[8%] text-center">Status</th>
-              <th className="w-[12%] text-center leading-tight">
+              <th className={`${detailsColumnsVisible ? "w-[16%]" : "w-[51%]"} text-center`}>Story</th>
+              {detailsColumnsVisible ? (
+                <>
+                  <th className="w-[7%] text-center">Backend</th>
+                  <th className="w-[7%] text-center">Frontend</th>
+                  <th className="w-[15%] text-center">Mobile</th>
+                  <th className="w-[8%] text-center">Integration</th>
+                  <th className="w-[7%] text-center">QC</th>
+                  <th className="w-[8%] text-center leading-tight">
+                    <div className="flex flex-col items-center gap-0">
+                      <span>PM</span>
+                      <span className="text-[9px] font-normal normal-case text-slate-500">/ Buffer</span>
+                    </div>
+                  </th>
+                </>
+              ) : (
+                <th className="task-details-col w-[20%] text-center">Details</th>
+              )}
+              <th className="status-col text-center">Status</th>
+              <th className="release-col text-center leading-tight">
                 <div className="flex flex-col items-center justify-center gap-0.5">
                   <span>Release Dates</span>
                 </div>
               </th>
-              <th className="w-[7%] text-center">Flags</th>
-              <th className="w-[9%] text-center">Tools</th>
+              <th className="flags-col text-center">Flags</th>
+              <th className="tools-col text-center">Tools</th>
             </tr>
           </thead>
           <tbody>
             {orderedTasks.length === 0 ? (
               <tr>
-                <td colSpan={7} className="p-4 text-center text-sm text-slate-600">
+                <td colSpan={tableColSpan} className="p-4 text-center text-sm text-slate-600">
                   <div className="flex flex-col items-center gap-2">
                     <span>
                       {emFilter === "em" && !anyEmStoryMarked
@@ -2558,6 +2569,7 @@ export function TaskTable() {
               const needsMarkProgress = pendingMarkProgressIds.has(task.id);
               const taskNumber = taskIndex + 1;
               const detailsExpanded = expandedDetailsTaskIdSet.has(task.id);
+              const detailsRows = buildTaskDetailsSummaryRows(task);
               const detailsChips = buildTaskDetailsSummaryChips(task);
               return (
                 <tr
@@ -2648,13 +2660,7 @@ export function TaskTable() {
                           })()}
                         </div>
                       </div>
-                      {isEditor ||
-                      task.issueType ||
-                      task.isEmStory ||
-                      isOwnerPmStory(task, squadPmNames, resources) ||
-                      (task.tags?.length ?? 0) > 0 ||
-                      todoLineCount > 0 ? (
-                        <div className="story-fields-menu story-fields-menu-below">
+                      <div className="story-fields-menu story-fields-menu-below">
                           {task.issueType ? (
                             <span
                               className={`task-flag-chip task-story-type-chip ${issueTypeChipClass(task.issueType)}`}
@@ -2724,61 +2730,54 @@ export function TaskTable() {
                               <span className="task-flag-chip-label">Todo ({todoLineCount})</span>
                             </button>
                           ) : null}
-                          {isEditor ? (
+                          <div className="story-est-edit-group">
+                            {isEditor ? (
+                              <button
+                                type="button"
+                                className={`story-fields-menu-btn${storyFieldsOpen?.taskId === task.id ? " story-fields-menu-btn-open" : ""}`}
+                                aria-expanded={storyFieldsOpen?.taskId === task.id}
+                                aria-haspopup="true"
+                                aria-label={`Edit name and link for ${storyLabel}`}
+                                title="Edit name & link"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  const trigger = event.currentTarget;
+                                  setIsBulkStoryMenuOpen(false);
+                                  setAssigneePickerOpen(null);
+                                  setStoryFieldsDraft({
+                                    storyName: task.storyName ?? "",
+                                    storyLink: task.storyLink ?? "",
+                                  });
+                                  setStoryFieldsOpen((open) =>
+                                    open?.taskId === task.id ? null : { taskId: task.id, trigger },
+                                  );
+                                }}
+                              >
+                                Edit link
+                                <span aria-hidden>{storyFieldsOpen?.taskId === task.id ? "▴" : "▾"}</span>
+                              </button>
+                            ) : null}
                             <button
                               type="button"
-                              className={`story-fields-menu-btn${storyFieldsOpen?.taskId === task.id ? " story-fields-menu-btn-open" : ""}`}
-                              aria-expanded={storyFieldsOpen?.taskId === task.id}
-                              aria-haspopup="true"
-                              aria-label={`Edit name and link for ${storyLabel}`}
-                              title="Edit name & link"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                const trigger = event.currentTarget;
-                                setIsBulkStoryMenuOpen(false);
-                                setAssigneePickerOpen(null);
-                                setStoryFieldsDraft({
-                                  storyName: task.storyName ?? "",
-                                  storyLink: task.storyLink ?? "",
-                                });
-                                setStoryFieldsOpen((open) =>
-                                  open?.taskId === task.id ? null : { taskId: task.id, trigger },
-                                );
-                              }}
+                              className={`story-fields-menu-btn${detailsExpanded ? " story-est-btn-open" : ""}`}
+                              aria-expanded={detailsExpanded}
+                              title={
+                                detailsExpanded
+                                  ? "Collapse Backend–PM estimation columns for this story"
+                                  : "Expand Backend–PM estimation columns for this story"
+                              }
+                              onClick={() => toggleDetailsExpanded(task.id)}
                             >
-                              Edit link
-                              <span aria-hidden>{storyFieldsOpen?.taskId === task.id ? "▴" : "▾"}</span>
+                              {detailsExpanded ? "Hide Est." : "Show Est."}
+                              <span aria-hidden>{detailsExpanded ? "▴" : "▾"}</span>
                             </button>
-                          ) : null}
+                          </div>
                         </div>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td className="task-details-col align-top">
-                    <div className="task-details-cell">
-                      <div className="task-details-summary">
-                        <div className="task-details-chips" title={detailsChips.map((chip) => chip.label).join(" · ")}>
-                          {detailsChips.length > 0 ? (
-                            detailsChips.map((chip) => (
-                              <span key={chip.key} className="task-details-chip">
-                                {chip.label}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="task-details-empty">No estimates</span>
-                          )}
-                        </div>
-                        <button
-                          type="button"
-                          className="task-details-row-toggle"
-                          aria-expanded={detailsExpanded}
-                          onClick={() => toggleDetailsExpanded(task.id)}
-                        >
-                          {detailsExpanded ? "Hide ▴" : "Details ▾"}
-                        </button>
                       </div>
-                      {detailsExpanded ? (
-                      <div className="task-details-grid">
+                  </td>
+                  {detailsExpanded ? (
+                  <>
+                  <td className="min-w-0">
                     <div className={`phase-be w-full min-w-0 ${phaseClass("BE")}`}>
                       <div className="phase-box-header">
                         <div className="phase-col-label">BE Devs</div>
@@ -2852,6 +2851,8 @@ export function TaskTable() {
                         ))}
                       </div>
                     </div>
+                  </td>
+                  <td className="min-w-0">
                     <div className={`phase-fe w-full min-w-0 ${phaseClass("FE")}`}>
                       <div className="phase-box-header">
                         <div className="phase-col-label">FE Devs</div>
@@ -2925,7 +2926,9 @@ export function TaskTable() {
                         ))}
                       </div>
                     </div>
-                    <div className={`mobile-phase-row${task.needsIos ? " task-details-span-2" : ""}`}>
+                  </td>
+                  <td className="min-w-0">
+                    <div className="mobile-phase-row">
                       <div
                         className={`mobile-phase-platforms${task.needsIos ? " mobile-phase-platforms-split" : ""}`}
                       >
@@ -3212,6 +3215,8 @@ export function TaskTable() {
                         ) : null}
                       </div>
                     </div>
+                  </td>
+                  <td className="min-w-0">
                     <div className={`phase-int w-full min-w-0 ${phaseClass("Integration")}`}>
                       <div className="phase-box-header">
                         <div className="phase-col-label">Integration</div>
@@ -3353,6 +3358,8 @@ export function TaskTable() {
                         ) : null}
                       </div>
                     </div>
+                  </td>
+                  <td className="min-w-0">
                     <div className={`phase-qc w-full min-w-0 ${phaseClass("QC")}`}>
                       <div className="phase-box-header">
                         <div className="phase-col-label">QC Eng</div>
@@ -3426,7 +3433,9 @@ export function TaskTable() {
                         ))}
                       </div>
                     </div>
-                    <div className="flex min-w-0 flex-col gap-1">
+                  </td>
+                  <td className="min-w-0 align-top">
+                    <div className="phase-pm-stack flex min-w-0 flex-col gap-1">
                       <div className="phase-pm w-full min-w-0">
                         <div className="phase-box-header">
                           <div className="phase-col-label">PM</div>
@@ -3513,10 +3522,8 @@ export function TaskTable() {
                           ))}
                         </div>
                       </div>
-                      <div className="flex items-center justify-end gap-1">
-                        <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wide text-slate-500">
-                          Buffer
-                        </span>
+                      <div className="phase-pm-buffer-row">
+                        <span className="phase-pm-buffer-label">Buffer</span>
                         <NumberStepper
                           value={task.bufferHours ?? 0}
                           min={0}
@@ -3533,11 +3540,47 @@ export function TaskTable() {
                         />
                       </div>
                     </div>
+                  </td>
+                  </>
+                  ) : (
+                  <td
+                    className="task-details-col align-top"
+                    colSpan={detailsColumnsVisible ? 6 : 1}
+                  >
+                    <div className="task-details-cell">
+                      <div className="task-details-summary">
+                        <div
+                          className="task-details-chip-rows"
+                          title={detailsChips.map((chip) => chip.label).join(" · ")}
+                        >
+                          {detailsRows.length > 0 ? (
+                            detailsRows.map((row) => (
+                              <div key={row.key} className="task-details-chip-row">
+                                {row.left ? (
+                                  <span className={`task-details-chip ${row.left.toneClass}`}>
+                                    {row.left.label}
+                                  </span>
+                                ) : (
+                                  <span className="task-details-chip-slot" aria-hidden />
+                                )}
+                                {row.right ? (
+                                  <span className={`task-details-chip ${row.right.toneClass}`}>
+                                    {row.right.label}
+                                  </span>
+                                ) : (
+                                  <span className="task-details-chip-slot" aria-hidden />
+                                )}
+                              </div>
+                            ))
+                          ) : (
+                            <span className="task-details-empty">No estimates</span>
+                          )}
+                        </div>
                       </div>
-                      ) : null}
                     </div>
                   </td>
-                  <td className="align-top">
+                  )}
+                  <td className="status-col align-top">
                     <div className="flex justify-center">
                       <div className="relative w-full min-w-0">
                         {isEditor ? (
@@ -3596,7 +3639,7 @@ export function TaskTable() {
                       </div>
                     </div>
                   </td>
-                  <td className="align-top text-center text-[13px] font-bold text-slate-900">
+                  <td className="release-col align-top text-center text-[13px] font-bold text-slate-900">
                     <div className="release-date-stack">
                       <div className="release-date-card">
                         <div className="release-date-label">UAT</div>
@@ -3643,7 +3686,7 @@ export function TaskTable() {
                       </div>
                     </div>
                   </td>
-                  <td className="align-top">
+                  <td className="flags-col align-top">
                     <div className="flex w-full min-w-0 flex-wrap content-start gap-0.5">
                       {task.carryToNextSprint ? (
                         <span
@@ -3695,7 +3738,7 @@ export function TaskTable() {
                       </div>
                       <button
                         type="button"
-                        className="row-action-btn row-action-primary"
+                        className="row-action-btn row-action-primary w-full"
                         onClick={() => setSelectedTimelineTaskId(task.id)}
                       >
                         📅 Timeline
@@ -3753,26 +3796,27 @@ export function TaskTable() {
                                 <div className="mt-0.5 space-y-0.5 border-t border-emerald-100/80 pt-0.5">
                                   {task.jira!.subtasks.map((subtask) => {
                                     const href = buildJiraIssueBrowseUrl(task.storyLink, subtask.key);
-                                    const label = (
-                                      <>
-                                      {subtask.key} · {subtask.role.toUpperCase()} {subtask.assigneeName || "—"} ·{" "}
-                                      {subtask.hours}h
-                                      </>
-                                    );
+                                    const roleLabel = subtask.role.toUpperCase();
+                                    const detailLabel = `${roleLabel} ${subtask.assigneeName || "—"} · ${subtask.hours}h`;
+                                    const fullTitle = `${subtask.key} · ${detailLabel}`;
                                     return href ? (
-                                    <a
-                                      key={subtask.key}
-                                      href={href}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="block truncate text-blue-700 underline"
-                                      title={`${subtask.role.toUpperCase()} ${subtask.assigneeName} · ${subtask.hours}h`}
-                                    >
-                                      {label}
-                                    </a>
+                                      <a
+                                        key={subtask.key}
+                                        href={href}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="block truncate text-blue-700 underline"
+                                        title={fullTitle}
+                                      >
+                                        {detailLabel}
+                                      </a>
                                     ) : (
-                                      <div key={subtask.key} className="block truncate text-slate-700">
-                                        {label}
+                                      <div
+                                        key={subtask.key}
+                                        className="block truncate text-slate-700"
+                                        title={fullTitle}
+                                      >
+                                        {detailLabel}
                                       </div>
                                     );
                                   })}
