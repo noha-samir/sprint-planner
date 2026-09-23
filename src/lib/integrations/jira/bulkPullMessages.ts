@@ -1,9 +1,14 @@
 import type { Task } from "@/lib/scheduler/types";
 import type { TaskJiraMeta } from "./types";
 import {
-  formatGroupedStoryMessages,
+  appendSummaryGroups,
+  buildBulkSummaryResult,
+  emphasizeMessage,
+  groupStoryMessages,
   partitionMessages,
   storyCountLabel,
+  type BulkNotificationSummary,
+  type BulkSummaryResult,
   type StoryMessage,
 } from "./bulkNotificationFormat";
 
@@ -81,9 +86,9 @@ export const bulkPullHasActionErrors = (result: BulkPullFromJiraResult): boolean
 };
 
 /**
- * User-friendly bulk pull result summary — groups identical issues under one message.
+ * Structured + plain-text bulk pull result summary — groups identical issues under one message.
  */
-export const formatBulkPullSummary = (result: BulkPullFromJiraResult): string => {
+export const formatBulkPullSummaryModel = (result: BulkPullFromJiraResult): BulkSummaryResult => {
   const noLink = result.results.filter(
     (row) => row.skipped && row.skipReason === JIRA_BULK_PULL_SKIP_REASON.NO_LINK,
   );
@@ -92,48 +97,67 @@ export const formatBulkPullSummary = (result: BulkPullFromJiraResult): string =>
   const jiraFailedRows = failedRows.filter((row) => row.error !== JIRA_BULK_PULL_SKIP_REASON.DISCOPED);
   const { actionFailures, softWarnings } = partitionMessages(collectRowMessages(result));
 
-  const lines: string[] = [];
-  if (result.synced > 0) {
-    lines.push(`${storyCountLabel(result.synced)} pulled from Jira.`);
-  } else {
-    lines.push("No stories were pulled from Jira.");
-  }
+  const headline =
+    result.synced > 0
+      ? `${storyCountLabel(result.synced)} pulled from Jira.`
+      : "No stories were pulled from Jira.";
+
+  const model: BulkNotificationSummary = { headline, groups: [] };
 
   if (noLink.length > 0) {
-    lines.push(
-      `${storyCountLabel(noLink.length)} not pulled — add a Jira link:\n${noLink
-        .map((row) => `• ${storyLabel(row)}`)
-        .join("\n")}`,
-    );
+    model.groups.push({
+      severity: "info",
+      segments: emphasizeMessage(
+        `${storyCountLabel(noLink.length)} not pulled — add a Jira link`,
+      ),
+      stories: noLink.map(storyLabel),
+    });
   }
 
   if (discopedRows.length > 0) {
-    lines.push(
-      `Errors — Discoped (not pulled):\n${discopedRows.map((row) => `• ${storyLabel(row)}`).join("\n")}`,
-    );
+    model.groups.push({
+      severity: "error",
+      segments: emphasizeMessage("Discoped — not pulled"),
+      stories: discopedRows.map(storyLabel),
+    });
   }
 
-  if (jiraFailedRows.length > 0) {
-    const grouped = formatGroupedStoryMessages(
+  model.groups.push(
+    ...groupStoryMessages(
       jiraFailedRows.map((row) => ({
         story: storyLabel(row),
         message: row.error ?? "Unknown error",
       })),
-    );
-    lines.push(
-      `Errors — Jira returned an error (${storyCountLabel(jiraFailedRows.length)}):\n${grouped}`,
-    );
-  }
+      "error",
+    ),
+    ...groupStoryMessages(actionFailures, "error"),
+    ...groupStoryMessages(softWarnings, "warning"),
+  );
 
-  if (actionFailures.length > 0) {
-    lines.push(
-      `Errors — some updates did not apply:\n${formatGroupedStoryMessages(actionFailures)}`,
-    );
-  }
+  return buildBulkSummaryResult(model);
+};
 
-  if (softWarnings.length > 0) {
-    lines.push(`Warnings:\n${formatGroupedStoryMessages(softWarnings)}`);
-  }
+/** Plain-text pull summary (tests / legacy). */
+export const formatBulkPullSummary = (result: BulkPullFromJiraResult): string =>
+  formatBulkPullSummaryModel(result).text;
 
-  return lines.join("\n\n");
+export const withDiscoverWarning = (
+  summary: BulkSummaryResult,
+  discoverWarning: string | null | undefined,
+  importedLine?: string,
+): BulkSummaryResult => {
+  let model = summary.model;
+  if (importedLine?.trim()) {
+    model = { ...model, headline: [importedLine.trim(), model.headline].filter(Boolean).join(" ") };
+  }
+  if (discoverWarning?.trim()) {
+    model = appendSummaryGroups(model, [
+      {
+        severity: "warning",
+        segments: emphasizeMessage(discoverWarning.trim()),
+        stories: [],
+      },
+    ]);
+  }
+  return buildBulkSummaryResult(model);
 };

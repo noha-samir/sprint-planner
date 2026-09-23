@@ -30,6 +30,7 @@ export {
   JIRA_BULK_SKIP_REASON,
   formatBulkSyncConfirmMessage,
   formatBulkSyncSummary,
+  formatBulkSyncSummaryModel,
   bulkSyncHasPartialWarnings,
   bulkSyncHasActionErrors,
 } from "./bulkSyncMessages";

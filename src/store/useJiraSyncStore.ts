@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import type { BulkNotificationSummary } from "@/lib/integrations/jira/bulkNotificationFormat";
 
 export type JiraSyncMode = "push" | "pull";
 
@@ -25,6 +26,7 @@ type JiraSyncState = {
   currentStoryName: string | null;
   tasks: JiraSyncTaskProgress[];
   summary: string | null;
+  summaryModel: BulkNotificationSummary | null;
   summaryIsError: boolean;
   summaryIsWarning: boolean;
   start: (params: {
@@ -34,7 +36,12 @@ type JiraSyncState = {
   markRunning: (taskId: string) => void;
   markDone: (params: { taskId: string; ok: boolean; error?: string }) => void;
   setPhase: (phase: JiraSyncPhase) => void;
-  finish: (params: { summary: string; isError?: boolean; isWarning?: boolean }) => void;
+  finish: (params: {
+    summary: string;
+    summaryModel?: BulkNotificationSummary | null;
+    isError?: boolean;
+    isWarning?: boolean;
+  }) => void;
   clearSummary: () => void;
 };
 
@@ -48,6 +55,7 @@ const initialState = {
   currentStoryName: null as string | null,
   tasks: [] as JiraSyncTaskProgress[],
   summary: null as string | null,
+  summaryModel: null as BulkNotificationSummary | null,
   summaryIsError: false,
   summaryIsWarning: false,
 };
@@ -69,6 +77,7 @@ export const useJiraSyncStore = create<JiraSyncState>((set, get) => ({
         status: "pending",
       })),
       summary: null,
+      summaryModel: null,
       summaryIsError: false,
       summaryIsWarning: false,
     });
@@ -99,16 +108,18 @@ export const useJiraSyncStore = create<JiraSyncState>((set, get) => ({
     });
   },
   setPhase: (phase) => set({ phase }),
-  finish: ({ summary, isError = false, isWarning = false }) => {
+  finish: ({ summary, summaryModel = null, isError = false, isWarning = false }) => {
     set({
       active: false,
       phase: "idle",
       currentTaskId: null,
       currentStoryName: null,
       summary,
+      summaryModel,
       summaryIsError: isError,
       summaryIsWarning: !isError && isWarning,
     });
   },
-  clearSummary: () => set({ summary: null, summaryIsError: false, summaryIsWarning: false }),
+  clearSummary: () =>
+    set({ summary: null, summaryModel: null, summaryIsError: false, summaryIsWarning: false }),
 }));

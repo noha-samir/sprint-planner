@@ -1,8 +1,12 @@
 import type { TaskJiraMeta } from "./types";
 import {
-  formatGroupedStoryMessages,
+  buildBulkSummaryResult,
+  emphasizeMessage,
+  groupStoryMessages,
   partitionMessages,
   storyCountLabel,
+  type BulkNotificationSummary,
+  type BulkSummaryResult,
   type StoryMessage,
 } from "./bulkNotificationFormat";
 
@@ -83,9 +87,9 @@ export const bulkSyncHasActionErrors = (result: BulkSyncToJiraResult): boolean =
 };
 
 /**
- * User-friendly bulk sync result summary — groups identical issues under one message.
+ * Structured + plain-text bulk sync result summary — groups identical issues under one message.
  */
-export const formatBulkSyncSummary = (result: BulkSyncToJiraResult): string => {
+export const formatBulkSyncSummaryModel = (result: BulkSyncToJiraResult): BulkSummaryResult => {
   const noLink = result.results.filter(
     (row) => row.skipped && row.skipReason === JIRA_BULK_SKIP_REASON.NO_LINK,
   );
@@ -99,57 +103,50 @@ export const formatBulkSyncSummary = (result: BulkSyncToJiraResult): string => {
   const { actionFailures, softWarnings } = partitionMessages(collectWarningMessages(result));
   const allActionFailures = [...rowErrors, ...actionFailures];
 
-  const lines: string[] = [];
+  const headline =
+    result.synced > 0
+      ? `${storyCountLabel(result.synced)} synced to Jira.`
+      : "No stories were synced to Jira.";
 
-  if (result.synced > 0) {
-    lines.push(`${storyCountLabel(result.synced)} synced to Jira.`);
-  } else {
-    lines.push("No stories were synced to Jira.");
-  }
+  const model: BulkNotificationSummary = { headline, groups: [] };
 
   if (noLink.length > 0) {
-    lines.push(
-      `${storyCountLabel(noLink.length)} not synced — add a Jira link:\n${noLink
-        .map((row) => `• ${storyLabel(row)}`)
-        .join("\n")}`,
-    );
+    model.groups.push({
+      severity: "info",
+      segments: emphasizeMessage(`${storyCountLabel(noLink.length)} not synced — add a Jira link`),
+      stories: noLink.map(storyLabel),
+    });
   }
 
   if (noHours.length > 0) {
-    lines.push(
-      `${storyCountLabel(noHours.length)} not synced — add an FE/BE assignee or FE/BE/QC hours:\n${noHours
-        .map((row) => `• ${storyLabel(row)}`)
-        .join("\n")}`,
-    );
+    model.groups.push({
+      severity: "info",
+      segments: emphasizeMessage(
+        `${storyCountLabel(noHours.length)} not synced — add an FE/BE assignee or FE/BE/QC hours`,
+      ),
+      stories: noHours.map(storyLabel),
+    });
   }
 
   if (discopedRows.length > 0) {
-    lines.push(
-      `Errors — Discoped (not synced):\n${discopedRows.map((row) => `• ${storyLabel(row)}`).join("\n")}`,
-    );
+    model.groups.push({
+      severity: "error",
+      segments: emphasizeMessage("Discoped — not synced"),
+      stories: discopedRows.map(storyLabel),
+    });
   }
 
-  if (jiraFailedRows.length > 0) {
-    const grouped = formatGroupedStoryMessages(
+  model.groups.push(
+    ...groupStoryMessages(
       jiraFailedRows.map((row) => ({
         story: storyLabel(row),
         message: row.error ?? "Unknown error",
       })),
-    );
-    lines.push(
-      `Errors — Jira returned an error (${storyCountLabel(jiraFailedRows.length)}):\n${grouped}`,
-    );
-  }
-
-  if (allActionFailures.length > 0) {
-    lines.push(
-      `Errors — some updates did not apply:\n${formatGroupedStoryMessages(allActionFailures)}`,
-    );
-  }
-
-  if (softWarnings.length > 0) {
-    lines.push(`Warnings:\n${formatGroupedStoryMessages(softWarnings)}`);
-  }
+      "error",
+    ),
+    ...groupStoryMessages(allActionFailures, "error"),
+    ...groupStoryMessages(softWarnings, "warning"),
+  );
 
   if (
     result.synced > 0 &&
@@ -159,11 +156,19 @@ export const formatBulkSyncSummary = (result: BulkSyncToJiraResult): string => {
     allActionFailures.length === 0 &&
     softWarnings.length === 0
   ) {
-    lines.push("Every visible story with a link and hours is up to date.");
+    model.groups.push({
+      severity: "info",
+      segments: [{ text: "Every visible story with a link and hours is up to date." }],
+      stories: [],
+    });
   }
 
-  return lines.join("\n\n");
+  return buildBulkSummaryResult(model);
 };
+
+/** Plain-text sync summary (tests / legacy). */
+export const formatBulkSyncSummary = (result: BulkSyncToJiraResult): string =>
+  formatBulkSyncSummaryModel(result).text;
 
 /** @deprecated Prefer bulkSyncHasActionErrors — kept for call sites that mean partial issues. */
 export const bulkSyncHasPartialWarnings = (result: BulkSyncToJiraResult): boolean =>

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   coerceAssigneeNamesToRoster,
+  coerceAssigneesForRole,
+  isBlockedEngineeringAssignee,
   matchPlannerPerson,
   matchResourceByAssigneeLabel,
   resourceDisplayName,
@@ -29,6 +31,20 @@ describe("resourceIdentity", () => {
       "Alex Rivera",
       "Someone",
     ]);
+  });
+
+  it("strips product owners and PMs from engineering role slots", () => {
+    const roster: Resource[] = [
+      ...resources,
+      { name: "Ali Rekaby", type: "PM" },
+      { name: "Hala", type: "PM" },
+    ];
+    expect(
+      coerceAssigneesForRole(["Ali Rekaby", "Sam Lee", "Hala"], roster, ["FE"]),
+    ).toEqual(["Sam Lee"]);
+    expect(isBlockedEngineeringAssignee("Ali Rekaby", [{ name: "Ali Rekaby", type: "FE" }])).toBe(
+      true,
+    );
   });
 
   it("matchResourceByAssigneeLabel finds resources by name", () => {

@@ -4,6 +4,7 @@ import {
   effectiveIssueType,
   isParentlessPlannerTask,
   isStandaloneIssueType,
+  isTechnicalTaskIssueType,
   taskMatchesIssueTypeFilter,
 } from "./taskIssueFilters";
 
@@ -39,6 +40,13 @@ describe("taskIssueFilters", () => {
     expect(effectiveIssueType("Bug")).toBe("Bug");
   });
 
+  it("detects Technical Task issue type", () => {
+    expect(isTechnicalTaskIssueType("Technical Task")).toBe(true);
+    expect(isTechnicalTaskIssueType("technical task")).toBe(true);
+    expect(isTechnicalTaskIssueType("Bug")).toBe(false);
+    expect(isTechnicalTaskIssueType("Story")).toBe(false);
+  });
+
   it("always includes the fixed Type list and appends extras from tasks", () => {
     expect(buildIssueTypeFilterOptions([])).toEqual(["Story", "Bug", "Task", "Technical Task"]);
     expect(buildIssueTypeFilterOptions(["Bug", "Spike", "story"])).toEqual([
@@ -50,8 +58,9 @@ describe("taskIssueFilters", () => {
     ]);
   });
 
-  it("matches Type filter using blank-as-Story", () => {
-    expect(taskMatchesIssueTypeFilter({ issueType: undefined }, [])).toBe(true);
+  it("matches Type filter using blank-as-Story; empty selection matches nothing", () => {
+    expect(taskMatchesIssueTypeFilter({ issueType: undefined }, [])).toBe(false);
+    expect(taskMatchesIssueTypeFilter({ issueType: "Bug" }, [])).toBe(false);
     expect(taskMatchesIssueTypeFilter({ issueType: undefined }, ["Story"])).toBe(true);
     expect(taskMatchesIssueTypeFilter({ issueType: "" }, ["Story"])).toBe(true);
     expect(taskMatchesIssueTypeFilter({ issueType: undefined }, ["Bug"])).toBe(false);

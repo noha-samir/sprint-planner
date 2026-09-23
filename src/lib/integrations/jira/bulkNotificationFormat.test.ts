@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  emphasizeMessage,
   formatGroupedStoryMessages,
   isActionFailureMessage,
   partitionMessages,
+  summaryToPlainText,
 } from "./bulkNotificationFormat";
 import { formatBulkPullSummary, bulkPullHasActionErrors } from "./bulkPullMessages";
 import { formatBulkSyncSummary, bulkSyncHasActionErrors } from "./bulkSyncMessages";
@@ -20,6 +22,7 @@ describe("isActionFailureMessage", () => {
       ),
     ).toBe(true);
     expect(isActionFailureMessage("Status sync failed for BR-1: timeout")).toBe(true);
+    expect(isActionFailureMessage("Parent Dev 8h — no role subtasks")).toBe(true);
   });
 
   it("keeps informational notes as non-failures", () => {
@@ -32,6 +35,18 @@ describe("isActionFailureMessage", () => {
       false,
     );
     expect(isActionFailureMessage("FE subtask KEY has no assignee in Jira")).toBe(false);
+    expect(isActionFailureMessage("No FE subtask")).toBe(false);
+  });
+});
+
+describe("emphasizeMessage", () => {
+  it("bolds hours and roles", () => {
+    const segments = emphasizeMessage("Parent Dev 8h — no role subtasks");
+    expect(segments.some((segment) => segment.text === "8h" && segment.emphasis)).toBe(true);
+    expect(segments.some((segment) => segment.text === "Dev" && segment.emphasis)).toBe(true);
+    expect(segments.some((segment) => /no role subtasks/i.test(segment.text) && segment.emphasis)).toBe(
+      true,
+    );
   });
 });
 
@@ -75,8 +90,10 @@ describe("formatBulkPullSummary", () => {
         },
       ],
     });
-    expect(summary).toContain("Errors — some updates did not apply:");
+    expect(summary).toContain("Errors:");
     expect(summary).not.toContain("Warnings:");
+    expect(summary).toContain("— Story A");
+    expect(summary).toContain("— Story B");
     expect(bulkPullHasActionErrors({
       synced: 2,
       failed: 0,
@@ -110,8 +127,8 @@ describe("formatBulkSyncSummary", () => {
         },
       ],
     });
-    expect(summary).toContain("Errors — some updates did not apply:");
-    expect(summary).not.toMatch(/Warnings — some subtasks/);
+    expect(summary).toContain("Errors:");
+    expect(summary).not.toMatch(/Warnings/);
     expect(
       bulkSyncHasActionErrors({
         synced: 1,
@@ -138,5 +155,24 @@ describe("partitionMessages", () => {
     ]);
     expect(actionFailures).toHaveLength(1);
     expect(softWarnings).toHaveLength(1);
+  });
+});
+
+describe("summaryToPlainText", () => {
+  it("renders grouped sections", () => {
+    const text = summaryToPlainText({
+      headline: "2 stories pulled from Jira.",
+      groups: [
+        {
+          severity: "error",
+          segments: [{ text: "Parent Dev " }, { text: "8h", emphasis: true }, { text: " — no role subtasks" }],
+          stories: ["A", "B"],
+        },
+      ],
+    });
+    expect(text).toContain("Errors:");
+    expect(text).toContain("Parent Dev 8h — no role subtasks");
+    expect(text).toContain("— A");
+    expect(text).toContain("— B");
   });
 });

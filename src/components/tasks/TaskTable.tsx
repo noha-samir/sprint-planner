@@ -19,14 +19,15 @@ import {
 } from "@/lib/planner/taskIssueFilters";
 import { isTaskEligibleForJiraPull, isTaskEligibleForJiraSync, resolveTaskForJiraSync } from "@/lib/integrations/jira/syncEligibility";
 import { JIRA_SYNC_ADDED_TAG } from "@/lib/integrations/jira/jiraSyncTag";
-import { formatBulkSyncConfirmMessage, formatBulkSyncSummary, bulkSyncHasActionErrors, type BulkSyncTaskResult } from "@/lib/integrations/jira/bulkSyncMessages";
+import { formatBulkSyncConfirmMessage, formatBulkSyncSummaryModel, bulkSyncHasActionErrors, type BulkSyncTaskResult } from "@/lib/integrations/jira/bulkSyncMessages";
 import {
   formatBulkPullConfirmMessage,
-  formatBulkPullSummary,
+  formatBulkPullSummaryModel,
+  withDiscoverWarning,
   bulkPullHasActionErrors,
   type BulkPullTaskResult,
 } from "@/lib/integrations/jira/bulkPullMessages";
-import { isActionFailureMessage } from "@/lib/integrations/jira/bulkNotificationFormat";
+import { isActionFailureMessage, appendSummaryGroups, buildBulkSummaryResult, emphasizeMessage } from "@/lib/integrations/jira/bulkNotificationFormat";
 import { getCurrentStoryPhase, getStatusPhase, type StoryPhase } from "@/lib/scheduler/currentPhase";
 import { effectiveMobileHours, mobileAppLabel } from "@/lib/scheduler/mobilePlatform";
 import { storyPhasePlanFromTask } from "@/lib/scheduler/storyTimelineEntries";
@@ -41,6 +42,7 @@ import {
   matchResourceByAssigneeLabel,
   peopleFromResources,
   resourceDisplayName,
+  isBlockedEngineeringAssignee,
 } from "@/lib/planner/resourceIdentity";
 import { schedule } from "@/lib/scheduler/engine";
 import {
@@ -266,7 +268,7 @@ export function TaskTable() {
   const [emFilter, setEmFilter] = useState<"all" | "em" | "non-em" | "pm">("all");
   const [squadPmNames, setSquadPmNames] = useState<string[]>([]);
   const [squadPmReady, setSquadPmReady] = useState(false);
-  const [typeFilter, setTypeFilter] = useState<string[]>([]);
+  const [typeFilter, setTypeFilter] = useState<string[]>(() => buildIssueTypeFilterOptions([]));
   const [kindFilter, setKindFilter] = useState<"all" | "stories" | "standalone">("all");
   const [typeFilterOpen, setTypeFilterOpen] = useState(false);
   const [ownerFilterOpen, setOwnerFilterOpen] = useState(false);
@@ -392,10 +394,18 @@ export function TaskTable() {
     };
   }, [activeSquadId, issueKeyFingerprint]);
 
-  const feOptions = resources.filter((item) => item.type === "FE");
-  const beOptions = resources.filter((item) => item.type === "BE");
-  const mobileOptions = resources.filter((item) => item.type === "MO");
-  const qcOptions = resources.filter((item) => item.type === "QC");
+  const feOptions = resources.filter(
+    (item) => item.type === "FE" && !isBlockedEngineeringAssignee(item.name, resources),
+  );
+  const beOptions = resources.filter(
+    (item) => item.type === "BE" && !isBlockedEngineeringAssignee(item.name, resources),
+  );
+  const mobileOptions = resources.filter(
+    (item) => item.type === "MO" && !isBlockedEngineeringAssignee(item.name, resources),
+  );
+  const qcOptions = resources.filter(
+    (item) => item.type === "QC" && !isBlockedEngineeringAssignee(item.name, resources),
+  );
   const pmOptions = resources.filter((item) => item.type === "PM");
   const activeTasks = useMemo(() => activeSprintTasks(tasks), [tasks]);
   const safeResult = useMemo(() => {
@@ -531,6 +541,10 @@ export function TaskTable() {
     () => defaultVisibleStatusFilter(statusFilterOptions),
     [statusFilterOptions],
   );
+  const typeFilterOptions = useMemo(
+    () => buildIssueTypeFilterOptions(tasks.map((task) => task.issueType)),
+    [tasks],
+  );
 
   // Include unknown Jira statuses from tasks so they are not permanently hidden.
   useEffect(() => {
@@ -551,8 +565,26 @@ export function TaskTable() {
     });
   }, [statusFilterOptions]);
 
+  // Keep newly seen issue types selected when the filter is not cleared.
+  useEffect(() => {
+    setTypeFilter((current) => {
+      if (current.length === 0) {
+        return current;
+      }
+      const currentKeys = new Set(current.map((type) => type.trim().toLowerCase()));
+      const toAdd = typeFilterOptions.filter((type) => !currentKeys.has(type.trim().toLowerCase()));
+      return toAdd.length === 0 ? current : [...current, ...toAdd];
+    });
+  }, [typeFilterOptions]);
+
   const sprintFilterSummary =
     sprintFilter === "currentSprint" ? "Current" : sprintFilter === "nextSprint" ? "Next" : "All";
+
+  const isTypeFilterCustom = useMemo(() => {
+    if (typeFilter.length !== typeFilterOptions.length) return true;
+    const selectedKeys = new Set(typeFilter.map((type) => type.trim().toLowerCase()));
+    return typeFilterOptions.some((type) => !selectedKeys.has(type.trim().toLowerCase()));
+  }, [typeFilter, typeFilterOptions]);
 
   const isStatusFilterCustom = useMemo(() => {
     if (visibleStatuses.length !== defaultVisibleStatusOptions.length) return true;
@@ -987,7 +1019,7 @@ export function TaskTable() {
         }
       }
 
-      const summary = formatBulkSyncSummary({
+      const summaryResult = formatBulkSyncSummaryModel({
         results,
         synced,
         failed,
@@ -1003,15 +1035,27 @@ export function TaskTable() {
         setJiraSyncPhase("saving");
         const saved = await flushPlannerStateToServer(activeSquadId);
         if (!saved) {
+          const failedModel = appendSummaryGroups(summaryResult.model, [
+            {
+              severity: "error",
+              segments: emphasizeMessage(
+                "Planner save failed — changes are on screen but not saved; wait before refreshing",
+              ),
+              stories: [],
+            },
+          ]);
+          const failedSummary = buildBulkSummaryResult(failedModel);
           finishJiraSync({
-            summary: `${summary}\n\nErrors — planner save failed:\n• Changes are on screen but failed to save to the server — wait a moment before refreshing.`,
+            summary: failedSummary.text,
+            summaryModel: failedSummary.model,
             isError: true,
           });
           return;
         }
       }
       finishJiraSync({
-        summary,
+        summary: summaryResult.text,
+        summaryModel: summaryResult.model,
         isError: bulkSyncHasActionErrors(syncPayload),
         isWarning:
           !bulkSyncHasActionErrors(syncPayload) &&
@@ -1256,15 +1300,28 @@ export function TaskTable() {
         failed,
         skipped: Math.max(0, selectedTasksForSync.length - eligibleTasks.length),
       };
-      const summary = [importedLine, formatBulkPullSummary(pullPayload), discoverWarning ? `Warnings:\n• ${discoverWarning}` : ""]
-        .filter(Boolean)
-        .join("\n\n");
+      const summaryResult = withDiscoverWarning(
+        formatBulkPullSummaryModel(pullPayload),
+        discoverWarning,
+        importedLine,
+      );
       if (synced > 0 || missingStories.length > 0) {
         setJiraSyncPhase("saving");
         const saved = await flushPlannerStateToServer(activeSquadId);
         if (!saved) {
+          const failedModel = appendSummaryGroups(summaryResult.model, [
+            {
+              severity: "error",
+              segments: emphasizeMessage(
+                "Planner save failed — pull results are on screen but not saved; wait before refreshing",
+              ),
+              stories: [],
+            },
+          ]);
+          const failedSummary = buildBulkSummaryResult(failedModel);
           finishJiraSync({
-            summary: `${summary}\n\nErrors — planner save failed:\n• Pull results are on screen but failed to save to the server — wait a moment before refreshing.`,
+            summary: failedSummary.text,
+            summaryModel: failedSummary.model,
             isError: true,
           });
           return;
@@ -1277,7 +1334,8 @@ export function TaskTable() {
           (row.warnings ?? []).some((message) => !isActionFailureMessage(message)),
         );
       finishJiraSync({
-        summary,
+        summary: summaryResult.text,
+        summaryModel: summaryResult.model,
         isError: hasActionErrors,
         isWarning: !hasActionErrors && hasSoftWarnings,
       });
@@ -1839,7 +1897,7 @@ export function TaskTable() {
             <div className="relative" ref={typeFilterRef}>
               <button
                 type="button"
-                className={toolbarTriggerClass(typeFilterOpen || typeFilter.length > 0)}
+                className={toolbarTriggerClass(typeFilterOpen || isTypeFilterCustom)}
                 aria-expanded={typeFilterOpen}
                 onClick={() => {
                   if (!typeFilterOpen) closeOtherFilterMenus("type");
@@ -1848,24 +1906,24 @@ export function TaskTable() {
               >
                 <span>Type</span>
                 <ToolbarMenuChevron open={typeFilterOpen} />
-                {typeFilter.length > 0 ? (
-                  <span className="toolbar-strip-btn-value tabular-nums">{typeFilter.length} selected</span>
-                ) : null}
+                <span className="toolbar-strip-btn-value tabular-nums">
+                  {typeFilter.length}/{typeFilterOptions.length}
+                </span>
               </button>
-              {typeFilterOpen ? (() => {
-                const allTypes = buildIssueTypeFilterOptions(tasks.map((t) => t.issueType));
-                return (
+              {typeFilterOpen ? (
                   <div
                     className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,15rem)]"
                     aria-label="Filter tasks by type"
                   >
                     <ToolbarDropdownHeader
                       title="Issue type"
-                      subtitle="Show only matching issue types. Rows without a type count as Story."
+                      subtitle={`${typeFilter.length} of ${typeFilterOptions.length} types visible. Rows without a type count as Story.`}
                     />
                     <div className="max-h-[min(14rem,calc(100vh-12rem))] space-y-1 overflow-y-auto px-2 py-2">
-                      {allTypes.map((type) => {
-                        const on = typeFilter.includes(type);
+                      {typeFilterOptions.map((type) => {
+                        const on = typeFilter.some(
+                          (selected) => selected.trim().toLowerCase() === type.trim().toLowerCase(),
+                        );
                         return (
                           <label
                             key={type}
@@ -1877,7 +1935,12 @@ export function TaskTable() {
                               checked={on}
                               onChange={() =>
                                 setTypeFilter((prev) =>
-                                  on ? prev.filter((t) => t !== type) : [...prev, type],
+                                  on
+                                    ? prev.filter(
+                                        (selected) =>
+                                          selected.trim().toLowerCase() !== type.trim().toLowerCase(),
+                                      )
+                                    : [...prev, type],
                                 )
                               }
                             />
@@ -1891,16 +1954,25 @@ export function TaskTable() {
                         type="button"
                         className="toolbar-dropdown-footer-btn"
                         onClick={() => {
+                          setTypeFilter([...typeFilterOptions]);
+                          setTypeFilterOpen(false);
+                        }}
+                      >
+                        Show all
+                      </button>
+                      <button
+                        type="button"
+                        className="toolbar-dropdown-footer-btn"
+                        onClick={() => {
                           setTypeFilter([]);
                           setTypeFilterOpen(false);
                         }}
                       >
-                        Reset
+                        Clear
                       </button>
                     </div>
                   </div>
-                );
-              })() : null}
+              ) : null}
             </div>
             <div className="relative" ref={ownerFilterRef}>
               <button
@@ -2544,7 +2616,7 @@ export function TaskTable() {
                         setVisibleStatuses(defaultVisibleStatusOptions);
                         setSprintFilter("all");
                         setEmFilter("all");
-                        setTypeFilter([]);
+                        setTypeFilter([...typeFilterOptions]);
                         setKindFilter("all");
                       }}
                     >
@@ -3557,14 +3629,22 @@ export function TaskTable() {
                             detailsRows.map((row) => (
                               <div key={row.key} className="task-details-chip-row">
                                 {row.left ? (
-                                  <span className={`task-details-chip ${row.left.toneClass}`}>
+                                  <span
+                                    className={`task-details-chip ${row.left.toneClass}${
+                                      row.left.incomplete ? " task-details-chip-incomplete" : ""
+                                    }`}
+                                  >
                                     {row.left.label}
                                   </span>
                                 ) : (
                                   <span className="task-details-chip-slot" aria-hidden />
                                 )}
                                 {row.right ? (
-                                  <span className={`task-details-chip ${row.right.toneClass}`}>
+                                  <span
+                                    className={`task-details-chip ${row.right.toneClass}${
+                                      row.right.incomplete ? " task-details-chip-incomplete" : ""
+                                    }`}
+                                  >
                                     {row.right.label}
                                   </span>
                                 ) : (
@@ -3820,6 +3900,19 @@ export function TaskTable() {
                                       </div>
                                     );
                                   })}
+                                </div>
+                              ) : task.feHours > 0 || task.qcHours > 0 ? (
+                                <div className="mt-0.5 space-y-0.5 border-t border-emerald-100/80 pt-0.5 text-slate-700">
+                                  {task.feHours > 0 ? (
+                                    <div className="truncate" title={`Dev · ${task.feHours}h`}>
+                                      Dev · {task.feHours}h
+                                    </div>
+                                  ) : null}
+                                  {task.qcHours > 0 ? (
+                                    <div className="truncate" title={`Testing · ${task.qcHours}h`}>
+                                      Testing · {task.qcHours}h
+                                    </div>
+                                  ) : null}
                                 </div>
                               ) : (
                                 <div className="text-slate-500">No synced subtasks yet</div>

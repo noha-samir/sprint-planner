@@ -108,8 +108,9 @@ describe("bulkSyncTasksToJira", () => {
     });
     expect(createJiraSubtask).toHaveBeenCalledTimes(1);
     const summary = formatBulkSyncSummary(result);
-    expect(summary).toContain("Errors — Discoped (not synced):");
-    expect(summary).toContain("• Old Story");
+    expect(summary).toContain("Errors:");
+    expect(summary).toContain("Discoped — not synced");
+    expect(summary).toContain("— Old Story");
   });
 
   it("syncs zero-hour assignee and reports hours-without-assignee errors at the end", async () => {
@@ -141,11 +142,9 @@ describe("bulkSyncTasksToJira", () => {
     expect(createJiraSubtask).toHaveBeenCalled();
     const summary = formatBulkSyncSummary(result);
     expect(summary).toContain("Warnings:");
-    expect(summary).toContain("Errors — some updates did not apply:");
+    expect(summary).toContain("Errors:");
     expect(summary).toContain('BE has 5h on "Zero FE" but no assignee');
-    expect(summary.indexOf("Warnings:")).toBeGreaterThan(
-      summary.indexOf("Errors — some updates did not apply:"),
-    );
+    expect(summary.indexOf("Warnings:")).toBeGreaterThan(summary.indexOf("Errors:"));
   });
 
   it("formatBulkSyncSummary uses plain language for not synced vs failed", () => {
@@ -167,8 +166,8 @@ describe("bulkSyncTasksToJira", () => {
     expect(summary).toContain("14 stories synced to Jira.");
     expect(summary).not.toContain("skipped");
     expect(summary).not.toContain("0 failed");
-    expect(summary).toContain("1 story not synced — add a Jira link:");
-    expect(summary).toContain("• Counter Hub – PUDO by Bosta");
+    expect(summary).toContain("1 story not synced — add a Jira link");
+    expect(summary).toContain("— Counter Hub – PUDO by Bosta");
   });
 
   it("formatBulkSyncSummary separates failed from not synced", () => {
@@ -202,7 +201,7 @@ describe("bulkSyncTasksToJira", () => {
     });
     expect(summary).toContain("not synced — add a Jira link");
     expect(summary).toContain("not synced — add an FE/BE assignee or FE/BE/QC hours");
-    expect(summary).toContain("Errors — Jira returned an error");
+    expect(summary).toContain("Errors:");
     expect(summary).toContain("• Permission denied");
     expect(summary).toContain("— Story C");
   });

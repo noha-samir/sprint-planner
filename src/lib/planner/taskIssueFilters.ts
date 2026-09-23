@@ -42,12 +42,12 @@ export function buildIssueTypeFilterOptions(taskIssueTypes: Iterable<string | nu
   return options;
 }
 
-/** True when the task’s effective type is in the selected Type filter (empty filter = match all). */
+/** True when the task’s effective type is in the selected Type filter (empty = match none). */
 export function taskMatchesIssueTypeFilter(
   task: Pick<Task, "issueType">,
   selectedTypes: string[],
 ): boolean {
-  if (selectedTypes.length === 0) return true;
+  if (selectedTypes.length === 0) return false;
   const effective = effectiveIssueType(task.issueType);
   return selectedTypes.some((type) => type.trim().toLowerCase() === effective.toLowerCase());
 }
@@ -59,6 +59,11 @@ export function isStandaloneIssueType(issueType?: string | null): boolean {
   if (normalized === "story" || normalized === "epic") return false;
   if (standaloneTypeSet.has(normalized)) return true;
   return !normalized.includes("sub-task") && !normalized.includes("subtask");
+}
+
+/** Jira / planner "Technical Task" — Dev is the parent assignee; no FE/BE role slots. */
+export function isTechnicalTaskIssueType(issueType?: string | null): boolean {
+  return issueType?.trim().toLowerCase() === "technical task";
 }
 
 /** Standalone planner rows: bugs/tasks/technical tasks without a parent story, or manual rows with no link. */

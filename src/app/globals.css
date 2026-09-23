@@ -256,6 +256,40 @@ body {
     max-height: min(40vh, 18rem);
   }
 
+  .jira-sync-banner-body {
+    @apply mt-1 min-h-0 flex-1 space-y-2 overflow-x-hidden overflow-y-auto text-[12px] leading-snug;
+    overscroll-behavior: contain;
+    max-height: min(40vh, 18rem);
+  }
+
+  .jira-sync-banner-headline {
+    @apply font-semibold;
+  }
+
+  .jira-sync-banner-section-title {
+    @apply mb-1 text-[11px] font-bold uppercase tracking-wide opacity-80;
+  }
+
+  .jira-sync-banner-groups {
+    @apply m-0 list-none space-y-1.5 p-0;
+  }
+
+  .jira-sync-banner-group-message {
+    @apply font-medium;
+  }
+
+  .jira-sync-banner-group-message strong {
+    @apply font-extrabold;
+  }
+
+  .jira-sync-banner-stories {
+    @apply mt-1 flex flex-wrap gap-1;
+  }
+
+  .jira-sync-banner-story-chip {
+    @apply max-w-[12rem] truncate rounded-md border border-black/10 bg-white/70 px-1.5 py-0.5 text-[11px] font-semibold text-slate-800;
+  }
+
   .jira-sync-banner-dismiss {
     @apply shrink-0 rounded-lg px-2 py-0.5 text-base leading-none opacity-70 hover:bg-black/5 hover:opacity-100;
   }
@@ -1884,6 +1918,11 @@ body {
 
   .task-details-chip {
     @apply inline-flex h-5 w-full min-w-0 items-center justify-center truncate rounded-md border px-1 py-0 text-[9px] font-semibold tabular-nums leading-none;
+  }
+
+  .task-details-chip-incomplete {
+    border-style: dashed;
+    opacity: 0.88;
   }
 
   /* Match expanded phase-box palette (bg / border / text). */

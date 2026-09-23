@@ -2,6 +2,7 @@ import type { Task } from "@/lib/scheduler/types";
 import { isDiscopedTaskStatus, normalizeTaskStatus } from "@/lib/scheduler/taskStatus";
 import {
   matchPlannerPerson,
+  isBlockedEngineeringAssignee,
   type PlannerPersonRef,
 } from "@/lib/planner/resourceIdentity";
 import {
@@ -24,12 +25,15 @@ import {
 } from "./bulkPullMessages";
 import { resolveIsEmStory } from "./emStoryFlag";
 import { resolveIsPmStory } from "@/lib/planner/pmStoryFlag";
+import { isStandaloneIssueType, isTechnicalTaskIssueType } from "@/lib/planner/taskIssueFilters";
 
 export type { BulkPullTaskResult, BulkPullFromJiraResult } from "./bulkPullMessages";
 export {
   JIRA_BULK_PULL_SKIP_REASON,
   formatBulkPullConfirmMessage,
   formatBulkPullSummary,
+  formatBulkPullSummaryModel,
+  withDiscoverWarning,
 } from "./bulkPullMessages";
 
 export interface SyncTaskFromJiraResult {
@@ -237,8 +241,15 @@ const toPlannerPeople = (
   peopleOrNames: PlannerPersonRef[] | string[] = [],
 ): PlannerPersonRef[] =>
   peopleOrNames.map((item) =>
-    typeof item === "string" ? { name: item } : { name: item.name, nickname: item.nickname },
+    typeof item === "string"
+      ? { name: item }
+      : { name: item.name, nickname: item.nickname, type: item.type },
   );
+
+const engineeringAssigneeNames = (
+  names: string[],
+  people: PlannerPersonRef[],
+): string[] => names.filter((name) => !isBlockedEngineeringAssignee(name, people));
 
 /**
  * Pull parent status, QC/hours, and FE/BE/MO subtask assignees/hours into a planner patch.
@@ -412,7 +423,10 @@ export const syncTaskFromJira = async (
       return;
     }
     patch[hoursKey] = refs.reduce((sum, ref) => sum + ref.hours, 0);
-    const names = uniqueAssigneeNames(refs.map((ref) => ref.assigneeName));
+    const names = engineeringAssigneeNames(
+      uniqueAssigneeNames(refs.map((ref) => ref.assigneeName)),
+      people,
+    );
     if (names.length > 0) {
       patch[assigneesKey] = names;
     }
@@ -434,40 +448,92 @@ export const syncTaskFromJira = async (
     (item): item is JiraTaskSubtaskRef => item !== null,
   );
 
-  applyRoleRefs("fe", feRefs, "feHours", "feDevs", "No [FE] subtask found under the Jira story");
-  applyRoleRefs("be", beRefs, "beHours", "beDevs", "No [BE] subtask found under the Jira story");
-  applyRoleRefs(
-    "android",
-    androidRefs,
-    "androidHours",
-    "androidDevs",
-    (task.androidDevs ?? []).some((name) => name.trim().length > 0)
-      ? "No [Android] (or legacy [MO]) subtask found under the Jira story"
-      : null,
-  );
-  applyRoleRefs(
-    "ios",
-    iosRefs,
-    "iosHours",
-    "iosDevs",
-    (task.iosDevs ?? []).some((name) => name.trim().length > 0)
-      ? "No [IOS] subtask found under the Jira story"
-      : null,
-  );
+  const effectiveIssueType = patch.issueType ?? task.issueType;
+  const standalone = isStandaloneIssueType(effectiveIssueType);
+  const technical = isTechnicalTaskIssueType(effectiveIssueType);
+  const requireFeBeSubtasks = !standalone;
 
-  const parentDevHours = hoursFromJiraNumberField(
-    parentFields[fieldIds.developmentEstimateHours.trim()],
-  );
-  if (
-    parentDevHours != null &&
-    feRefs.length === 0 &&
-    beRefs.length === 0 &&
-    androidRefs.length === 0 &&
-    iosRefs.length === 0
-  ) {
-    warnings.push(
-      `Parent development estimate is ${parentDevHours}h but no [FE]/[BE]/[Android]/[IOS] subtasks were found to apply it`,
+  if (technical) {
+    // Technical Task: Dev hours only — never assign FE/BE people (assignee may be any role).
+    patch.feDevs = [];
+    patch.beDevs = [];
+    patch.beHours = 0;
+
+    const feBeHours =
+      feRefs.reduce((sum, ref) => sum + ref.hours, 0) +
+      beRefs.reduce((sum, ref) => sum + ref.hours, 0);
+    const parentDevHours = hoursFromJiraNumberField(
+      parentFields[fieldIds.developmentEstimateHours.trim()],
     );
+    if (feBeHours > 0) {
+      patch.feHours = feBeHours;
+    } else if (parentDevHours != null) {
+      patch.feHours = parentDevHours;
+    }
+
+    applyRoleRefs(
+      "android",
+      androidRefs,
+      "androidHours",
+      "androidDevs",
+      (task.androidDevs ?? []).some((name) => name.trim().length > 0)
+        ? "No Android subtask"
+        : null,
+    );
+    applyRoleRefs(
+      "ios",
+      iosRefs,
+      "iosHours",
+      "iosDevs",
+      (task.iosDevs ?? []).some((name) => name.trim().length > 0) ? "No IOS subtask" : null,
+    );
+  } else {
+    applyRoleRefs(
+      "fe",
+      feRefs,
+      "feHours",
+      "feDevs",
+      requireFeBeSubtasks ? "No FE subtask" : null,
+    );
+    applyRoleRefs(
+      "be",
+      beRefs,
+      "beHours",
+      "beDevs",
+      requireFeBeSubtasks ? "No BE subtask" : null,
+    );
+    applyRoleRefs(
+      "android",
+      androidRefs,
+      "androidHours",
+      "androidDevs",
+      (task.androidDevs ?? []).some((name) => name.trim().length > 0)
+        ? "No Android subtask"
+        : null,
+    );
+    applyRoleRefs(
+      "ios",
+      iosRefs,
+      "iosHours",
+      "iosDevs",
+      (task.iosDevs ?? []).some((name) => name.trim().length > 0)
+        ? "No IOS subtask"
+        : null,
+    );
+
+    // Parent Development Estimate → Dev hours (feHours) when no role hours yet.
+    // Includes Stories with only a parent estimate (no [FE]/[BE]/…) so Details shows Dev.
+    const parentDevHours = hoursFromJiraNumberField(
+      parentFields[fieldIds.developmentEstimateHours.trim()],
+    );
+    const roleHoursTotal =
+      (patch.feHours ?? 0) +
+      (patch.beHours ?? 0) +
+      (patch.androidHours ?? 0) +
+      (patch.iosHours ?? 0);
+    if (parentDevHours != null && roleHoursTotal <= 0) {
+      patch.feHours = parentDevHours;
+    }
   }
 
   const subtasks = [...feRefs, ...beRefs, ...androidRefs, ...iosRefs];

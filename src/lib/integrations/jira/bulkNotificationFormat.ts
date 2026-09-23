@@ -7,6 +7,29 @@ export type StoryMessage = {
   message: string;
 };
 
+export type TextSegment = {
+  text: string;
+  emphasis?: boolean;
+};
+
+export type NotificationGroup = {
+  severity: "error" | "warning" | "info";
+  /** Short message with optional bold segments. */
+  segments: TextSegment[];
+  /** Stories that share this message (grouped). */
+  stories: string[];
+};
+
+export type BulkNotificationSummary = {
+  headline: string;
+  groups: NotificationGroup[];
+};
+
+export type BulkSummaryResult = {
+  model: BulkNotificationSummary;
+  text: string;
+};
+
 const normalizeMessageKey = (message: string): string => message.trim().replace(/\s+/g, " ");
 
 /**
@@ -20,6 +43,7 @@ export function isActionFailureMessage(message: string): boolean {
   if (/Status sync failed/i.test(text)) return true;
   if (/Failed to (create|update|load|sync|read)/i.test(text)) return true;
   if (/is not on the Resources roster/i.test(text)) return true;
+  if (/Parent Dev \d+(\.\d+)?h — no role subtasks/i.test(text)) return true;
   if (/but no \[FE\]\/\[BE\]\/\[Android\]\/\[IOS\] subtasks were found to apply it/i.test(text)) {
     return true;
   }
@@ -27,16 +51,44 @@ export function isActionFailureMessage(message: string): boolean {
   return false;
 }
 
+const EMPHASIS_RE =
+  /(\d+(?:\.\d+)?h)|\b(FE|BE|QC|Dev|Testing|Android|IOS|MO)\b|(no (?:FE |BE |Android |IOS |role )?subtasks?)|(no assignee)|(was not updated)|(not created\/updated)|(roster)/gi;
+
+/**
+ * Split a message into plain + emphasized segments for the banner.
+ */
+export function emphasizeMessage(message: string): TextSegment[] {
+  const text = normalizeMessageKey(message);
+  if (!text) return [];
+  const segments: TextSegment[] = [];
+  let lastIndex = 0;
+  EMPHASIS_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = EMPHASIS_RE.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ text: text.slice(lastIndex, match.index) });
+    }
+    segments.push({ text: match[0], emphasis: true });
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    segments.push({ text: text.slice(lastIndex) });
+  }
+  return segments.length > 0 ? segments : [{ text }];
+}
+
+export function segmentsToPlainText(segments: TextSegment[]): string {
+  return segments.map((segment) => segment.text).join("");
+}
+
 /**
  * Group identical messages and list the stories they affect.
- *
- * Example:
- * • QC Engineer "X" … was not updated
- *   — Story A
- *   — Story B
  */
-export function formatGroupedStoryMessages(entries: StoryMessage[]): string {
-  if (entries.length === 0) return "";
+export function groupStoryMessages(
+  entries: StoryMessage[],
+  severity: NotificationGroup["severity"],
+): NotificationGroup[] {
+  if (entries.length === 0) return [];
 
   const groups = new Map<string, string[]>();
   for (const entry of entries) {
@@ -50,12 +102,24 @@ export function formatGroupedStoryMessages(entries: StoryMessage[]): string {
     groups.set(message, stories);
   }
 
-  return [...groups.entries()]
-    .map(([message, stories]) => {
-      if (stories.length === 1) {
-        return `• ${message}\n  — ${stories[0]}`;
+  return [...groups.entries()].map(([message, stories]) => ({
+    severity,
+    segments: emphasizeMessage(message),
+    stories,
+  }));
+}
+
+/**
+ * Group identical messages as plain text (tests / fallback).
+ */
+export function formatGroupedStoryMessages(entries: StoryMessage[]): string {
+  return groupStoryMessages(entries, "info")
+    .map((group) => {
+      const message = segmentsToPlainText(group.segments);
+      if (group.stories.length === 1) {
+        return `• ${message}\n  — ${group.stories[0]}`;
       }
-      return `• ${message}\n${stories.map((story) => `  — ${story}`).join("\n")}`;
+      return `• ${message}\n${group.stories.map((story) => `  — ${story}`).join("\n")}`;
     })
     .join("\n");
 }
@@ -78,3 +142,47 @@ export function partitionMessages(entries: StoryMessage[]): {
 
 export const storyCountLabel = (count: number): string =>
   count === 1 ? "1 story" : `${count} stories`;
+
+/**
+ * Flatten a structured summary to plain text (tests / a11y).
+ */
+export function summaryToPlainText(model: BulkNotificationSummary): string {
+  const lines: string[] = [model.headline];
+  let currentSeverity: NotificationGroup["severity"] | null = null;
+
+  for (const group of model.groups) {
+    if (group.severity !== currentSeverity) {
+      currentSeverity = group.severity;
+      if (group.severity === "error") {
+        lines.push("Errors:");
+      } else if (group.severity === "warning") {
+        lines.push("Warnings:");
+      }
+    }
+    const message = segmentsToPlainText(group.segments);
+    if (group.stories.length === 0) {
+      lines.push(`• ${message}`);
+    } else if (group.stories.length === 1) {
+      lines.push(`• ${message}\n  — ${group.stories[0]}`);
+    } else {
+      lines.push(`• ${message}\n${group.stories.map((story) => `  — ${story}`).join("\n")}`);
+    }
+  }
+
+  return lines.filter(Boolean).join("\n\n");
+}
+
+export function buildBulkSummaryResult(model: BulkNotificationSummary): BulkSummaryResult {
+  return { model, text: summaryToPlainText(model) };
+}
+
+export function appendSummaryGroups(
+  base: BulkNotificationSummary,
+  extra: NotificationGroup[],
+): BulkNotificationSummary {
+  return { ...base, groups: [...base.groups, ...extra] };
+}
+
+export function mergeSummaryText(parts: Array<string | null | undefined>): string {
+  return parts.filter((part) => Boolean(part && part.trim())).join("\n\n");
+}

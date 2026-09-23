@@ -1,9 +1,80 @@
 "use client";
 
 import { useEffect } from "react";
+import type {
+  BulkNotificationSummary,
+  NotificationGroup,
+  TextSegment,
+} from "@/lib/integrations/jira/bulkNotificationFormat";
 import { useJiraSyncStore } from "@/store/useJiraSyncStore";
 
 const SUCCESS_BANNER_DISMISS_MS = 10_000;
+
+const renderSegments = (segments: TextSegment[]) =>
+  segments.map((segment, index) =>
+    segment.emphasis ? (
+      <strong key={`${segment.text}-${index}`}>{segment.text}</strong>
+    ) : (
+      <span key={`${segment.text}-${index}`}>{segment.text}</span>
+    ),
+  );
+
+const SummaryGroups = ({ model }: { model: BulkNotificationSummary }) => {
+  const errors = model.groups.filter((group) => group.severity === "error");
+  const warnings = model.groups.filter((group) => group.severity === "warning");
+  const info = model.groups.filter((group) => group.severity === "info");
+
+  const renderSection = (title: string, groups: NotificationGroup[], className: string) => {
+    if (groups.length === 0) return null;
+    return (
+      <div className={`jira-sync-banner-section ${className}`}>
+        <div className="jira-sync-banner-section-title">{title}</div>
+        <ul className="jira-sync-banner-groups">
+          {groups.map((group, index) => (
+            <li key={`${title}-${index}`} className="jira-sync-banner-group">
+              <div className="jira-sync-banner-group-message">{renderSegments(group.segments)}</div>
+              {group.stories.length > 0 ? (
+                <div className="jira-sync-banner-stories">
+                  {group.stories.map((story) => (
+                    <span key={story} className="jira-sync-banner-story-chip" title={story}>
+                      {story}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  };
+
+  return (
+    <div className="jira-sync-banner-body">
+      <p className="jira-sync-banner-headline">{model.headline}</p>
+      {renderSection("Errors", errors, "jira-sync-banner-section-error")}
+      {renderSection("Warnings", warnings, "jira-sync-banner-section-warning")}
+      {info.length > 0 ? (
+        <ul className="jira-sync-banner-groups jira-sync-banner-info">
+          {info.map((group, index) => (
+            <li key={`info-${index}`} className="jira-sync-banner-group">
+              <div className="jira-sync-banner-group-message">{renderSegments(group.segments)}</div>
+              {group.stories.length > 0 ? (
+                <div className="jira-sync-banner-stories">
+                  {group.stories.map((story) => (
+                    <span key={story} className="jira-sync-banner-story-chip" title={story}>
+                      {story}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+};
 
 /**
  * App-wide Jira push/pull progress + completion summary.
@@ -18,6 +89,7 @@ export function JiraSyncBanner() {
   const currentStoryName = useJiraSyncStore((state) => state.currentStoryName);
   const tasks = useJiraSyncStore((state) => state.tasks);
   const summary = useJiraSyncStore((state) => state.summary);
+  const summaryModel = useJiraSyncStore((state) => state.summaryModel);
   const summaryIsError = useJiraSyncStore((state) => state.summaryIsError);
   const summaryIsWarning = useJiraSyncStore((state) => state.summaryIsWarning);
   const clearSummary = useJiraSyncStore((state) => state.clearSummary);
@@ -109,7 +181,11 @@ export function JiraSyncBanner() {
           ×
         </button>
       </div>
-      <p className="jira-sync-banner-summary">{summary}</p>
+      {summaryModel ? (
+        <SummaryGroups model={summaryModel} />
+      ) : (
+        <p className="jira-sync-banner-summary">{summary}</p>
+      )}
     </div>
   );
 }

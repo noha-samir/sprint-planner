@@ -32,7 +32,8 @@ import {
 } from "@/lib/planner/scheduleSnapshot";
 import { archiveSprintSnapshot } from "@/lib/history/client";
 import type { BulkPasteRow } from "@/lib/planner/bulkTaskPaste";
-import { coerceAssigneeNamesToRoster } from "@/lib/planner/resourceIdentity";
+import { coerceAssigneeNamesToRoster, coerceAssigneesForRole } from "@/lib/planner/resourceIdentity";
+import { isTechnicalTaskIssueType } from "@/lib/planner/taskIssueFilters";
 import {
   collapseTasksByStoryLink,
   filterDraftsSkippingExistingStoryLinks,
@@ -386,14 +387,36 @@ const buildState = (
   const normalizedResources = ensureDefaultMobileResources(normalizeResourceCapacities(resources));
   const normalizedTasks = tasks.map((task) => {
     const normalized = normalizeTask(task);
+    if (isTechnicalTaskIssueType(normalized.issueType)) {
+      // Technical Task: Dev hours only — strip FE/BE people; fold leftover BE hours into Dev.
+      const feHours =
+        normalized.feHours > 0 ? normalized.feHours : Math.max(0, normalized.beHours);
+      return {
+        ...normalized,
+        feHours,
+        feDevs: [],
+        beDevs: [],
+        beHours: 0,
+        androidDevs: coerceAssigneesForRole(normalized.androidDevs, normalizedResources, ["MO"]),
+        iosDevs: coerceAssigneesForRole(normalized.iosDevs, normalizedResources, ["MO"]),
+        qcs: coerceAssigneesForRole(normalized.qcs, normalizedResources, ["QC"]),
+        productManagers: coerceAssigneeNamesToRoster(
+          normalized.productManagers ?? [],
+          normalizedResources,
+        ),
+      };
+    }
     return {
       ...normalized,
-      feDevs: coerceAssigneeNamesToRoster(normalized.feDevs, normalizedResources),
-      beDevs: coerceAssigneeNamesToRoster(normalized.beDevs, normalizedResources),
-      androidDevs: coerceAssigneeNamesToRoster(normalized.androidDevs, normalizedResources),
-      iosDevs: coerceAssigneeNamesToRoster(normalized.iosDevs, normalizedResources),
-      qcs: coerceAssigneeNamesToRoster(normalized.qcs, normalizedResources),
-      productManagers: coerceAssigneeNamesToRoster(normalized.productManagers ?? [], normalizedResources),
+      feDevs: coerceAssigneesForRole(normalized.feDevs, normalizedResources, ["FE"]),
+      beDevs: coerceAssigneesForRole(normalized.beDevs, normalizedResources, ["BE"]),
+      androidDevs: coerceAssigneesForRole(normalized.androidDevs, normalizedResources, ["MO"]),
+      iosDevs: coerceAssigneesForRole(normalized.iosDevs, normalizedResources, ["MO"]),
+      qcs: coerceAssigneesForRole(normalized.qcs, normalizedResources, ["QC"]),
+      productManagers: coerceAssigneeNamesToRoster(
+        normalized.productManagers ?? [],
+        normalizedResources,
+      ),
     };
   });
   const { tasks: boardTasks, removedIds } = options?.preserveDuplicateStoryLinks

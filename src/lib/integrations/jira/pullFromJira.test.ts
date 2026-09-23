@@ -246,8 +246,8 @@ describe("syncTaskFromJira", () => {
 
     const result = await syncTaskFromJira(baseTask(), defaultSquadJiraConfig());
     expect(result.warnings.some((w) => /Android|IOS|MO/i.test(w))).toBe(false);
-    expect(result.warnings).not.toContain("No [Android] (or legacy [MO]) subtask found under the Jira story");
-    expect(result.warnings).not.toContain("No [IOS] subtask found under the Jira story");
+    expect(result.warnings).not.toContain("No Android subtask");
+    expect(result.warnings).not.toContain("No IOS subtask");
     vi.unstubAllGlobals();
   });
 
@@ -283,8 +283,8 @@ describe("syncTaskFromJira", () => {
       baseTask({ androidDevs: ["Hassan"], iosDevs: ["Mina"] }),
       defaultSquadJiraConfig(),
     );
-    expect(result.warnings).toContain("No [Android] (or legacy [MO]) subtask found under the Jira story");
-    expect(result.warnings).toContain("No [IOS] subtask found under the Jira story");
+    expect(result.warnings).toContain("No Android subtask");
+    expect(result.warnings).toContain("No IOS subtask");
     vi.unstubAllGlobals();
   });
 
@@ -303,10 +303,162 @@ describe("syncTaskFromJira", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await syncTaskFromJira(baseTask(), defaultSquadJiraConfig());
-    expect(result.warnings).toContain("No [FE] subtask found under the Jira story");
-    expect(result.warnings).toContain("No [BE] subtask found under the Jira story");
-    expect(result.warnings).not.toContain("No [Android] (or legacy [MO]) subtask found under the Jira story");
-    expect(result.warnings).not.toContain("No [IOS] subtask found under the Jira story");
+    expect(result.warnings).toContain("No FE subtask");
+    expect(result.warnings).toContain("No BE subtask");
+    expect(result.warnings).not.toContain("No Android subtask");
+    expect(result.warnings).not.toContain("No IOS subtask");
+    vi.unstubAllGlobals();
+  });
+
+  it("applies Story parent Dev hours when no role subtask hours", async () => {
+    mockedListParentSubtasks.mockResolvedValueOnce([]);
+
+    const config = defaultSquadJiraConfig();
+    config.parentStoryFields = {
+      developmentEstimateHours: "customfield_10001",
+      testingEstimateHours: "customfield_10002",
+      qcEngineer: "customfield_10003",
+      productManager: "customfield_10004",
+      branchName: "customfield_10005",
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/issue/BR-1?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            fields: {
+              status: { name: "To Do" },
+              issuetype: { name: "Story" },
+              customfield_10001: 8,
+              customfield_10002: 3,
+            },
+          }),
+        };
+      }
+      return { ok: false, text: async () => "missing" };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await syncTaskFromJira(baseTask({ issueType: "Story" }), config);
+    expect(result.warnings.some((warning) => /Parent Dev/.test(warning))).toBe(false);
+    expect(result.patch.feHours).toBe(8);
+    expect(result.patch.qcHours).toBe(3);
+    vi.unstubAllGlobals();
+  });
+
+  it("applies parent Dev hours for Technical Task without requiring FE/BE subtasks", async () => {
+    mockedListParentSubtasks.mockResolvedValueOnce([]);
+
+    const config = defaultSquadJiraConfig();
+    config.parentStoryFields = {
+      developmentEstimateHours: "customfield_10001",
+      testingEstimateHours: "customfield_10002",
+      qcEngineer: "customfield_10003",
+      productManager: "customfield_10004",
+      branchName: "customfield_10005",
+    };
+    config.assigneeMap = { Karim: "acc-dev" };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/issue/BR-1?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            fields: {
+              status: { name: "To Do" },
+              issuetype: { name: "Technical Task" },
+              assignee: { accountId: "acc-dev", displayName: "Karim" },
+              customfield_10001: 8,
+              customfield_10002: 3,
+            },
+          }),
+        };
+      }
+      return { ok: false, text: async () => "missing" };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await syncTaskFromJira(
+      baseTask({ issueType: "Technical Task", feDevs: ["OldFe"], beDevs: ["OldBe"], beHours: 4 }),
+      config,
+      [{ name: "Karim", type: "FE" }],
+    );
+    expect(result.warnings).not.toContain("No FE subtask");
+    expect(result.warnings).not.toContain("No BE subtask");
+    expect(result.warnings.some((warning) => /Parent Dev/.test(warning))).toBe(false);
+    expect(result.patch.feHours).toBe(8);
+    expect(result.patch.qcHours).toBe(3);
+    expect(result.patch.feDevs).toEqual([]);
+    expect(result.patch.beDevs).toEqual([]);
+    expect(result.patch.beHours).toBe(0);
+    expect(result.patch.issueType).toBe("Technical Task");
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps FE/BE subtasks in Jira meta for Technical Task but not as planner FE/BE assignees", async () => {
+    mockedListParentSubtasks.mockResolvedValueOnce([
+      { key: "BR-10", summary: "[FE] Tech" },
+      { key: "BR-11", summary: "[BE] Tech" },
+    ]);
+
+    const config = defaultSquadJiraConfig();
+    config.parentStoryFields = {
+      developmentEstimateHours: "customfield_10001",
+      testingEstimateHours: "customfield_10002",
+      qcEngineer: "customfield_10003",
+      productManager: "customfield_10004",
+      branchName: "customfield_10005",
+    };
+    config.assigneeMap = { Karim: "acc-dev", Casey: "acc-fe", Abbas: "acc-be" };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/issue/BR-1?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            fields: {
+              status: { name: "To Do" },
+              issuetype: { name: "Technical Task" },
+              assignee: { accountId: "acc-dev", displayName: "Karim" },
+              customfield_10001: 8,
+            },
+          }),
+        };
+      }
+      if (url.includes("/issue/BR-10?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            fields: {
+              assignee: { accountId: "acc-fe", displayName: "Casey" },
+              timetracking: { originalEstimateSeconds: 7200 },
+            },
+          }),
+        };
+      }
+      if (url.includes("/issue/BR-11?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            fields: {
+              assignee: { accountId: "acc-be", displayName: "Abbas" },
+              timetracking: { originalEstimateSeconds: 3600 },
+            },
+          }),
+        };
+      }
+      return { ok: false, text: async () => "missing" };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await syncTaskFromJira(baseTask({ issueType: "Technical Task" }), config, [
+      { name: "Karim", type: "FE" },
+      { name: "Casey", type: "FE" },
+      { name: "Abbas", type: "BE" },
+    ]);
+    expect(result.patch.feDevs).toEqual([]);
+    expect(result.patch.beDevs).toEqual([]);
+    expect(result.patch.beHours).toBe(0);
+    expect(result.patch.feHours).toBe(3); // 2h FE + 1h BE subtask hours as Dev total
+    expect(result.jira.subtasks.map((item) => item.key).sort()).toEqual(["BR-10", "BR-11"]);
     vi.unstubAllGlobals();
   });
 
@@ -471,7 +623,7 @@ describe("formatBulkPull messages", () => {
       failed: 1,
       skipped: 1,
       results: [
-        { taskId: "a", storyName: "A", ok: true, warnings: ["No [FE] subtask found under the Jira story"] },
+        { taskId: "a", storyName: "A", ok: true, warnings: ["No FE subtask"] },
         {
           taskId: "b",
           storyName: "B",
@@ -489,7 +641,8 @@ describe("formatBulkPull messages", () => {
     });
     expect(summary).toContain("1 story pulled from Jira");
     expect(summary).toContain("not pulled — add a Jira link");
-    expect(summary).toContain("Discoped stories are not synced from Jira");
+    expect(summary).toContain("Discoped — not pulled");
     expect(summary).toContain("Warnings:");
+    expect(summary).toContain("No FE subtask");
   });
 });
