@@ -68,6 +68,15 @@ import {
 
 export { activeSprintTasks } from "./taskRules";
 
+export type ServerPlannerSnapshot = {
+  tasks: Task[];
+  resources: Resource[];
+  config: Config;
+  plannerMeta?: PlannerMeta;
+  timelineStartDate?: string | null;
+  serverUpdatedAt?: string | null;
+};
+
 interface PlannerState {
   hasHydrated: boolean;
   activeSquadId: string | null;
@@ -93,6 +102,11 @@ interface PlannerState {
   updateTask: (id: string, patch: Partial<Task>) => void;
   /** Apply the same patch to many tasks in one reschedule / save. */
   updateTasks: (ids: string[], patch: Partial<Task>) => void;
+  /**
+   * Apply a different patch per task in one reschedule / save (e.g. all Jira pull/push results at once).
+   * Same rules as updateTask (priority uniqueness, release compaction, Need remark).
+   */
+  applyTaskPatches: (patches: Array<{ id: string; patch: Partial<Task> }>) => void;
   removeTask: (id: string) => void;
   addResource: (type: Resource["type"]) => void;
   /** Append a Jira-validated roster person (exact display name). */
@@ -113,16 +127,20 @@ interface PlannerState {
     resources: Resource[];
     config: Config;
   }) => void;
-  hydrateFromServer: (data: {
-    tasks: Task[];
-    resources: Resource[];
-    config: Config;
-    plannerMeta?: PlannerMeta;
-    timelineStartDate?: string | null;
-    serverUpdatedAt?: string | null;
-  }) => void;
+  hydrateFromServer: (data: ServerPlannerSnapshot) => void;
+  /**
+   * After a save conflict: take the saved planner and re-apply only our local versions of `keepLocalTaskIds`
+   * (e.g. stories a Jira pull/push just changed). Stays dirty so the next save writes the merge.
+   */
+  rebaseOntoServerSnapshot: (data: ServerPlannerSnapshot, keepLocalTaskIds: string[]) => void;
+  /** Drop unsaved local edits and load the saved planner as-is. */
+  replaceWithServerSnapshot: (data: ServerPlannerSnapshot) => void;
   markProgressNow: () => void;
-  markPlannerSyncedToServer: (serverUpdatedAt?: string | null) => void;
+  /**
+   * Record a successful save. Clears `lastLocalMutationAt` only when it still equals `savedMutationAt`
+   * (the stamp captured when the save started); omit it to clear unconditionally.
+   */
+  markPlannerSyncedToServer: (serverUpdatedAt?: string | null, savedMutationAt?: string | null) => void;
   setHasHydrated: (value: boolean) => void;
   setActiveSquadId: (squadId: string | null) => void;
   setTimelineStartDate: (timelineStartDate: string | null) => void;
@@ -621,13 +639,16 @@ export const usePlannerStore = create<PlannerState>()(
       setHasHydrated: (value) => set({ hasHydrated: value }),
       setActiveSquadId: (activeSquadId) => set({ activeSquadId }),
       setTimelineStartDate: (timelineStartDate) => set({ timelineStartDate }),
-      markPlannerSyncedToServer: (serverUpdatedAt) =>
-        set({
-          lastLocalMutationAt: null,
+      markPlannerSyncedToServer: (serverUpdatedAt, savedMutationAt) =>
+        set((state) => ({
+          lastLocalMutationAt:
+            savedMutationAt === undefined || state.lastLocalMutationAt === savedMutationAt
+              ? null
+              : state.lastLocalMutationAt,
           ...(serverUpdatedAt !== undefined
             ? { lastServerUpdatedAt: serverUpdatedAt?.trim() || null }
             : {}),
-        }),
+        })),
       hydrateEmptySquad: () => {
         const today = todayDateKey();
         set({
@@ -716,52 +737,61 @@ export const usePlannerStore = create<PlannerState>()(
         return newTaskIds;
       },
       updateTask: (id, patch) => {
+        get().applyTaskPatches([{ id, patch }]);
+      },
+      applyTaskPatches: (patches) => {
         const { tasks, resources, config, plannerMeta, result: currentResult } = get();
-        const previous = tasks.find((t) => t.id === id);
-        if (!previous) {
+        const previousById = new Map(tasks.map((task) => [task.id, task]));
+        const changes: Array<{ id: string; patch: Partial<Task>; previous: Task }> = [];
+        for (const { id, patch } of patches) {
+          const previous = previousById.get(id);
+          if (!previous) continue;
+          const effectivePatch = filterTaskPatchToActualChanges(previous, patch);
+          if (Object.keys(effectivePatch).length > 0) {
+            changes.push({ id, patch: effectivePatch, previous });
+          }
+        }
+        if (changes.length === 0) {
           return;
         }
 
-        const effectivePatch = filterTaskPatchToActualChanges(previous, patch);
-        if (Object.keys(effectivePatch).length === 0) {
-          return;
-        }
+        const patchById = new Map(changes.map((change) => [change.id, change.patch]));
+        const patched = tasks.map((task) => {
+          const patch = patchById.get(task.id);
+          return patch ? normalizeTask({ ...task, ...patch }) : task;
+        });
+        const requiresReschedule = changes.some((change) => patchRequiresReschedule(change.patch));
 
-        if (!patchRequiresReschedule(effectivePatch)) {
-          const updated = tasks.map((task) =>
-            task.id === id ? normalizeTask({ ...task, ...effectivePatch }) : task,
-          );
+        if (!requiresReschedule) {
           set({
-            tasks: updated,
-            plannerMeta: applyPlannerMetaForTaskPatch(plannerMeta, id, effectivePatch, previous),
+            tasks: patched,
+            plannerMeta: changes.reduce(
+              (meta, change) => applyPlannerMetaForTaskPatch(meta, change.id, change.patch, change.previous),
+              plannerMeta,
+            ),
             ...touchMutation(),
           });
           return;
         }
 
         // Freeze the pre-edit schedule first so Mark Progress lights and Cur does not jump.
-        const metaBeforeEdit = seedCurScheduleFreeze(plannerMeta, currentResult);
-        const patched = tasks.map((task) =>
-          task.id === id ? normalizeTask({ ...task, ...effectivePatch }) : task,
-        );
-        let updated =
-          Object.prototype.hasOwnProperty.call(effectivePatch, "poPriority") &&
-          effectivePatch.poPriority !== undefined
-            ? enforceUniquePoPriorities(patched, id, effectivePatch.poPriority ?? null)
-            : patched;
-        const becameReleased =
-          !isReleasedTaskStatus(previous.status) &&
-          isReleasedTaskStatus(updated.find((t) => t.id === id)?.status ?? "");
-        if (becameReleased) {
-          updated = compactPrioritiesAfterRelease(updated, id);
+        let nextMeta = seedCurScheduleFreeze(plannerMeta, currentResult);
+        const patchedStatusById = new Map(patched.map((task) => [task.id, task.status]));
+        let updated = patched;
+        for (const change of changes) {
+          if (Object.prototype.hasOwnProperty.call(change.patch, "poPriority") && change.patch.poPriority !== undefined) {
+            updated = enforceUniquePoPriorities(updated, change.id, change.patch.poPriority ?? null);
+          }
+          const becameReleased =
+            !isReleasedTaskStatus(change.previous.status) &&
+            isReleasedTaskStatus(patchedStatusById.get(change.id) ?? "");
+          if (becameReleased) {
+            updated = compactPrioritiesAfterRelease(updated, change.id);
+          }
+          nextMeta = applyPlannerMetaForTaskPatch(nextMeta, change.id, change.patch, change.previous);
         }
         set({
-          ...buildWithPlannerMeta(
-            updated,
-            resources,
-            config,
-            applyPlannerMetaForTaskPatch(metaBeforeEdit, id, effectivePatch, previous),
-          ),
+          ...buildWithPlannerMeta(updated, resources, config, nextMeta),
           ...touchMutation(),
         });
       },
@@ -1108,6 +1138,40 @@ export const usePlannerStore = create<PlannerState>()(
               : localMutationAt,
           lastServerUpdatedAt: serverUpdatedAt ?? get().lastServerUpdatedAt,
         });
+      },
+      rebaseOntoServerSnapshot: (data, keepLocalTaskIds) => {
+        const keepIds = new Set(keepLocalTaskIds);
+        const localKeptById = new Map(
+          get().tasks.filter((task) => keepIds.has(task.id)).map((task) => [task.id, task]),
+        );
+        const serverTasks = mergeIncomingTasksWithCurrent(data.tasks, get().tasks);
+        const serverIds = new Set(serverTasks.map((task) => task.id));
+        // Server rows win except the ones we just changed; our rows missing on the server (new imports) are appended.
+        const mergedTasks = [
+          ...serverTasks.map((task) => localKeptById.get(task.id) ?? task),
+          ...[...localKeptById.values()].filter((task) => !serverIds.has(task.id)),
+        ];
+        const serverMeta = mergePlannerMetaPatch(data.plannerMeta);
+        const localNeedRemark = (get().plannerMeta.taskIdsNeedRemark ?? []).filter((id) => keepIds.has(id));
+        const mergedMeta: PlannerMeta = {
+          ...serverMeta,
+          taskIdsNeedRemark: [...new Set([...(serverMeta.taskIdsNeedRemark ?? []), ...localNeedRemark])],
+        };
+        const built = buildState(
+          mergedTasks.map((task) => normalizeTask(task)),
+          normalizeResourceCapacities(data.resources),
+          normalizeConfig(data.config),
+        );
+        set({
+          ...finalizePlannerBuild(built, mergedMeta),
+          timelineStartDate: typeof data.timelineStartDate === "string" ? data.timelineStartDate : null,
+          lastServerUpdatedAt: data.serverUpdatedAt ?? get().lastServerUpdatedAt,
+          ...touchMutation(),
+        });
+      },
+      replaceWithServerSnapshot: (data) => {
+        set({ lastLocalMutationAt: null, lastServerUpdatedAt: null });
+        get().hydrateFromServer(data);
       },
       markProgressNow: () => {
         set((s) => {

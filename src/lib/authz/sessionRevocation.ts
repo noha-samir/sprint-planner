@@ -3,15 +3,38 @@ import type { AccessRegistry, UserAccount } from "@/lib/access/registry";
 
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
-/** Current session version for an email (0 if never revoked). */
+/** How long a looked-up session version is trusted before asking the database again. */
+export const SESSION_VERSION_CACHE_MS = 30_000;
+
+type CachedSessionVersion = { version: number; expiresAt: number };
+
+// Shared through globalThis so the proxy and every route bundle use one cache per server process.
+const globalForSessionVersions = globalThis as unknown as {
+  sessionVersionCache: Map<string, CachedSessionVersion> | undefined;
+};
+const sessionVersionCache = (globalForSessionVersions.sessionVersionCache ??= new Map());
+
+/**
+ * Current session version for an email (0 if never revoked).
+ * Cached per server process for SESSION_VERSION_CACHE_MS, so a revocation made on another
+ * server instance takes effect within that window (instantly on the instance that revoked).
+ */
 export const getSessionVersion = async (email: string): Promise<number> => {
-  const row = await prisma.sessionVersion.findUnique({
-    where: { email: normalizeEmail(email) },
-  });
-  return row?.version ?? 0;
+  const key = normalizeEmail(email);
+  const cached = sessionVersionCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.version;
+  }
+  const row = await prisma.sessionVersion.findUnique({ where: { email: key } });
+  const version = row?.version ?? 0;
+  sessionVersionCache.set(key, { version, expiresAt: Date.now() + SESSION_VERSION_CACHE_MS });
+  return version;
 };
 
-/** Bump session versions for many emails so existing JWTs are treated as revoked. */
+/**
+ * Bump session versions for many emails so existing JWTs are treated as revoked.
+ * Side effects: clears those emails from the local session-version cache.
+ */
 export const bumpSessionVersions = async (emails: string[]): Promise<void> => {
   const unique = [...new Set(emails.map(normalizeEmail).filter(Boolean))];
   if (unique.length === 0) return;
@@ -24,6 +47,7 @@ export const bumpSessionVersions = async (emails: string[]): Promise<void> => {
       }),
     ),
   );
+  for (const email of unique) sessionVersionCache.delete(email);
 };
 
 const userKey = (user: UserAccount) => user.email.trim().toLowerCase();

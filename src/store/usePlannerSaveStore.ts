@@ -2,7 +2,7 @@
 
 import { create } from "zustand";
 
-export type PlannerSaveStatus = "idle" | "saving" | "saved" | "error";
+export type PlannerSaveStatus = "idle" | "saving" | "saved" | "error" | "conflict";
 
 type PlannerSaveState = {
   status: PlannerSaveStatus;
@@ -10,6 +10,8 @@ type PlannerSaveState = {
   markSaving: () => void;
   markSaved: () => void;
   markError: (message?: string) => void;
+  /** Someone else saved the planner; saves keep failing until the user reloads the saved copy. */
+  markConflict: () => void;
   clear: () => void;
 };
 
@@ -41,6 +43,13 @@ export const usePlannerSaveStore = create<PlannerSaveState>((set) => ({
       savedTimer = undefined;
     }
     set({ status: "error", message });
+  },
+  markConflict: () => {
+    if (savedTimer) {
+      clearTimeout(savedTimer);
+      savedTimer = undefined;
+    }
+    set({ status: "conflict", message: "Planner changed elsewhere" });
   },
   clear: () => {
     if (savedTimer) {

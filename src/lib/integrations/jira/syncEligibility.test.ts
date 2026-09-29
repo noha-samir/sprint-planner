@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "@/lib/scheduler/types";
-import { isTaskEligibleForJiraPull, isTaskEligibleForJiraSync, resolveTaskForJiraSync, taskHasJiraSyncHours } from "./syncEligibility";
+import { isTaskEligibleForJiraPull, isTaskEligibleForJiraSync, listBulkSyncLeftOutStories, resolveTaskForJiraSync, taskHasJiraSyncHours } from "./syncEligibility";
 
 const task = (overrides: Partial<Task> = {}): Task => ({
   id: "t1",
@@ -57,5 +57,19 @@ describe("syncEligibility", () => {
     expect(isTaskEligibleForJiraSync(resolveTaskForJiraSync(task({ feHours: 2 }), "https://x/browse/BR-1"))).toBe(
       true,
     );
+  });
+
+  it("lists soft left-out stories with reasons", () => {
+    expect(
+      listBulkSyncLeftOutStories([
+        task({ id: "a", storyName: "Has hours", feHours: 2 }),
+        task({ id: "b", storyName: "No link", storyLink: "", feHours: 2 }),
+        task({ id: "c", storyName: "Empty hours" }),
+        task({ id: "d", storyName: "Discoped", feHours: 2, status: "Discoped" }),
+      ]),
+    ).toEqual([
+      { name: "No link", reason: "no_link" },
+      { name: "Empty hours", reason: "no_hours" },
+    ]);
   });
 });

@@ -15,6 +15,7 @@ import { isJiraStoryLink, parseJiraIssueKey, projectKeyFromIssueKey } from "./is
 import { taskHasJiraSyncHours } from "./syncEligibility";
 import { buildParentJiraFieldPayload } from "./parentFields";
 import { pushPlannerStatusToJira } from "./syncIssueStatus";
+import { resolveParentStatusFromChildren } from "./parentStatusFromChildren";
 import { buildParentIssuePlan, buildSubtaskPlan, subtaskPlanAssigneeErrors, subtaskPlanWarnings, unmappedAssigneeNamesForSync } from "./subtaskPlan";
 import { warningsForUnmappedPlannerNames } from "./userSearch";
 import type { SquadJiraConfig, TaskJiraMeta } from "./types";
@@ -39,6 +40,10 @@ export interface SyncTaskToJiraResult {
   jira: TaskJiraMeta;
   warnings: string[];
   errors: string[];
+  /** True when Jira parent status now matches the pushed status (already equal or transitioned). */
+  statusSynced: boolean;
+  /** Set when the subtasks were further along than the planner, so their status was pushed instead. */
+  statusFromChildren?: { from: string; to: string };
 }
 
 export type PushSubtasksResult = SyncTaskToJiraResult;
@@ -160,10 +165,22 @@ export const syncTaskToJira = async (
     }
   }
 
+  // Subtasks created in this push have no known status yet, so they block the subtask rule (conservative).
+  const knownChildKeys = new Set(children.map((child) => child.key));
+  const childStatuses = [
+    ...children.map((child) => child.status),
+    ...subtasks.filter((row) => !knownChildKeys.has(row.key)).map(() => undefined),
+  ];
+  const childDrivenStatus = resolveParentStatusFromChildren(task.status, childStatuses).status;
+  const statusToPush = childDrivenStatus ?? task.status;
+
+  let statusSynced = false;
   try {
-    const statusResult = await pushPlannerStatusToJira(credentials, parentIssueKey, task.status);
+    const statusResult = await pushPlannerStatusToJira(credentials, parentIssueKey, statusToPush);
     if (statusResult.warning) {
       warnings.push(statusResult.warning);
+    } else {
+      statusSynced = true;
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to sync Jira status";
@@ -174,10 +191,13 @@ export const syncTaskToJira = async (
     jira: {
       parentIssueKey,
       lastPushedAt: new Date().toISOString(),
+      lastPulledAt: task.jira?.lastPulledAt ?? null,
       subtasks,
     },
     warnings,
     errors: syncErrors,
+    statusSynced,
+    ...(childDrivenStatus ? { statusFromChildren: { from: task.status, to: childDrivenStatus } } : {}),
   };
 };
 
@@ -245,6 +265,7 @@ export const bulkSyncTasksToJira = async (
         jira: result.jira,
         warnings: result.warnings,
         errors: result.errors,
+        statusFromChildren: result.statusFromChildren,
       });
     } catch (error) {
       failed += 1;

@@ -20,9 +20,11 @@ export type DiscoveredRoleKeys = {
   ios: string[];
 };
 
-interface JiraSubtaskRef {
+export interface JiraSubtaskRef {
   key: string;
   summary: string;
+  /** Jira status name when loaded (used to derive the parent status on pull). */
+  status?: string;
 }
 
 const SEARCH_PAGE_SIZE = 100;
@@ -52,7 +54,11 @@ const refsFromSearchIssues = (issues: SearchJqlIssue[]): JiraSubtaskRef[] => {
     const key = issue.key?.trim();
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    refs.push({ key, summary: issue.fields?.summary?.trim() ?? "" });
+    refs.push({
+      key,
+      summary: issue.fields?.summary?.trim() ?? "",
+      status: issue.fields?.status?.name?.trim() || undefined,
+    });
   }
   return refs;
 };
@@ -130,7 +136,7 @@ const listParentSubtasksFromIssue = async (
     fields?: {
       subtasks?: Array<{
         key?: string;
-        fields?: { summary?: string };
+        fields?: { summary?: string; status?: { name?: string } };
       }>;
     };
   };
@@ -145,7 +151,7 @@ const listParentSubtasksFromIssue = async (
     if (!summary) {
       missingSummaryKeys.push(item.key);
     }
-    refs.push({ key: item.key, summary });
+    refs.push({ key: item.key, summary, status: item.fields?.status?.name?.trim() || undefined });
   }
 
   for (let offset = 0; offset < missingSummaryKeys.length; offset += KEY_LOOKUP_CHUNK) {
@@ -176,7 +182,9 @@ export const listParentSubtasks = async (
   parentIssueKey: string,
 ): Promise<JiraSubtaskRef[]> => {
   const jql = `parent = ${quoteJql(parentIssueKey)} ORDER BY key ASC`;
-  const searched = await searchJqlIssues(credentials, jql, SEARCH_PAGE_SIZE);
+  const searched = await searchJqlIssues(credentials, jql, SEARCH_PAGE_SIZE, {
+    fields: ["summary", "status"],
+  });
   if (searched) {
     return refsFromSearchIssues(searched);
   }

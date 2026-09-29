@@ -22,6 +22,8 @@ export interface BulkPullTaskResult {
   jira?: TaskJiraMeta;
   warnings?: string[];
   error?: string;
+  /** Parent status moved forward from subtask statuses — needs a push to Jira. */
+  statusFromChildren?: { from: string; to: string };
 }
 
 export interface BulkPullFromJiraResult {
@@ -131,8 +133,24 @@ export const formatBulkPullSummaryModel = (result: BulkPullFromJiraResult): Bulk
       "error",
     ),
     ...groupStoryMessages(actionFailures, "error"),
-    ...groupStoryMessages(softWarnings, "warning"),
   );
+
+  const statusFromChildrenRows = result.results.filter((row) => row.ok && row.statusFromChildren);
+  if (statusFromChildrenRows.length > 0) {
+    model.groups.push({
+      severity: "warning",
+      segments: [
+        { text: "Parent status updated from subtasks — " },
+        { text: "push", emphasis: true },
+        { text: " to update Jira" },
+      ],
+      stories: statusFromChildrenRows.map(
+        (row) => `${storyLabel(row)} (${row.statusFromChildren?.from} -> ${row.statusFromChildren?.to})`,
+      ),
+    });
+  }
+
+  model.groups.push(...groupStoryMessages(softWarnings, "warning"));
 
   return buildBulkSummaryResult(model);
 };

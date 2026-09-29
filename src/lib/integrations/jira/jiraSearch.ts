@@ -9,6 +9,8 @@ export type SearchJqlIssue = {
     assignee?: { accountId?: string; displayName?: string } | null;
     timeoriginalestimate?: number | null;
     parent?: { key?: string } | null;
+    status?: { name?: string } | null;
+    updated?: string | null;
     [customField: string]: unknown;
   };
 };

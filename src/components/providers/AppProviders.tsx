@@ -33,7 +33,7 @@ function ColorSchemeBoot() {
 
 export function AppProviders({ children }: { children: React.ReactNode }) {
   return (
-    <SessionProvider refetchInterval={30} refetchOnWindowFocus>
+    <SessionProvider refetchInterval={300} refetchOnWindowFocus={false}>
       <ColorSchemeBoot />
       <SessionRevocationWatcher />
       <HoverHintLayer />

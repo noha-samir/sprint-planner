@@ -12,6 +12,8 @@ import { publicJiraErrorMessage } from "./jiraErrors";
 import { requireJiraApiCredentials } from "@/lib/authz/sessionJiraCredentials";
 import { buildJiraBasicAuthHeader, jiraRestApiBase, type JiraApiCredentials } from "./credentials";
 import { listParentSubtasks, matchAllRoleSubtasksFromSummaries } from "./discoverSubtasks";
+import { resolveParentStatusFromChildren } from "./parentStatusFromChildren";
+import { mapWithConcurrency } from "@/lib/async/mapWithConcurrency";
 import {
   hoursFromJiraNumberField,
   hoursFromJiraTimetracking,
@@ -40,6 +42,8 @@ export interface SyncTaskFromJiraResult {
   patch: Partial<Task>;
   jira: TaskJiraMeta;
   warnings: string[];
+  /** Set when subtasks moved the parent status forward — Jira parent still needs a push. */
+  statusFromChildren?: { from: string; to: string };
 }
 
 type JiraUserField = {
@@ -204,27 +208,6 @@ const readSubtaskDetails = async (
   };
 };
 
-const mapWithConcurrency = async <T, R>(
-  items: T[],
-  limit: number,
-  mapper: (item: T) => Promise<R>,
-): Promise<R[]> => {
-  if (items.length === 0) {
-    return [];
-  }
-  const results: R[] = new Array(items.length);
-  let nextIndex = 0;
-  const worker = async () => {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await mapper(items[index]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
-  return results;
-};
-
 const uniqueAssigneeNames = (names: string[]): string[] => {
   const seen = new Set<string>();
   const unique: string[] = [];
@@ -371,6 +354,22 @@ export const syncTaskFromJira = async (
   }
 
   const children = await listParentSubtasks(credentials, parentIssueKey);
+
+  // Subtask statuses can move the parent forward (To Do → In Progress → Ready for Testing), never back.
+  let statusFromChildren: SyncTaskFromJiraResult["statusFromChildren"];
+  if (status) {
+    const childDriven = resolveParentStatusFromChildren(
+      status,
+      children.map((child) => child.status),
+    );
+    if (childDriven.status) {
+      patch.status = childDriven.status;
+      statusFromChildren = { from: status, to: childDriven.status };
+    } else if (childDriven.warning) {
+      warnings.push(childDriven.warning);
+    }
+  }
+
   const developmentEstimateFieldId = fieldIds.developmentEstimateHours;
   const roleKeys = matchAllRoleSubtasksFromSummaries(children);
 
@@ -545,7 +544,7 @@ export const syncTaskFromJira = async (
   };
   patch.jira = jira;
 
-  return { patch, jira, warnings };
+  return { patch, jira, warnings, ...(statusFromChildren ? { statusFromChildren } : {}) };
 };
 
 /**
@@ -598,6 +597,7 @@ export const bulkPullTasksFromJira = async (
         patch: result.patch,
         jira: result.jira,
         warnings: result.warnings,
+        statusFromChildren: result.statusFromChildren,
       });
     } catch (error) {
       failed += 1;

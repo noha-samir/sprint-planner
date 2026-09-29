@@ -38,7 +38,9 @@ const applyServerPlannerPayload = async (
     if (!options?.canWrite || !localMutationAt) return true;
     // Don't race a long Jira pull/push with an opportunistic save.
     if (useJiraSyncStore.getState().active) return true;
-    await flushPlannerStateToServer(activeSquadId);
+    if ((await flushPlannerStateToServer(activeSquadId)) === "conflict") {
+      usePlannerSaveStore.getState().markConflict();
+    }
     return true;
   }
 
@@ -142,14 +144,16 @@ export function PlannerServerSync() {
       if (!usePlannerStore.getState().lastLocalMutationAt) return;
       const saveStore = usePlannerSaveStore.getState();
       saveStore.markSaving();
-      const ok = await flushPlannerStateToServer(activeSquadId);
+      const result = await flushPlannerStateToServer(activeSquadId);
       if (useJiraSyncStore.getState().active) {
         // Jira sync took over while we were saving — drop the save chip.
         saveStore.clear();
         return;
       }
-      if (ok) {
+      if (result === "saved") {
         saveStore.markSaved();
+      } else if (result === "conflict") {
+        saveStore.markConflict();
       } else {
         saveStore.markError("Could not save planner");
       }

@@ -17,8 +17,9 @@ import {
   isParentlessPlannerTask,
   taskMatchesIssueTypeFilter,
 } from "@/lib/planner/taskIssueFilters";
-import { isTaskEligibleForJiraPull, isTaskEligibleForJiraSync, resolveTaskForJiraSync } from "@/lib/integrations/jira/syncEligibility";
-import { JIRA_SYNC_ADDED_TAG } from "@/lib/integrations/jira/jiraSyncTag";
+import { isTaskEligibleForJiraPull, isTaskEligibleForJiraSync, listBulkSyncLeftOutStories, resolveTaskForJiraSync } from "@/lib/integrations/jira/syncEligibility";
+import { JIRA_SYNC_ADDED_TAG, withNeedsPushTag } from "@/lib/integrations/jira/jiraSyncTag";
+import type { RemoteChangedTask } from "@/lib/integrations/jira/remoteChanges";
 import { formatBulkSyncConfirmMessage, formatBulkSyncSummaryModel, bulkSyncHasActionErrors, type BulkSyncTaskResult } from "@/lib/integrations/jira/bulkSyncMessages";
 import {
   formatBulkPullConfirmMessage,
@@ -37,7 +38,9 @@ import { sortTasksForDashboard } from "@/lib/planner/dashboardTaskOrder";
 import { isOwnerPmStory } from "@/lib/planner/pmStoryFlag";
 import { buildTaskDetailsSummaryChips, buildTaskDetailsSummaryRows } from "@/lib/planner/taskDetailsSummary";
 import { buildReleaseGroupColorMap } from "@/lib/planner/releaseGroupColors";
-import { flushPlannerStateToServer } from "@/lib/planner/flushPlannerState";
+import { savePlannerAfterJiraSync, type PlannerSaveResult } from "@/lib/planner/flushPlannerState";
+import { mapWithConcurrency } from "@/lib/async/mapWithConcurrency";
+import { usePlannerSaveStore } from "@/store/usePlannerSaveStore";
 import {
   matchResourceByAssigneeLabel,
   peopleFromResources,
@@ -60,6 +63,12 @@ import { StoryLinkWithPreview } from "@/components/tasks/StoryLinkWithPreview";
 import { MobileStartDateModal } from "@/components/tasks/MobileStartDateModal";
 import { ReleaseGroupInput } from "@/components/tasks/ReleaseGroupInput";
 import { JiraSyncBanner } from "@/components/sync/JiraSyncBanner";
+import { JiraSyncLoadingScreen } from "@/components/sync/JiraSyncLoadingScreen";
+import {
+  JiraPushConflictDialog,
+  type JiraPushConflictChoice,
+  type JiraPushConflictStory,
+} from "@/components/sync/JiraPushConflictDialog";
 import { StoryPhaseFlow } from "@/components/timeline/StoryPhaseFlow";
 import { activeSprintTasks } from "@/store/taskRules";
 import { taskStatuses, usePlannerStore } from "@/store/usePlannerStore";
@@ -185,6 +194,61 @@ type AssigneePickerOpen = {
   trigger: HTMLElement;
 } | null;
 
+/** Stories pulled/pushed at the same time — small enough to stay under Jira rate limits. */
+const JIRA_SYNC_CONCURRENCY = 3;
+
+/**
+ * Banner line when saving after a Jira pull/push did not go through.
+ * @param result - Save outcome (conflict = another save won even after merging).
+ * @param subject - What is on screen but unsaved ("pull results" / "changes").
+ */
+const jiraSyncSaveFailureMessage = (result: PlannerSaveResult, subject: string): string =>
+  result === "conflict"
+    ? `Planner save failed — someone else saved this planner at the same time; ${subject} are on screen but not saved. Click Reload in the sidebar, then run the Jira action again`
+    : `Planner save failed — ${subject} are on screen but not saved; wait before refreshing`;
+
+const JIRA_RETRY_DELAY_MS = 1500;
+
+/**
+ * Send a request and retry it once after a short delay on a network error or 5xx
+ * (e.g. the database was waking up). Only use for idempotent calls such as Jira pull.
+ * @param send - Builds and sends a fresh request each time.
+ * @returns The first non-5xx response, or the retry's response.
+ */
+const fetchWithOneRetry = async (send: () => Promise<Response>): Promise<Response> => {
+  try {
+    const response = await send();
+    if (response.status < 500) return response;
+  } catch {
+    // Network error: fall through to the single retry.
+  }
+  await new Promise((resolve) => setTimeout(resolve, JIRA_RETRY_DELAY_MS));
+  return send();
+};
+
+/**
+ * Parse a JSON response body without throwing when the server returned a non-JSON error page.
+ * @returns The parsed body, or an empty object when the body is not JSON.
+ */
+const readJsonBody = async <T extends object>(response: Response): Promise<Partial<T>> => {
+  try {
+    return (await response.json()) as Partial<T>;
+  } catch {
+    return {};
+  }
+};
+
+/**
+ * Story-level error shown when a Jira pull/push request failed without a server message.
+ * @param action - "Pull" or "Push".
+ * @param status - HTTP status, or undefined when the server could not be reached.
+ */
+const jiraRequestFailureMessage = (action: "Pull" | "Push", status?: number): string => {
+  if (status === undefined) return `${action} failed — could not reach the server; check your connection and try again`;
+  if (status >= 500) return `${action} failed — the server or database was busy (HTTP ${status}); try again`;
+  return `${action} failed (HTTP ${status})`;
+};
+
 export function TaskTable() {
   const { data: session } = useSession();
   const activeSquadId = usePlannerStore((state) => state.activeSquadId);
@@ -201,6 +265,7 @@ export function TaskTable() {
   const addTasks = usePlannerStore((state) => state.addTasks);
   const updateTask = usePlannerStore((state) => state.updateTask);
   const updateTasks = usePlannerStore((state) => state.updateTasks);
+  const applyTaskPatches = usePlannerStore((state) => state.applyTaskPatches);
   const removeTask = usePlannerStore((state) => state.removeTask);
   const markProgressNow = usePlannerStore((state) => state.markProgressNow);
   const sprintBoardGeneration = usePlannerStore((state) => state.sprintBoardGeneration);
@@ -227,6 +292,14 @@ export function TaskTable() {
   const markJiraDone = useJiraSyncStore((state) => state.markDone);
   const setJiraSyncPhase = useJiraSyncStore((state) => state.setPhase);
   const finishJiraSync = useJiraSyncStore((state) => state.finish);
+  const jiraSyncPreparing = useJiraSyncStore((state) => state.preparing);
+  const setJiraSyncPreparing = useJiraSyncStore((state) => state.setPreparing);
+  const [pushConflict, setPushConflict] = useState<{
+    eligibleCount: number;
+    changed: JiraPushConflictStory[];
+    leftOut: ReturnType<typeof listBulkSyncLeftOutStories>;
+  } | null>(null);
+  const pushConflictResolveRef = useRef<((choice: JiraPushConflictChoice) => void) | null>(null);
   const [isMarkingProgress, setIsMarkingProgress] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [expandedJiraTaskIds, setExpandedJiraTaskIds] = useState<string[]>([]);
@@ -917,6 +990,199 @@ export function TaskTable() {
     }, 0);
   };
 
+  /**
+   * Pull stories from Jira one by one, apply patches, save the planner, and show the result banner.
+   * Shared by Pull from Jira and the push dialog's "Pull first".
+   * @param squadId - Active squad (sent as x-squad-id).
+   * @param tasksToPull - Stories with a Jira link that are not Discoped.
+   * @param options.skippedCount - Selected rows left out of the pull (summary only).
+   * @param options.discoverWarning - Extra warning from EM discovery.
+   * @param options.headlinePrefix - Line shown before the pull headline.
+   * @param options.forceSave - Save even when no story pulled (e.g. stories were just imported).
+   * @param options.addedTaskIds - Stories just imported from Jira (kept if the save has to merge with another save).
+   * Side effects: updates tasks (adds Needs push when status came from subtasks) and saves planner state.
+   */
+  const runJiraPullForTasks = async (
+    squadId: string,
+    tasksToPull: Task[],
+    options: {
+      skippedCount: number;
+      discoverWarning?: string | null;
+      headlinePrefix?: string;
+      forceSave?: boolean;
+      addedTaskIds?: string[];
+    },
+  ) => {
+    startJiraSync({
+      mode: "pull",
+      tasks: tasksToPull.map((task) => ({ taskId: task.id, storyName: storyLabelForSync(task) })),
+    });
+
+    const results: BulkPullTaskResult[] = [];
+    const pulledPatches: Array<{ id: string; patch: Partial<Task> }> = [];
+    let synced = 0;
+    let failed = 0;
+    const plannerPeople = plannerPeopleForJira();
+
+    await mapWithConcurrency(tasksToPull, JIRA_SYNC_CONCURRENCY, async (task) => {
+      markJiraRunning(task.id);
+      try {
+        const response = await fetchWithOneRetry(() =>
+          fetch(`/api/integrations/jira/tasks/${encodeURIComponent(task.id)}/pull`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-squad-id": squadId,
+            },
+            body: JSON.stringify({ task, plannerPeople }),
+          }),
+        );
+        const body = await readJsonBody<{
+          error: string;
+          patch: Partial<Task>;
+          jira: Task["jira"];
+          warnings: string[];
+          statusFromChildren: BulkPullTaskResult["statusFromChildren"];
+        }>(response);
+        if (!response.ok) {
+          failed += 1;
+          const error = body.error ?? jiraRequestFailureMessage("Pull", response.status);
+          markJiraDone({ taskId: task.id, ok: false, error });
+          results.push({
+            taskId: task.id,
+            storyName: storyLabelForSync(task),
+            ok: false,
+            error,
+          });
+          return;
+        }
+        synced += 1;
+        if (body.patch) {
+          // Hours / assignees / status changes light Need remark; jira meta alone does not.
+          const patch: Partial<Task> = body.statusFromChildren
+            ? {
+                ...body.patch,
+                tags: withNeedsPushTag(
+                  usePlannerStore.getState().tasks.find((item) => item.id === task.id)?.tags,
+                  true,
+                ),
+              }
+            : body.patch;
+          pulledPatches.push({ id: task.id, patch });
+        }
+        markJiraDone({ taskId: task.id, ok: true });
+        results.push({
+          taskId: task.id,
+          storyName: storyLabelForSync(task),
+          ok: true,
+          patch: body.patch,
+          jira: body.jira,
+          warnings: body.warnings,
+          statusFromChildren: body.statusFromChildren,
+        });
+      } catch {
+        failed += 1;
+        const error = jiraRequestFailureMessage("Pull");
+        markJiraDone({ taskId: task.id, ok: false, error });
+        results.push({
+          taskId: task.id,
+          storyName: storyLabelForSync(task),
+          ok: false,
+          error,
+        });
+      }
+    });
+
+    // One board recalculation for the whole pull instead of one per story.
+    applyTaskPatches(pulledPatches);
+
+    const pullPayload = { results, synced, failed, skipped: options.skippedCount };
+    const summaryResult = withDiscoverWarning(
+      formatBulkPullSummaryModel(pullPayload),
+      options.discoverWarning,
+      options.headlinePrefix,
+    );
+    if (synced > 0 || options.forceSave) {
+      setJiraSyncPhase("saving");
+      const pulledIds = results.filter((row) => row.ok).map((row) => row.taskId);
+      const saveResult = await savePlannerAfterJiraSync(squadId, [...pulledIds, ...(options.addedTaskIds ?? [])]);
+      if (saveResult !== "saved") {
+        if (saveResult === "conflict") usePlannerSaveStore.getState().markConflict();
+        const failedModel = appendSummaryGroups(summaryResult.model, [
+          {
+            severity: "error",
+            segments: emphasizeMessage(jiraSyncSaveFailureMessage(saveResult, "pull results")),
+            stories: [],
+          },
+        ]);
+        const failedSummary = buildBulkSummaryResult(failedModel);
+        finishJiraSync({
+          summary: failedSummary.text,
+          summaryModel: failedSummary.model,
+          isError: true,
+        });
+        return;
+      }
+    }
+    const hasActionErrors = bulkPullHasActionErrors(pullPayload);
+    const hasSoftWarnings =
+      Boolean(options.discoverWarning) ||
+      results.some(
+        (row) =>
+          Boolean(row.statusFromChildren) ||
+          (row.warnings ?? []).some((message) => !isActionFailureMessage(message)),
+      );
+    finishJiraSync({
+      summary: summaryResult.text,
+      summaryModel: summaryResult.model,
+      isError: hasActionErrors,
+      isWarning: !hasActionErrors && hasSoftWarnings,
+    });
+  };
+
+  /** Open the push-conflict dialog and wait for Pull first / Push anyway / Cancel. */
+  const askPushConflict = (
+    eligibleCount: number,
+    changed: JiraPushConflictStory[],
+    leftOut: ReturnType<typeof listBulkSyncLeftOutStories>,
+  ): Promise<JiraPushConflictChoice> =>
+    new Promise((resolve) => {
+      pushConflictResolveRef.current = resolve;
+      setPushConflict({ eligibleCount, changed, leftOut });
+    });
+
+  const resolvePushConflict = (choice: JiraPushConflictChoice) => {
+    pushConflictResolveRef.current?.(choice);
+    pushConflictResolveRef.current = null;
+    setPushConflict(null);
+  };
+
+  /**
+   * Ask Jira which stories changed after our last pull/push.
+   * @returns Changed stories, or null when the check failed (push can still continue after confirm).
+   */
+  const checkRemoteJiraChanges = async (squadId: string, tasksToCheck: Task[]): Promise<RemoteChangedTask[] | null> => {
+    try {
+      const response = await fetch("/api/integrations/jira/tasks/check-remote-changes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-squad-id": squadId },
+        body: JSON.stringify({
+          tasks: tasksToCheck.map((task) => ({
+            taskId: task.id,
+            storyLink: task.storyLink,
+            lastPulledAt: task.jira?.lastPulledAt ?? null,
+            lastPushedAt: task.jira?.lastPushedAt ?? null,
+          })),
+        }),
+      });
+      if (!response.ok) return null;
+      const body = (await response.json()) as { changed?: RemoteChangedTask[] };
+      return body.changed ?? [];
+    } catch {
+      return null;
+    }
+  };
+
   const bulkSyncToJira = () => {
     runAfterBulkMenuClose(async () => {
       if (!activeSquadId) {
@@ -931,6 +1197,7 @@ export function TaskTable() {
 
       const eligibleTasks = selectedTasksForSync.filter(isTaskEligibleForJiraSync);
       const discopedTasks = selectedTasksForSync.filter((task) => isDiscopedTaskStatus(task.status));
+      const leftOutStories = listBulkSyncLeftOutStories(selectedTasksForSync);
 
       if (selectedTasksForSync.length === 0) {
         window.alert("Select one or more stories to push to Jira.");
@@ -944,16 +1211,52 @@ export function TaskTable() {
         );
         return;
       }
-      if (
-        !window.confirm(
+      setJiraSyncPreparing({
+        mode: "push",
+        title: "Getting ready to push",
+        detail: `Checking Jira for changes you haven't pulled on ${eligibleTasks.length === 1 ? "1 story" : `${eligibleTasks.length} stories`}…`,
+      });
+      let remoteChanges: RemoteChangedTask[] | null;
+      try {
+        remoteChanges = await checkRemoteJiraChanges(activeSquadId, eligibleTasks);
+      } finally {
+        setJiraSyncPreparing(null);
+      }
+      if (remoteChanges && remoteChanges.length > 0) {
+        const taskById = new Map(eligibleTasks.map((task) => [task.id, task]));
+        const changedStories: JiraPushConflictStory[] = remoteChanges.flatMap((change) => {
+          const task = taskById.get(change.taskId);
+          return task ? [{ ...change, storyName: storyLabelForSync(task) }] : [];
+        });
+        const choice = await askPushConflict(eligibleTasks.length, changedStories, leftOutStories);
+        if (choice === "cancel") return;
+        if (choice === "pull") {
+          const tasksToPull = changedStories
+            .map((story) => taskById.get(story.taskId))
+            .filter((task): task is Task => task != null && isTaskEligibleForJiraPull(task));
+          await runJiraPullForTasks(activeSquadId, tasksToPull, {
+            skippedCount: 0,
+            headlinePrefix: "Pulled Jira changes before push — review and push again.",
+          });
+          return;
+        }
+      } else {
+        const confirmMessage = [
           formatBulkSyncConfirmMessage(
             eligibleTasks.length,
             selectedTasksForSync.length,
             discopedTasks.length,
+            leftOutStories,
           ),
-        )
-      ) {
-        return;
+          remoteChanges === null
+            ? "Could not check Jira for newer changes — pushing will overwrite anything changed in Jira since your last pull."
+            : null,
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        if (!window.confirm(confirmMessage)) {
+          return;
+        }
       }
 
       startJiraSync({
@@ -962,10 +1265,11 @@ export function TaskTable() {
       });
 
       const results: BulkSyncTaskResult[] = [];
+      const pushedPatches: Array<{ id: string; patch: Partial<Task> }> = [];
       let synced = 0;
       let failed = 0;
 
-      for (const task of eligibleTasks) {
+      await mapWithConcurrency(eligibleTasks, JIRA_SYNC_CONCURRENCY, async (task) => {
         markJiraRunning(task.id);
         try {
           const response = await fetch(`/api/integrations/jira/tasks/${encodeURIComponent(task.id)}/push`, {
@@ -976,15 +1280,17 @@ export function TaskTable() {
             },
             body: JSON.stringify({ task }),
           });
-          const body = (await response.json()) as {
-            error?: string;
-            jira?: Task["jira"];
-            warnings?: string[];
-            errors?: string[];
-          };
+          const body = await readJsonBody<{
+            error: string;
+            jira: Task["jira"];
+            warnings: string[];
+            errors: string[];
+            statusSynced: boolean;
+            statusFromChildren: BulkSyncTaskResult["statusFromChildren"];
+          }>(response);
           if (!response.ok) {
             failed += 1;
-            const error = body.error ?? "Sync failed";
+            const error = body.error ?? jiraRequestFailureMessage("Push", response.status);
             markJiraDone({ taskId: task.id, ok: false, error });
             results.push({
               taskId: task.id,
@@ -992,11 +1298,25 @@ export function TaskTable() {
               ok: false,
               error,
             });
-            continue;
+            return;
           }
           synced += 1;
-          if (body.jira) {
-            updateTask(task.id, { jira: body.jira });
+          if (body.jira || body.statusSynced || body.statusFromChildren) {
+            const latestTags = usePlannerStore.getState().tasks.find((item) => item.id === task.id)?.tags;
+            // Pushed status from subtasks but Jira refused the transition → keep flagging it.
+            const tags = body.statusSynced
+              ? withNeedsPushTag(latestTags, false)
+              : body.statusFromChildren
+                ? withNeedsPushTag(latestTags, true)
+                : latestTags;
+            pushedPatches.push({
+              id: task.id,
+              patch: {
+                ...(body.jira ? { jira: body.jira } : {}),
+                ...(body.statusFromChildren ? { status: body.statusFromChildren.to } : {}),
+                ...(tags !== latestTags ? { tags } : {}),
+              },
+            });
           }
           markJiraDone({ taskId: task.id, ok: true });
           results.push({
@@ -1006,18 +1326,23 @@ export function TaskTable() {
             jira: body.jira,
             warnings: body.warnings,
             errors: body.errors,
+            statusFromChildren: body.statusFromChildren,
           });
         } catch {
           failed += 1;
-          markJiraDone({ taskId: task.id, ok: false, error: "Sync failed" });
+          const error = jiraRequestFailureMessage("Push");
+          markJiraDone({ taskId: task.id, ok: false, error });
           results.push({
             taskId: task.id,
             storyName: storyLabelForSync(task),
             ok: false,
-            error: "Sync failed",
+            error,
           });
         }
-      }
+      });
+
+      // One board recalculation for the whole push instead of one per story.
+      applyTaskPatches(pushedPatches);
 
       const summaryResult = formatBulkSyncSummaryModel({
         results,
@@ -1033,14 +1358,14 @@ export function TaskTable() {
       };
       if (synced > 0) {
         setJiraSyncPhase("saving");
-        const saved = await flushPlannerStateToServer(activeSquadId);
-        if (!saved) {
+        const pushedIds = results.filter((row) => row.ok).map((row) => row.taskId);
+        const saveResult = await savePlannerAfterJiraSync(activeSquadId, pushedIds);
+        if (saveResult !== "saved") {
+          if (saveResult === "conflict") usePlannerSaveStore.getState().markConflict();
           const failedModel = appendSummaryGroups(summaryResult.model, [
             {
               severity: "error",
-              segments: emphasizeMessage(
-                "Planner save failed — changes are on screen but not saved; wait before refreshing",
-              ),
+              segments: emphasizeMessage(jiraSyncSaveFailureMessage(saveResult, "changes")),
               stories: [],
             },
           ]);
@@ -1092,9 +1417,21 @@ export function TaskTable() {
         feDevs?: string[]; beDevs?: string[]; qcs?: string[]; androidDevs?: string[]; iosDevs?: string[];
       }> = [];
       let discoverWarning: string | null = null;
+      setJiraSyncPreparing({
+        mode: "pull",
+        title: "Getting ready to pull",
+        detail: "Searching Jira for stories under this EM that are missing from the dashboard…",
+      });
+      let discoverResponse: Response | null = null;
+      let discoverBody: Partial<{
+        error: string;
+        stories: typeof missingStories;
+        warning: string | null;
+        truncated: boolean;
+      }> = {};
       try {
         const dashboardTasks = usePlannerStore.getState().tasks;
-        const response = await fetch("/api/integrations/jira/tasks/discover-em", {
+        discoverResponse = await fetch("/api/integrations/jira/tasks/discover-em", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1108,50 +1445,26 @@ export function TaskTable() {
             })),
           }),
         });
-        const body = (await response.json()) as {
-          error?: string;
-          stories?: Array<{
-            key: string;
-            summary: string;
-            storyLink: string;
-            issueType?: string | null;
-            isEmStory?: boolean;
-            isPmStory?: boolean;
-            feHours?: number;
-            beHours?: number;
-            qcHours?: number;
-            androidHours?: number;
-            iosHours?: number;
-            feDevs?: string[];
-            beDevs?: string[];
-            qcs?: string[];
-            androidDevs?: string[];
-            iosDevs?: string[];
-          }>;
-          warning?: string | null;
-          truncated?: boolean;
-        };
-        if (!response.ok) {
-          if (eligibleTasks.length === 0) {
-            window.alert(body.error ?? "Failed to search Jira for EM stories.");
-            return;
-          }
-          discoverWarning = body.error ?? "Could not search Jira for missing EM stories.";
-        } else {
-          missingStories = body.stories ?? [];
-          discoverWarning = body.warning ?? null;
-          if (body.truncated) {
-            discoverWarning = [discoverWarning, "Jira returned more than 200 matching stories — imported the first 200."]
-              .filter(Boolean)
-              .join(" ");
-          }
-        }
+        discoverBody = await readJsonBody<typeof discoverBody>(discoverResponse);
       } catch {
+        discoverResponse = null;
+      } finally {
+        setJiraSyncPreparing(null);
+      }
+      if (!discoverResponse?.ok) {
         if (eligibleTasks.length === 0) {
-          window.alert("Failed to search Jira for EM stories.");
+          window.alert(discoverBody.error ?? "Failed to search Jira for EM stories.");
           return;
         }
-        discoverWarning = "Could not search Jira for missing EM stories.";
+        discoverWarning = discoverBody.error ?? "Could not search Jira for missing EM stories.";
+      } else {
+        missingStories = discoverBody.stories ?? [];
+        discoverWarning = discoverBody.warning ?? null;
+        if (discoverBody.truncated) {
+          discoverWarning = [discoverWarning, "Jira returned more than 200 matching stories — imported the first 200."]
+            .filter(Boolean)
+            .join(" ");
+        }
       }
 
       if (eligibleTasks.length === 0 && missingStories.length === 0) {
@@ -1183,6 +1496,7 @@ export function TaskTable() {
         return;
       }
 
+      let addedTaskIds: string[] = [];
       if (missingStories.length > 0) {
         if (!visibleStatuses.includes(DEFAULT_TASK_STATUS)) {
           setVisibleStatuses((current) => [...current, DEFAULT_TASK_STATUS]);
@@ -1213,6 +1527,7 @@ export function TaskTable() {
             isValid: true,
           })),
         );
+        addedTaskIds = newIds;
         if (newIds[0]) {
           setFocusTaskId(newIds[0]);
         }
@@ -1224,120 +1539,17 @@ export function TaskTable() {
         )
         .filter((task): task is Task => task != null && isTaskEligibleForJiraPull(task));
       const tasksToPull = [...eligibleTasks, ...importedTasks];
-
-      startJiraSync({
-        mode: "pull",
-        tasks: tasksToPull.map((task) => ({ taskId: task.id, storyName: storyLabelForSync(task) })),
-      });
-
-      const results: BulkPullTaskResult[] = [];
-      let synced = 0;
-      let failed = 0;
-      const plannerPeople = plannerPeopleForJira();
-
-      for (const task of tasksToPull) {
-        markJiraRunning(task.id);
-        try {
-          const response = await fetch(`/api/integrations/jira/tasks/${encodeURIComponent(task.id)}/pull`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-squad-id": activeSquadId,
-            },
-            body: JSON.stringify({ task, plannerPeople }),
-          });
-          const body = (await response.json()) as {
-            error?: string;
-            patch?: Partial<Task>;
-            jira?: Task["jira"];
-            warnings?: string[];
-          };
-          if (!response.ok) {
-            failed += 1;
-            const error = body.error ?? "Pull failed";
-            markJiraDone({ taskId: task.id, ok: false, error });
-            results.push({
-              taskId: task.id,
-              storyName: storyLabelForSync(task),
-              ok: false,
-              error,
-            });
-            continue;
-          }
-          synced += 1;
-          if (body.patch) {
-            // Hours / assignees / status changes light Need remark; jira meta alone does not.
-            updateTask(task.id, body.patch);
-          }
-          markJiraDone({ taskId: task.id, ok: true });
-          results.push({
-            taskId: task.id,
-            storyName: storyLabelForSync(task),
-            ok: true,
-            patch: body.patch,
-            jira: body.jira,
-            warnings: body.warnings,
-          });
-        } catch {
-          failed += 1;
-          markJiraDone({ taskId: task.id, ok: false, error: "Pull failed" });
-          results.push({
-            taskId: task.id,
-            storyName: storyLabelForSync(task),
-            ok: false,
-            error: "Pull failed",
-          });
-        }
-      }
-
       const importedLine =
         missingStories.length > 0
           ? `Added ${missingStories.length === 1 ? "1 story" : `${missingStories.length} stories`} from Jira that ${missingStories.length === 1 ? "was" : "were"} not on the dashboard.`
           : "";
-      const pullPayload = {
-        results,
-        synced,
-        failed,
-        skipped: Math.max(0, selectedTasksForSync.length - eligibleTasks.length),
-      };
-      const summaryResult = withDiscoverWarning(
-        formatBulkPullSummaryModel(pullPayload),
+
+      await runJiraPullForTasks(activeSquadId, tasksToPull, {
+        skippedCount: Math.max(0, selectedTasksForSync.length - eligibleTasks.length),
         discoverWarning,
-        importedLine,
-      );
-      if (synced > 0 || missingStories.length > 0) {
-        setJiraSyncPhase("saving");
-        const saved = await flushPlannerStateToServer(activeSquadId);
-        if (!saved) {
-          const failedModel = appendSummaryGroups(summaryResult.model, [
-            {
-              severity: "error",
-              segments: emphasizeMessage(
-                "Planner save failed — pull results are on screen but not saved; wait before refreshing",
-              ),
-              stories: [],
-            },
-          ]);
-          const failedSummary = buildBulkSummaryResult(failedModel);
-          finishJiraSync({
-            summary: failedSummary.text,
-            summaryModel: failedSummary.model,
-            isError: true,
-          });
-          return;
-        }
-      }
-      const hasActionErrors = bulkPullHasActionErrors(pullPayload);
-      const hasSoftWarnings =
-        Boolean(discoverWarning) ||
-        results.some((row) =>
-          (row.warnings ?? []).some((message) => !isActionFailureMessage(message)),
-        );
-      finishJiraSync({
-        summary: summaryResult.text,
-        summaryModel: summaryResult.model,
-        isError: hasActionErrors,
-        isWarning: !hasActionErrors && hasSoftWarnings,
+        headlinePrefix: importedLine,
+        forceSave: missingStories.length > 0,
+        addedTaskIds,
       });
     });
   };
@@ -1410,7 +1622,7 @@ export function TaskTable() {
     [selectedTasks],
   );
 
-  const jiraSyncInProgress = jiraSyncActive;
+  const jiraSyncInProgress = jiraSyncActive || jiraSyncPreparing !== null;
   const allVisibleSelected =
     orderedTasks.length > 0 && visibleSelectedCount === orderedTasks.length;
 
@@ -2293,6 +2505,15 @@ export function TaskTable() {
         </div>
       </div>
       <JiraSyncBanner />
+      <JiraSyncLoadingScreen />
+      {pushConflict ? (
+        <JiraPushConflictDialog
+          eligibleCount={pushConflict.eligibleCount}
+          changed={pushConflict.changed}
+          leftOut={pushConflict.leftOut}
+          onChoose={resolvePushConflict}
+        />
+      ) : null}
       {actionFeedback ? (
         <div className="task-action-feedback" role="status" aria-live="polite">
           <span className="min-w-0">{actionFeedback}</span>
@@ -2363,7 +2584,9 @@ export function TaskTable() {
                       disabled={jiraSyncInProgress}
                       title={
                         jiraSyncInProgress
-                          ? jiraSyncPhase === "saving"
+                          ? jiraSyncPreparing
+                            ? `${jiraSyncPreparing.title}…`
+                            : jiraSyncPhase === "saving"
                             ? "Saving planner after Jira sync…"
                             : jiraSyncMode === "pull"
                               ? "Pulling from Jira…"
@@ -2383,7 +2606,9 @@ export function TaskTable() {
                     >
                       <span>
                         {jiraSyncInProgress
-                          ? jiraSyncPhase === "saving"
+                          ? jiraSyncPreparing
+                            ? "Checking…"
+                            : jiraSyncPhase === "saving"
                             ? "Saving…"
                             : jiraSyncMode === "pull"
                               ? "Pulling…"

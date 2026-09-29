@@ -1,4 +1,5 @@
 import type { TaskJiraMeta } from "./types";
+import type { BulkSyncLeftOutStory } from "./syncEligibility";
 import {
   buildBulkSummaryResult,
   emphasizeMessage,
@@ -20,6 +21,8 @@ export interface BulkSyncTaskResult {
   warnings?: string[];
   errors?: string[];
   error?: string;
+  /** Subtasks were further along than the planner, so their status was pushed (planner updated to match). */
+  statusFromChildren?: { from: string; to: string };
 }
 
 export interface BulkSyncToJiraResult {
@@ -43,21 +46,36 @@ const storyLabel = (row: Pick<BulkSyncTaskResult, "storyName" | "taskId">): stri
 
 /**
  * Confirm dialog before bulk sync — explains what will sync vs be left out.
+ * Left-out rows are skips (not errors); status/hours are only pushed for eligible stories.
  */
 export const formatBulkSyncConfirmMessage = (
   eligibleCount: number,
   visibleCount: number,
   discopedCount = 0,
+  leftOutStories: BulkSyncLeftOutStory[] = [],
 ): string => {
-  const softLeftOut = Math.max(0, visibleCount - eligibleCount - discopedCount);
+  const softLeftOut = Math.max(
+    0,
+    leftOutStories.length > 0
+      ? leftOutStories.length
+      : visibleCount - eligibleCount - discopedCount,
+  );
   const syncLabel = storyCountLabel(eligibleCount);
   const parts: string[] = [`Sync ${syncLabel} to Jira?`];
 
   if (softLeftOut > 0) {
     parts.push(
-      `${storyCountLabel(softLeftOut)} will be left out — no Jira link or no FE/BE assignee/hours. ` +
-        `Left out is not a failure; Jira is simply not called for those rows.`,
+      `${storyCountLabel(softLeftOut)} skipped (not an error — Jira is not called for these):`,
     );
+    if (leftOutStories.length > 0) {
+      for (const story of leftOutStories) {
+        const why =
+          story.reason === "no_link" ? "no Jira link" : "no FE/BE assignee or FE/BE/QC hours";
+        parts.push(`• ${story.name} — ${why}`);
+      }
+    } else {
+      parts.push("• no Jira link or no FE/BE assignee/hours");
+    }
   }
 
   if (discopedCount > 0) {
@@ -66,7 +84,7 @@ export const formatBulkSyncConfirmMessage = (
     );
   }
 
-  return parts.join("\n\n");
+  return parts.join("\n");
 };
 
 const collectWarningMessages = (result: BulkSyncToJiraResult): StoryMessage[] =>
@@ -147,6 +165,17 @@ export const formatBulkSyncSummaryModel = (result: BulkSyncToJiraResult): BulkSu
     ...groupStoryMessages(allActionFailures, "error"),
     ...groupStoryMessages(softWarnings, "warning"),
   );
+
+  const statusFromChildrenRows = result.results.filter((row) => row.ok && row.statusFromChildren);
+  if (statusFromChildrenRows.length > 0) {
+    model.groups.push({
+      severity: "info",
+      segments: emphasizeMessage("Parent status taken from subtasks (planner was behind)"),
+      stories: statusFromChildrenRows.map(
+        (row) => `${storyLabel(row)} (${row.statusFromChildren?.from} -> ${row.statusFromChildren?.to})`,
+      ),
+    });
+  }
 
   if (
     result.synced > 0 &&

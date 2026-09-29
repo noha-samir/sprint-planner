@@ -589,6 +589,79 @@ describe("syncTaskFromJira", () => {
   });
 });
 
+describe("syncTaskFromJira parent status from subtasks", () => {
+  const stubParent = (statusName: string) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("/issue/BR-1?")) {
+          return { ok: true, json: async () => ({ fields: { status: { name: statusName } } }) };
+        }
+        return { ok: true, json: async () => ({ fields: { assignee: null, timetracking: {} } }) };
+      }),
+    );
+  };
+
+  it("moves the parent to In Progress when a subtask started", async () => {
+    mockedListParentSubtasks.mockResolvedValueOnce([
+      { key: "BR-10", summary: "[FE] Pricing", status: "In Progress" },
+      { key: "BR-11", summary: "[BE] Pricing", status: "To Do" },
+    ]);
+    stubParent("To Do");
+
+    const result = await syncTaskFromJira(baseTask(), defaultSquadJiraConfig());
+    expect(result.patch.status).toBe("In Progress");
+    expect(result.statusFromChildren).toEqual({ from: "To Do", to: "In Progress" });
+    vi.unstubAllGlobals();
+  });
+
+  it("moves the parent to Ready for Testing when every subtask is ready", async () => {
+    mockedListParentSubtasks.mockResolvedValueOnce([
+      { key: "BR-10", summary: "[FE] Pricing", status: "Ready for Testing" },
+      { key: "BR-13", summary: "QA checklist", status: "Closed" },
+    ]);
+    stubParent("In Progress");
+
+    const result = await syncTaskFromJira(baseTask(), defaultSquadJiraConfig());
+    expect(result.patch.status).toBe("Ready for Testing");
+    expect(result.statusFromChildren).toEqual({ from: "In Progress", to: "Ready for Testing" });
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps a parent that is further along and warns", async () => {
+    mockedListParentSubtasks.mockResolvedValueOnce([
+      { key: "BR-10", summary: "[FE] Pricing", status: "In Progress" },
+    ]);
+    stubParent("Testing");
+
+    const result = await syncTaskFromJira(baseTask(), defaultSquadJiraConfig());
+    expect(result.patch.status).toBe("Testing");
+    expect(result.statusFromChildren).toBeUndefined();
+    expect(result.warnings.some((warning) => warning.includes("parent status left unchanged"))).toBe(true);
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("formatBulkPullSummary status from subtasks", () => {
+  it("lists stories whose parent status came from subtasks", () => {
+    const text = formatBulkPullSummary({
+      results: [
+        {
+          taskId: "t1",
+          storyName: "Box Trips",
+          ok: true,
+          statusFromChildren: { from: "To Do", to: "In Progress" },
+        },
+      ],
+      synced: 1,
+      failed: 0,
+      skipped: 0,
+    });
+    expect(text).toContain("Parent status updated from subtasks — push to update Jira");
+    expect(text).toContain("Box Trips (To Do -> In Progress)");
+  });
+});
+
 describe("bulkPullTasksFromJira", () => {
   it("skips no-link and fails Discoped", async () => {
     const result = await bulkPullTasksFromJira(

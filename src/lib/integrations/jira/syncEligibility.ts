@@ -18,6 +18,33 @@ export const taskHasJiraSyncHours = (task: Task): boolean =>
   hasNamedAssignee(task.androidDevs ?? []) ||
   (task.needsIos && hasNamedAssignee(task.iosDevs ?? []));
 
+/** Soft skip reasons for bulk push confirm (not Discoped). */
+export type BulkSyncLeftOutReason = "no_link" | "no_hours";
+
+export type BulkSyncLeftOutStory = {
+  name: string;
+  reason: BulkSyncLeftOutReason;
+};
+
+/** Why a selected row is left out of push (null when eligible or Discoped). */
+export const bulkSyncLeftOutReason = (task: Task): BulkSyncLeftOutReason | null => {
+  if (isDiscopedTaskStatus(task.status)) return null;
+  if (!isJiraStoryLink(task.storyLink)) return "no_link";
+  if (!taskHasJiraSyncHours(task)) return "no_hours";
+  return null;
+};
+
+const storyLabelForLeftOut = (task: Task): string =>
+  task.storyName.trim() || task.storyLink.trim() || task.id;
+
+/** Selected rows that will be soft-skipped on push (not Discoped). */
+export const listBulkSyncLeftOutStories = (tasks: Task[]): BulkSyncLeftOutStory[] =>
+  tasks.flatMap((task) => {
+    const reason = bulkSyncLeftOutReason(task);
+    if (!reason) return [];
+    return [{ name: storyLabelForLeftOut(task), reason }];
+  });
+
 /** Whether a task is eligible for dashboard Jira sync. */
 export const isTaskEligibleForJiraSync = (task: Task): boolean =>
   isJiraStoryLink(task.storyLink) && taskHasJiraSyncHours(task) && !isDiscopedTaskStatus(task.status);

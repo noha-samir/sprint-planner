@@ -157,10 +157,20 @@ async function loadRegistryFromDb(): Promise<AccessRegistry | null> {
 const allowBootstrap = (): boolean =>
   process.env.ALLOW_REGISTRY_BOOTSTRAP === "1" || process.env.ALLOW_REGISTRY_BOOTSTRAP === "true";
 
-/**
- * Load squads, users, and squadAccounts from Postgres (optionally bootstrap on first empty DB).
- */
-export const readAccessRegistry = async (): Promise<AccessRegistry> => {
+export const ACCESS_REGISTRY_CACHE_MS = 30_000;
+
+type CachedAccessRegistry = { promise: Promise<AccessRegistry>; expiresAt: number };
+
+const globalForAccessRegistry = globalThis as unknown as {
+  accessRegistryCache?: CachedAccessRegistry | null;
+};
+
+/** Drop the cached registry so the next read hits Postgres. */
+export const invalidateAccessRegistryCache = (): void => {
+  globalForAccessRegistry.accessRegistryCache = null;
+};
+
+const loadAccessRegistry = async (): Promise<AccessRegistry> => {
   const fromDb = await loadRegistryFromDb();
   if (!fromDb) {
     if (!allowBootstrap()) {
@@ -178,6 +188,29 @@ export const readAccessRegistry = async (): Promise<AccessRegistry> => {
   return normalizeRegistry(fromDb);
 };
 
+/**
+ * Load squads, users, and squadAccounts from Postgres (optionally bootstrap on first empty DB).
+ * Cached per server process for ACCESS_REGISTRY_CACHE_MS; concurrent callers share one in-flight load
+ * and failed loads are never cached. writeAccessRegistry invalidates the cache.
+ * @returns A deep copy, so callers may mutate it without corrupting the cache.
+ */
+export const readAccessRegistry = async (): Promise<AccessRegistry> => {
+  const now = Date.now();
+  let entry = globalForAccessRegistry.accessRegistryCache;
+  if (!entry || entry.expiresAt <= now) {
+    const created: CachedAccessRegistry = {
+      promise: loadAccessRegistry(),
+      expiresAt: now + ACCESS_REGISTRY_CACHE_MS,
+    };
+    globalForAccessRegistry.accessRegistryCache = created;
+    created.promise.catch(() => {
+      if (globalForAccessRegistry.accessRegistryCache === created) invalidateAccessRegistryCache();
+    });
+    entry = created;
+  }
+  return structuredClone(await entry.promise);
+};
+
 export type WriteAccessRegistryOptions = {
   /** When true, squads missing from the payload are hard-deleted (cascade). Default false. */
   allowSquadDeletion?: boolean;
@@ -185,6 +218,7 @@ export type WriteAccessRegistryOptions = {
 
 /**
  * Persist the access registry. By default does not hard-delete missing squads.
+ * Always invalidates the readAccessRegistry cache, even when the write fails.
  */
 export const writeAccessRegistry = async (
   registry: AccessRegistry,
@@ -193,6 +227,18 @@ export const writeAccessRegistry = async (
   const normalized = normalizeRegistry(registry);
   const allowSquadDeletion = Boolean(options?.allowSquadDeletion);
 
+  try {
+    await writeRegistryRows(normalized, allowSquadDeletion);
+  } finally {
+    invalidateAccessRegistryCache();
+  }
+};
+
+/** Replace users/squadAccounts and upsert squads in one transaction (optionally deleting missing squads). */
+const writeRegistryRows = async (
+  normalized: AccessRegistry,
+  allowSquadDeletion: boolean,
+): Promise<void> => {
   await prisma.$transaction(async (tx) => {
     for (const squad of normalized.squads) {
       await tx.squad.upsert({

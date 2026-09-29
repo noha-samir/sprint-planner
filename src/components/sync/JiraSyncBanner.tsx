@@ -77,17 +77,12 @@ const SummaryGroups = ({ model }: { model: BulkNotificationSummary }) => {
 };
 
 /**
- * App-wide Jira push/pull progress + completion summary.
+ * Jira push/pull completion summary (progress is shown by JiraSyncLoadingScreen).
  * Success auto-dismisses; errors and warnings stay until the user closes them.
  */
 export function JiraSyncBanner() {
   const active = useJiraSyncStore((state) => state.active);
-  const phase = useJiraSyncStore((state) => state.phase);
   const mode = useJiraSyncStore((state) => state.mode);
-  const total = useJiraSyncStore((state) => state.total);
-  const completed = useJiraSyncStore((state) => state.completed);
-  const currentStoryName = useJiraSyncStore((state) => state.currentStoryName);
-  const tasks = useJiraSyncStore((state) => state.tasks);
   const summary = useJiraSyncStore((state) => state.summary);
   const summaryModel = useJiraSyncStore((state) => state.summaryModel);
   const summaryIsError = useJiraSyncStore((state) => state.summaryIsError);
@@ -107,55 +102,11 @@ export function JiraSyncBanner() {
     return () => window.clearTimeout(timer);
   }, [active, summary]);
 
-  if (!active && !summary) {
+  if (active || !summary) {
     return null;
   }
 
   const doneVerb = mode === "pull" ? "Pull" : "Push";
-  const okCount = tasks.filter((task) => task.status === "ok").length;
-  const failedCount = tasks.filter((task) => task.status === "failed").length;
-  const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
-  const saving = phase === "saving";
-
-  if (active) {
-    return (
-      <div
-        className="jira-sync-banner jira-sync-banner-active"
-        role="status"
-        aria-live="polite"
-        aria-busy="true"
-      >
-        <div className="jira-sync-banner-head">
-          <span className="jira-sync-banner-title">
-            {saving
-              ? "Saving planner…"
-              : mode === "pull"
-                ? "Pulling from Jira"
-                : "Pushing to Jira"}
-            {!saving ? ` — ${completed}/${total}` : ""}
-          </span>
-          <span className="jira-sync-banner-meta">
-            {okCount} ok · {failedCount} failed · {saving ? "saving" : `${percent}%`}
-          </span>
-        </div>
-        <div className="jira-sync-banner-bar" aria-hidden>
-          <div
-            className="jira-sync-banner-bar-fill"
-            style={{ width: saving ? "100%" : `${percent}%` }}
-          />
-        </div>
-        <p className="jira-sync-banner-current">
-          {saving
-            ? "Writing changes to the server…"
-            : currentStoryName
-              ? `Now: ${currentStoryName}`
-              : completed < total
-                ? "Starting next story…"
-                : "Finishing…"}
-        </p>
-      </div>
-    );
-  }
 
   return (
     <div

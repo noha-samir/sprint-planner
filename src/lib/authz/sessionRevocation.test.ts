@@ -1,6 +1,58 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AccessRegistry } from "@/lib/access/registry";
-import { emailsNeedingSessionRevoke } from "./sessionRevocation";
+import { prisma } from "@/lib/db/prisma";
+import {
+  bumpSessionVersions,
+  emailsNeedingSessionRevoke,
+  getSessionVersion,
+  SESSION_VERSION_CACHE_MS,
+} from "./sessionRevocation";
+
+vi.mock("@/lib/db/prisma", () => ({
+  prisma: {
+    sessionVersion: {
+      findUnique: vi.fn(),
+      upsert: vi.fn(() => ({})),
+    },
+    $transaction: vi.fn(async () => []),
+  },
+}));
+
+describe("getSessionVersion cache", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it("queries the database once per email within the cache window", async () => {
+    vi.mocked(prisma.sessionVersion.findUnique).mockResolvedValue({ email: "cache-a@x.co", version: 2 } as never);
+
+    expect(await getSessionVersion("Cache-A@x.co")).toBe(2);
+    expect(await getSessionVersion("cache-a@x.co")).toBe(2);
+    expect(prisma.sessionVersion.findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks the database again after the cache window", async () => {
+    vi.useFakeTimers();
+    vi.mocked(prisma.sessionVersion.findUnique)
+      .mockResolvedValueOnce({ email: "cache-b@x.co", version: 1 } as never)
+      .mockResolvedValueOnce({ email: "cache-b@x.co", version: 3 } as never);
+
+    expect(await getSessionVersion("cache-b@x.co")).toBe(1);
+    vi.advanceTimersByTime(SESSION_VERSION_CACHE_MS + 1);
+    expect(await getSessionVersion("cache-b@x.co")).toBe(3);
+  });
+
+  it("drops cached versions of revoked emails right after the bump", async () => {
+    vi.mocked(prisma.sessionVersion.findUnique)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ email: "cache-c@x.co", version: 1 } as never);
+
+    expect(await getSessionVersion("cache-c@x.co")).toBe(0);
+    await bumpSessionVersions(["cache-c@x.co"]);
+    expect(await getSessionVersion("cache-c@x.co")).toBe(1);
+  });
+});
 
 const base = (): AccessRegistry => ({
   squads: [{ id: "ventures", name: "Ventures", emEmail: "admin@example.com", pmEmails: [], hidden: false }],

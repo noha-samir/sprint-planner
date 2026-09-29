@@ -7,6 +7,7 @@ import { signOutAndClearJiraToken } from "@/lib/authz/signOutClient";
 import { useSession } from "next-auth/react";
 import { sessionCapabilities } from "@/lib/access/control";
 import { getSquadIcon } from "@/lib/ui/squadIcon";
+import { reloadPlannerFromServer } from "@/lib/planner/flushPlannerState";
 import { usePlannerSaveStore } from "@/store/usePlannerSaveStore";
 import { usePlannerStore } from "@/store/usePlannerStore";
 
@@ -22,20 +23,52 @@ const tabs = [
 function PlannerSaveStatusChip() {
   const status = usePlannerSaveStore((state) => state.status);
   const message = usePlannerSaveStore((state) => state.message);
+  const activeSquadId = usePlannerStore((state) => state.activeSquadId);
+  const [isReloading, setIsReloading] = useState(false);
   if (status === "idle" || !message) {
     return null;
   }
+
+  const reloadSavedPlanner = async () => {
+    if (
+      !window.confirm(
+        "Load the saved planner? Changes on this screen that were not saved will be replaced. Jira data can be pulled again.",
+      )
+    ) {
+      return;
+    }
+    setIsReloading(true);
+    const loaded = await reloadPlannerFromServer(activeSquadId);
+    setIsReloading(false);
+    if (loaded) {
+      usePlannerSaveStore.getState().clear();
+    } else {
+      usePlannerSaveStore.getState().markError("Could not load the saved planner");
+    }
+  };
+
   return (
     <div
-      className={`planner-save-chip planner-save-chip-${status}`}
+      className={`planner-save-chip planner-save-chip-${status === "conflict" ? "error" : status}`}
       role="status"
       aria-live="polite"
-      aria-busy={status === "saving"}
+      aria-busy={status === "saving" || isReloading}
     >
-      {status === "saving" ? (
+      {status === "saving" || isReloading ? (
         <span className="planner-save-chip-spinner" aria-hidden />
       ) : null}
       <span>{message}</span>
+      {status === "conflict" ? (
+        <button
+          type="button"
+          className="planner-save-chip-action"
+          disabled={isReloading}
+          title="Someone saved this planner after you opened it. Load their saved copy."
+          onClick={() => void reloadSavedPlanner()}
+        >
+          Reload
+        </button>
+      ) : null}
     </div>
   );
 }

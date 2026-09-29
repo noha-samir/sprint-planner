@@ -4,6 +4,7 @@ import { syncTaskToJira } from "./pushSubtasks";
 import { pushPlannerStatusToJira } from "./syncIssueStatus";
 import { defaultSquadJiraConfig } from "./types";
 import * as client from "./client";
+import * as discoverSubtasks from "./discoverSubtasks";
 
 vi.mock("@/lib/authz/sessionJiraCredentials", () => ({
   requireJiraApiCredentials: vi.fn(async () => ({
@@ -217,5 +218,78 @@ describe("syncTaskToJira", () => {
         developmentEstimateFieldId: "customfield_10001",
       }),
     );
+  });
+
+  it("keeps lastPulledAt and reports statusSynced when the status matches", async () => {
+    const config = defaultSquadJiraConfig();
+    config.assigneeMap = { Karim: "fe-1", Alice: "qc-1" };
+    const pulled = task();
+    pulled.jira = { parentIssueKey: "BR-1", lastPushedAt: null, lastPulledAt: "2026-09-29T10:00:00.000Z", subtasks: [] };
+
+    const result = await syncTaskToJira(pulled, config);
+
+    expect(result.jira.lastPulledAt).toBe("2026-09-29T10:00:00.000Z");
+    expect(result.statusSynced).toBe(true);
+  });
+
+  it("pushes the subtask status when the planner is behind (Ready for Testing + Done)", async () => {
+    vi.mocked(discoverSubtasks.listParentSubtasks).mockResolvedValueOnce([
+      { key: "BR-FE", summary: "[FE] Pricing Engine", status: "Ready for Testing" },
+      { key: "BR-QA", summary: "QA checklist", status: "Done" },
+    ]);
+    const config = defaultSquadJiraConfig();
+    config.assigneeMap = { Karim: "fe-1", Alice: "qc-1" };
+
+    const result = await syncTaskToJira(task(), config);
+
+    expect(pushPlannerStatusToJira).toHaveBeenCalledWith(expect.anything(), "BR-1", "Ready for Testing");
+    expect(result.statusFromChildren).toEqual({ from: "To Do", to: "Ready for Testing" });
+  });
+
+  it("keeps the planner status when it is ahead of the subtasks", async () => {
+    vi.mocked(discoverSubtasks.listParentSubtasks).mockResolvedValueOnce([
+      { key: "BR-FE", summary: "[FE] Pricing Engine", status: "In Progress" },
+    ]);
+    const config = defaultSquadJiraConfig();
+    config.assigneeMap = { Karim: "fe-1", Alice: "qc-1" };
+
+    const result = await syncTaskToJira({ ...task(), status: "Testing" }, config);
+
+    expect(pushPlannerStatusToJira).toHaveBeenCalledWith(expect.anything(), "BR-1", "Testing");
+    expect(result.statusFromChildren).toBeUndefined();
+  });
+
+  it("ignores the subtask rule when this push created a subtask (status unknown)", async () => {
+    vi.mocked(discoverSubtasks.listParentSubtasks).mockResolvedValueOnce([
+      { key: "BR-QA", summary: "QA checklist", status: "Done" },
+    ]);
+    vi.mocked(discoverSubtasks.mergeDiscoveredIntoJiraMeta).mockReturnValueOnce({
+      parentIssueKey: "BR-1",
+      lastPushedAt: null,
+      subtasks: [],
+    });
+    const config = defaultSquadJiraConfig();
+    config.assigneeMap = { Karim: "fe-1", Alice: "qc-1" };
+
+    const result = await syncTaskToJira(task(), config);
+
+    expect(client.createJiraSubtask).toHaveBeenCalled();
+    expect(pushPlannerStatusToJira).toHaveBeenCalledWith(expect.anything(), "BR-1", "To Do");
+    expect(result.statusFromChildren).toBeUndefined();
+  });
+
+  it("reports statusSynced false when Jira cannot transition to the planner status", async () => {
+    vi.mocked(pushPlannerStatusToJira).mockResolvedValueOnce({
+      changed: false,
+      fromStatus: "To Do",
+      toStatus: null,
+      warning: 'Could not move BR-1 from "To Do" to "Ready for Testing".',
+    });
+    const config = defaultSquadJiraConfig();
+    config.assigneeMap = { Karim: "fe-1", Alice: "qc-1" };
+
+    const result = await syncTaskToJira(task(), config);
+
+    expect(result.statusSynced).toBe(false);
   });
 });

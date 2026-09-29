@@ -77,13 +77,35 @@ export const parseJiraTasksArrayBody = (body: unknown) => jiraTasksArraySchema.p
 export const jiraSingleTaskSchema = z.object({
   task: taskSchema,
   plannerPeople: z
-    .array(z.object({ name: z.string(), nickname: z.string().optional() }))
+    .array(
+      z.object({
+        name: z.string(),
+        nickname: z.string().nullable().optional(),
+        type: z.string().max(40).nullable().optional(),
+      }),
+    )
     .max(200)
     .optional(),
   plannerNames: z.array(z.string()).max(200).optional(),
 });
 
 export const parseJiraSingleTaskBody = (body: unknown) => jiraSingleTaskSchema.parse(body);
+
+export const jiraRemoteChangesSchema = z.object({
+  tasks: z
+    .array(
+      z.object({
+        taskId: z.string().trim().min(1).max(128),
+        storyLink: z.string().max(2000),
+        lastPulledAt: z.string().max(64).nullable().optional(),
+        lastPushedAt: z.string().max(64).nullable().optional(),
+      }),
+    )
+    .min(1)
+    .max(maxTasks),
+});
+
+export const parseJiraRemoteChangesBody = (body: unknown) => jiraRemoteChangesSchema.parse(body);
 
 export const autoMapNamesSchema = z.object({
   names: z.array(z.string().trim().min(1).max(200)).max(200).optional(),

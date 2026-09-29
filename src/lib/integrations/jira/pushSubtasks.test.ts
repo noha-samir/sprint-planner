@@ -208,14 +208,24 @@ describe("bulkSyncTasksToJira", () => {
 
   it("formatBulkSyncConfirmMessage explains left-out stories", () => {
     expect(formatBulkSyncConfirmMessage(14, 15)).toContain("14 stories");
-    expect(formatBulkSyncConfirmMessage(14, 15)).toContain("1 story will be left out");
-    expect(formatBulkSyncConfirmMessage(14, 15)).toContain("not a failure");
+    expect(formatBulkSyncConfirmMessage(14, 15)).toContain("1 story skipped");
+    expect(formatBulkSyncConfirmMessage(14, 15)).toContain("not an error");
+  });
+
+  it("formatBulkSyncConfirmMessage lists left-out story names", () => {
+    const message = formatBulkSyncConfirmMessage(2, 4, 0, [
+      { name: "Box Trips permissions", reason: "no_hours" },
+      { name: "Unlinked draft", reason: "no_link" },
+    ]);
+    expect(message).toContain("2 stories skipped");
+    expect(message).toContain("• Box Trips permissions — no FE/BE assignee or FE/BE/QC hours");
+    expect(message).toContain("• Unlinked draft — no Jira link");
   });
 
   it("formatBulkSyncConfirmMessage calls out Discoped as errors", () => {
     const message = formatBulkSyncConfirmMessage(13, 15, 1);
     expect(message).toContain("13 stories");
-    expect(message).toContain("1 story will be left out");
+    expect(message).toContain("1 story skipped");
     expect(message).toContain("1 story Discoped — not synced to Jira (reported as errors)");
   });
 });
