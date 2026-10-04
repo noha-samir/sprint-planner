@@ -5,9 +5,40 @@ import { SessionProvider, useSession } from "next-auth/react";
 import { HoverHintLayer } from "@/components/common/HoverHintLayer";
 import { applyColorScheme, resolveColorScheme } from "@/lib/ui/colorScheme";
 import { signOutAndClearJiraToken } from "@/lib/authz/signOutClient";
+import { safeCallbackUrl } from "@/lib/ui/safeCallbackUrl";
 
+/**
+ * Ends the page when the session is no longer usable instead of leaving it view-only:
+ * revoked / role cleared → sign out; expired (no session at all) → sign-in, then back to this page.
+ * Side effects: navigates away; may re-fetch the session once.
+ */
 function SessionRevocationWatcher() {
-  const { data: session, status } = useSession();
+  const { data: session, status, update } = useSession();
+
+  useEffect(() => {
+    if (status !== "unauthenticated" || window.location.pathname === "/sign-in") return;
+    let cancelled = false;
+    void (async () => {
+      // Confirm with the server first: a network blip also reports "unauthenticated".
+      try {
+        const response = await fetch("/api/auth/session", { cache: "no-store", credentials: "include" });
+        if (!response.ok || cancelled) return;
+        const body = (await response.json()) as { user?: unknown } | null;
+        if (cancelled) return;
+        if (body?.user) {
+          void update();
+          return;
+        }
+      } catch {
+        return;
+      }
+      const callbackUrl = safeCallbackUrl(`${window.location.pathname}${window.location.search}`, "/");
+      window.location.assign(`/sign-in?callbackUrl=${encodeURIComponent(callbackUrl)}`);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [status, update]);
 
   useEffect(() => {
     if (status !== "authenticated") return;

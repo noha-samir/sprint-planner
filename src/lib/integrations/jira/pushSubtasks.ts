@@ -12,11 +12,19 @@ import {
   mergeDiscoveredIntoJiraMeta,
 } from "./discoverSubtasks";
 import { isJiraStoryLink, parseJiraIssueKey, projectKeyFromIssueKey } from "./issueKey";
-import { taskHasJiraSyncHours } from "./syncEligibility";
+import { taskHasJiraDevWork } from "./syncEligibility";
+import { buildJiraSyncedFields } from "./syncedFields";
 import { buildParentJiraFieldPayload } from "./parentFields";
 import { pushPlannerStatusToJira } from "./syncIssueStatus";
 import { resolveParentStatusFromChildren } from "./parentStatusFromChildren";
-import { buildParentIssuePlan, buildSubtaskPlan, subtaskPlanAssigneeErrors, subtaskPlanWarnings, unmappedAssigneeNamesForSync } from "./subtaskPlan";
+import {
+  buildParentIssuePlan,
+  buildSubtaskPlan,
+  isPlannedSubtaskUnchanged,
+  subtaskPlanAssigneeErrors,
+  subtaskPlanWarnings,
+  unmappedAssigneeNamesForSync,
+} from "./subtaskPlan";
 import { warningsForUnmappedPlannerNames } from "./userSearch";
 import type { SquadJiraConfig, TaskJiraMeta } from "./types";
 import { isDiscopedTaskStatus } from "@/lib/scheduler/taskStatus";
@@ -48,10 +56,16 @@ export interface SyncTaskToJiraResult {
 
 export type PushSubtasksResult = SyncTaskToJiraResult;
 
-export { isTaskEligibleForJiraSync, taskHasJiraSyncHours } from "./syncEligibility";
+export { isTaskEligibleForJiraSync } from "./syncEligibility";
 
 /**
- * Sync FE/BE/MO subtasks (create or update assignee + hours), then update parent story custom fields.
+ * Sync FE/BE/Android/IOS subtasks (create, or update when assignee / hours / summary changed),
+ * then update parent story custom fields and status.
+ * Stories without dev work are parent-only: subtasks are not touched and a 0 Development estimate is not written
+ * (Testing estimate, QC Engineer, PM, branch and status still push — including 0 Testing hours).
+ * @param task - Planner story to push.
+ * @param squadConfig - Squad Jira config.
+ * @returns Updated Jira meta plus warnings / errors for the summary.
  */
 export const syncTaskToJira = async (
   task: Task,
@@ -84,13 +98,7 @@ export const syncTaskToJira = async (
     (task.needsIos ? Math.max(0, task.iosHours ?? 0) : 0);
   const parentPlan = buildParentIssuePlan(task, squadConfig, developmentHours);
   const assigneeErrors = subtaskPlanAssigneeErrors(task);
-
-  if (plan.length === 0 && parentPlan.testingHours <= 0 && assigneeErrors.length === 0) {
-    throw new JiraApiError(
-      "No Jira updates to sync — add FE/BE/Android/IOS assignees or FE/BE/Android/IOS/QC hours first",
-      400,
-    );
-  }
+  const parentOnly = !taskHasJiraDevWork(task);
 
   const accountWarnings = await warningsForUnmappedPlannerNames(
     credentials,
@@ -100,8 +108,30 @@ export const syncTaskToJira = async (
   const developmentEstimateFieldId = squadConfig.parentStoryFields.developmentEstimateHours;
   const syncErrors = [...assigneeErrors];
 
+  const childStatusByKey = new Map(children.map((child) => [child.key, child.status]));
+  const childSummaryByKey = new Map(children.map((child) => [child.key, child.summary]));
+  const lastSyncedByKey = new Map(
+    (task.jira?.parentIssueKey === parentIssueKey ? task.jira.subtasks : []).map((row) => [row.key, row]),
+  );
   const subtasks: TaskJiraMeta["subtasks"] = [];
   for (const row of plan) {
+    const existingKey = row.existingKey;
+    if (
+      existingKey &&
+      isPlannedSubtaskUnchanged(row, lastSyncedByKey.get(existingKey), childSummaryByKey.get(existingKey))
+    ) {
+      const status = childStatusByKey.get(existingKey);
+      subtasks.push({
+        key: existingKey,
+        role: row.role,
+        assigneeName: row.assigneeName,
+        hours: row.hours,
+        ...(status ? { status } : {}),
+      });
+      continue;
+    }
+
+
     const createPayload = {
       projectKey,
       parentIssueKey,
@@ -136,11 +166,13 @@ export const syncTaskToJira = async (
         key = await createJiraSubtask(credentials, createPayload);
       }
 
+      const status = childStatusByKey.get(key);
       subtasks.push({
         key,
         role: row.role,
         assigneeName: row.assigneeName,
         hours: row.hours,
+        ...(status ? { status } : {}),
       });
     } catch (error) {
       const message =
@@ -155,7 +187,7 @@ export const syncTaskToJira = async (
     }
   }
 
-  const parentFields = buildParentJiraFieldPayload(squadConfig, parentPlan);
+  const parentFields = buildParentJiraFieldPayload(squadConfig, parentPlan, { omitZeroDevelopmentEstimate: parentOnly });
   if (Object.keys(parentFields).length > 0) {
     try {
       await updateJiraParentIssue(credentials, parentIssueKey, parentFields);
@@ -175,24 +207,47 @@ export const syncTaskToJira = async (
   const statusToPush = childDrivenStatus ?? task.status;
 
   let statusSynced = false;
+  let jiraStatusAfterPush: string | null = null;
   try {
     const statusResult = await pushPlannerStatusToJira(credentials, parentIssueKey, statusToPush);
     if (statusResult.warning) {
       warnings.push(statusResult.warning);
+      jiraStatusAfterPush = statusResult.toStatus || statusResult.fromStatus || null;
     } else {
       statusSynced = true;
+      jiraStatusAfterPush = statusToPush;
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to sync Jira status";
     syncErrors.push(`Status sync failed for ${parentIssueKey}: ${message}`);
   }
 
+  // Parent-only push leaves Jira subtasks alone, so keep the ones we already know (with fresh statuses).
+  const resultSubtasks = parentOnly
+    ? jiraMeta.subtasks
+        .filter((row) => knownChildKeys.has(row.key))
+        .map((row) => {
+          const status = childStatusByKey.get(row.key);
+          return status ? { ...row, status } : row;
+        })
+    : subtasks;
+
+  // A failed Jira call keeps the previous baseline so the story still shows "Needs push";
+  // planner-side assignee errors (syncErrors seeded with them) repeat on every push and do not count.
+  const previousSynced = task.jira?.syncedFields;
+  const jiraCallFailed = syncErrors.length > assigneeErrors.length;
+  const syncedFields =
+    jiraCallFailed
+      ? previousSynced
+      : buildJiraSyncedFields(task, jiraStatusAfterPush ?? previousSynced?.status ?? statusToPush);
+
   return {
     jira: {
       parentIssueKey,
       lastPushedAt: new Date().toISOString(),
       lastPulledAt: task.jira?.lastPulledAt ?? null,
-      subtasks,
+      subtasks: resultSubtasks,
+      ...(syncedFields ? { syncedFields } : {}),
     },
     warnings,
     errors: syncErrors,
@@ -243,18 +298,6 @@ export const bulkSyncTasksToJira = async (
       });
       continue;
     }
-    if (!taskHasJiraSyncHours(task)) {
-      skipped += 1;
-      results.push({
-        taskId: task.id,
-        storyName: task.storyName,
-        ok: false,
-        skipped: true,
-        skipReason: JIRA_BULK_SKIP_REASON.NO_HOURS,
-      });
-      continue;
-    }
-
     try {
       const result = await syncTaskToJira(task, squadConfig);
       synced += 1;

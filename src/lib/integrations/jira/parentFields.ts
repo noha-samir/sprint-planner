@@ -19,13 +19,21 @@ export const buildBranchName = (task: Task): string => {
 
 /**
  * Map parent story values onto Jira custom field ids from squad config.
+ * @param config - Squad Jira config (field ids, user-field flags).
+ * @param parent - Planned parent values.
+ * @param options.omitZeroDevelopmentEstimate - Leave the Development estimate untouched when it is 0
+ *   (parent-only push: the planner has no dev work, so the dev side is not touched).
+ * @returns Jira `fields` payload; empty when nothing is configured or set.
  */
 export const buildParentJiraFieldPayload = (
   config: SquadJiraConfig,
   parent: PlannedJiraParentUpdate,
+  options: { omitZeroDevelopmentEstimate?: boolean } = {},
 ): Record<string, unknown> => {
   const fields: Record<string, unknown> = {};
   const ids = config.parentStoryFields;
+  const developmentHours =
+    options.omitZeroDevelopmentEstimate && parent.developmentHours <= 0 ? null : parent.developmentHours;
 
   const setField = (fieldId: string, value: unknown) => {
     const trimmed = fieldId.trim();
@@ -38,7 +46,7 @@ export const buildParentJiraFieldPayload = (
     fields[trimmed] = value;
   };
 
-  setField(ids.developmentEstimateHours, parent.developmentHours);
+  setField(ids.developmentEstimateHours, developmentHours);
   setField(ids.testingEstimateHours, parent.testingHours);
   setField(ids.branchName, parent.branchName);
 

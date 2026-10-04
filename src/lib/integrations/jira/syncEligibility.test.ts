@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "@/lib/scheduler/types";
-import { isTaskEligibleForJiraPull, isTaskEligibleForJiraSync, listBulkSyncLeftOutStories, resolveTaskForJiraSync, taskHasJiraSyncHours } from "./syncEligibility";
+import {
+  isTaskEligibleForJiraPull,
+  isTaskEligibleForJiraSync,
+  listBulkSyncLeftOutStories,
+  resolveTaskForJiraSync,
+  taskHasJiraDevWork,
+} from "./syncEligibility";
 
 const task = (overrides: Partial<Task> = {}): Task => ({
   id: "t1",
@@ -26,18 +32,21 @@ const task = (overrides: Partial<Task> = {}): Task => ({
 });
 
 describe("syncEligibility", () => {
-  it("detects syncable hours or FE/BE/MO assignees", () => {
-    expect(taskHasJiraSyncHours(task({ feHours: 2 }))).toBe(true);
-    expect(taskHasJiraSyncHours(task({ feDevs: ["Karim"] }))).toBe(true);
-    expect(taskHasJiraSyncHours(task({ androidHours: 3 }))).toBe(true);
-    expect(taskHasJiraSyncHours(task({ androidDevs: ["Nour"] }))).toBe(true);
-    expect(taskHasJiraSyncHours(task())).toBe(false);
+  it("detects dev work from FE/BE/Android/iOS hours or assignees", () => {
+    expect(taskHasJiraDevWork(task({ feHours: 2 }))).toBe(true);
+    expect(taskHasJiraDevWork(task({ feDevs: ["Karim"] }))).toBe(true);
+    expect(taskHasJiraDevWork(task({ androidHours: 3 }))).toBe(true);
+    expect(taskHasJiraDevWork(task({ androidDevs: ["Nour"] }))).toBe(true);
+    expect(taskHasJiraDevWork(task({ iosDevs: ["Omar"], needsIos: true }))).toBe(true);
+    expect(taskHasJiraDevWork(task({ iosDevs: ["Omar"] }))).toBe(false);
+    expect(taskHasJiraDevWork(task({ qcHours: 2, qcs: ["Alice"], productManagers: ["Hala"] }))).toBe(false);
+    expect(taskHasJiraDevWork(task())).toBe(false);
   });
 
-  it("requires jira link and syncable content for eligibility", () => {
+  it("allows push for any linked story, including 0 hours and no people", () => {
     expect(isTaskEligibleForJiraSync(task({ feHours: 3 }))).toBe(true);
+    expect(isTaskEligibleForJiraSync(task())).toBe(true);
     expect(isTaskEligibleForJiraSync(task({ storyLink: "" }))).toBe(false);
-    expect(isTaskEligibleForJiraSync(task())).toBe(false);
   });
 
   it("excludes Discoped stories from sync eligibility", () => {
@@ -69,7 +78,6 @@ describe("syncEligibility", () => {
       ]),
     ).toEqual([
       { name: "No link", reason: "no_link" },
-      { name: "Empty hours", reason: "no_hours" },
     ]);
   });
 });

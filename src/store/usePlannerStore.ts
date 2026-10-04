@@ -25,6 +25,7 @@ import {
   removeTaskIdFromNeedRemark,
   TASK_PATCH_KEYS_IGNORED_FOR_REMARK,
 } from "@/lib/planner/pendingMarkProgress";
+import { normalizeJiraSyncedFields } from "@/lib/integrations/jira/syncedFields";
 import {
   deserializeScheduleResult,
   mergeFrozenScheduleWithFresh,
@@ -45,7 +46,7 @@ import {
   enforceUniquePoPriorities,
   type CarryOverRemainingByTaskId,
 } from "./taskRules";
-import { ensureDefaultMobileResources, normalizeMobileAppFlag } from "@/lib/scheduler/mobilePlatform";
+import { normalizeMobileAppFlag } from "@/lib/scheduler/mobilePlatform";
 import {
   SQUAD_CAPACITY_HOURS_MAX,
   type Config,
@@ -347,8 +348,12 @@ const normalizeTask = (task: Task): Task => {
                 role: normalizeJiraSubtaskRole(subtask.role),
                 assigneeName: subtask.assigneeName ?? "",
                 hours: Number.isFinite(subtask.hours) ? subtask.hours : 0,
+                ...(typeof subtask.status === "string" && subtask.status.trim()
+                  ? { status: subtask.status.trim() }
+                  : {}),
               }))
             : [],
+          ...(task.jira.syncedFields ? { syncedFields: normalizeJiraSyncedFields(task.jira.syncedFields) } : {}),
         }
       : undefined,
   };
@@ -402,7 +407,7 @@ const buildState = (
   config: Config,
   options?: Pick<BuildPlannerOptions, "preserveDuplicateStoryLinks">,
 ) => {
-  const normalizedResources = ensureDefaultMobileResources(normalizeResourceCapacities(resources));
+  const normalizedResources = normalizeResourceCapacities(resources);
   const normalizedTasks = tasks.map((task) => {
     const normalized = normalizeTask(task);
     if (isTechnicalTaskIssueType(normalized.issueType)) {

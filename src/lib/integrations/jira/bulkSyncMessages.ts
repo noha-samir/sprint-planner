@@ -35,7 +35,6 @@ export interface BulkSyncToJiraResult {
 /** Internal skip reasons returned by bulk sync. */
 export const JIRA_BULK_SKIP_REASON = {
   NO_LINK: "No valid Jira story link",
-  NO_HOURS: "No FE/BE assignees or FE/BE/QC hours to sync",
   DISCOPED: "Discoped stories are not synced to Jira",
 } as const;
 
@@ -69,12 +68,10 @@ export const formatBulkSyncConfirmMessage = (
     );
     if (leftOutStories.length > 0) {
       for (const story of leftOutStories) {
-        const why =
-          story.reason === "no_link" ? "no Jira link" : "no FE/BE assignee or FE/BE/QC hours";
-        parts.push(`• ${story.name} — ${why}`);
+        parts.push(`• ${story.name} — no Jira link`);
       }
     } else {
-      parts.push("• no Jira link or no FE/BE assignee/hours");
+      parts.push("• no Jira link");
     }
   }
 
@@ -111,9 +108,6 @@ export const formatBulkSyncSummaryModel = (result: BulkSyncToJiraResult): BulkSu
   const noLink = result.results.filter(
     (row) => row.skipped && row.skipReason === JIRA_BULK_SKIP_REASON.NO_LINK,
   );
-  const noHours = result.results.filter(
-    (row) => row.skipped && row.skipReason === JIRA_BULK_SKIP_REASON.NO_HOURS,
-  );
   const failedRows = result.results.filter((row) => !row.ok && !row.skipped);
   const discopedRows = failedRows.filter((row) => row.error === JIRA_BULK_SKIP_REASON.DISCOPED);
   const jiraFailedRows = failedRows.filter((row) => row.error !== JIRA_BULK_SKIP_REASON.DISCOPED);
@@ -133,16 +127,6 @@ export const formatBulkSyncSummaryModel = (result: BulkSyncToJiraResult): BulkSu
       severity: "info",
       segments: emphasizeMessage(`${storyCountLabel(noLink.length)} not synced — add a Jira link`),
       stories: noLink.map(storyLabel),
-    });
-  }
-
-  if (noHours.length > 0) {
-    model.groups.push({
-      severity: "info",
-      segments: emphasizeMessage(
-        `${storyCountLabel(noHours.length)} not synced — add an FE/BE assignee or FE/BE/QC hours`,
-      ),
-      stories: noHours.map(storyLabel),
     });
   }
 
@@ -180,14 +164,13 @@ export const formatBulkSyncSummaryModel = (result: BulkSyncToJiraResult): BulkSu
   if (
     result.synced > 0 &&
     noLink.length === 0 &&
-    noHours.length === 0 &&
     failedRows.length === 0 &&
     allActionFailures.length === 0 &&
     softWarnings.length === 0
   ) {
     model.groups.push({
       severity: "info",
-      segments: [{ text: "Every visible story with a link and hours is up to date." }],
+      segments: [{ text: "Every selected story with a Jira link is up to date." }],
       stories: [],
     });
   }

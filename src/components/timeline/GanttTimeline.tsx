@@ -5,7 +5,7 @@ import { useMemo } from "react";
 import { getCurrentStoryPhase } from "@/lib/scheduler/currentPhase";
 import { schedule } from "@/lib/scheduler/engine";
 import { storyPhasePlanFromTask } from "@/lib/scheduler/storyTimelineEntries";
-import { releaseDateHandoffLabel } from "@/lib/scheduler/taskStatus";
+import { noReleaseDateLabel } from "@/lib/scheduler/taskStatus";
 import { thursdayReleaseChipLabel } from "@/lib/scheduler/types";
 import { usePlannerStore } from "@/store/usePlannerStore";
 import { StoryPhaseFlow } from "./StoryPhaseFlow";
@@ -96,7 +96,7 @@ export function GanttTimeline() {
                 <div className="font-semibold text-slate-800">
                   {task.releaseDate
                     ? fmtRelease(asDate(task.releaseDate))
-                    : releaseDateHandoffLabel(task.status) ?? "Pending"}
+                    : noReleaseDateLabel(task.status) ?? "Pending"}
                 </div>
               </div>
             </header>

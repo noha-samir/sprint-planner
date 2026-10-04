@@ -259,6 +259,8 @@ model Task {
   isEmStory           Boolean         @default(false)
   /** True when Jira assignee matches a squad Product Manager (User Management pmEmails). */
   isPmStory           Boolean         @default(false)
+  /** Assignee of the Jira issue itself (roster name when mapped, else Jira display name); set on Pull. */
+  jiraAssigneeName    String?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
@@ -324,6 +326,8 @@ model TaskJiraLink {
   parentIssueKey String
   lastPushedAt   DateTime?
   lastPulledAt   DateTime?
+  /** Push-relevant story values as Jira held them after the last pull/push (drives "Needs push"). */
+  syncedFields   Json?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -338,6 +342,8 @@ model TaskJiraSubtask {
   role         JiraSubtaskRole
   assigneeName String
   hours        Float
+  /// Jira status name from the last pull/push (null until known).
+  status       String?
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
 

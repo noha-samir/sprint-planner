@@ -401,6 +401,40 @@ body {
     @apply mx-1.5 text-blue-800/70;
   }
 
+  .sprint-ended-reminder {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900;
+  }
+
+  .sprint-ended-reminder-dot {
+    @apply inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500;
+    animation: needs-push-pulse 1.8s ease-in-out infinite;
+  }
+
+  .sprint-start-due {
+    animation: sprint-start-due-ring 2.4s ease-out infinite;
+  }
+
+  @keyframes sprint-start-due-ring {
+    0% {
+      box-shadow: 0 0 0 0 rgb(245 158 11 / 0.55);
+    }
+    70%,
+    100% {
+      box-shadow: 0 0 0 8px rgb(245 158 11 / 0);
+    }
+  }
+
+  html.color-scheme-dark .sprint-ended-reminder {
+    @apply border-amber-500/40 bg-amber-500/15 text-amber-200;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sprint-ended-reminder-dot,
+    .sprint-start-due {
+      animation: none;
+    }
+  }
+
   .btn-primary {
     @apply rounded-xl px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:shadow-md hover:brightness-110 active:brightness-95;
     background-color: var(--primary);
@@ -414,8 +448,9 @@ body {
     @apply rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-rose-700 hover:shadow-md active:bg-rose-800;
   }
 
+  /* Groups never shrink below their buttons, so a too-narrow screen wraps a whole group instead of overlapping. */
   .task-table-toolbar {
-    @apply flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-slate-200/70 px-3 py-2.5;
+    @apply flex flex-wrap items-center gap-x-2 gap-y-2 rounded-2xl border border-slate-200/70 px-2.5 py-2;
     background: linear-gradient(
       135deg,
       rgb(255 255 255 / 0.96) 0%,
@@ -430,7 +465,7 @@ body {
 
   .task-table-toolbar-filters,
   .task-table-toolbar-actions {
-    @apply flex min-w-0 flex-wrap items-center gap-2;
+    @apply flex min-w-0 flex-wrap items-center gap-1 xl:min-w-max xl:flex-nowrap;
   }
 
   .task-table-toolbar-filters {
@@ -438,52 +473,58 @@ body {
   }
 
   .task-table-toolbar-actions {
-    @apply ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2;
+    @apply ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1 xl:flex-nowrap;
   }
 
-  .task-table-toolbar-details-btn {
-    @apply inline-flex min-w-[10.5rem] shrink-0 items-center justify-center gap-1.5;
+  .task-table-toolbar .toolbar-strip-btn {
+    @apply whitespace-nowrap px-2 py-1.5;
   }
 
-  .toolbar-est-btn {
-    @apply rounded-xl border border-orange-200 px-3 py-2 text-sm font-semibold text-orange-900 shadow-sm transition duration-200 ease-out;
-    background: linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%);
+  /* Fixed height keeps header toggles aligned across columns regardless of the label below them. */
+  .header-toggle-cell {
+    @apply relative flex h-14 items-center justify-center py-5;
   }
 
-  .toolbar-est-btn:hover:not(:disabled) {
-    @apply border-orange-300 text-orange-950;
-    background: linear-gradient(180deg, #ffedd5 0%, #fed7aa 100%);
+  .header-toggle-cell > .table-header-toggle {
+    @apply absolute -top-1 -translate-x-1/2 whitespace-nowrap;
+    left: calc(50% + 5px);
   }
 
-  .toolbar-est-btn:disabled {
-    @apply cursor-not-allowed opacity-45;
+  /* Right-anchored so Show/Hide stays on the same screen spot: the columns right of Details are fixed-width. */
+  .header-toggle-cell-end > .table-header-toggle {
+    @apply left-auto translate-x-0;
+    right: 5px;
   }
 
-  .toolbar-est-btn-on {
-    @apply border-orange-300 text-orange-950;
-    background: linear-gradient(180deg, #ffedd5 0%, #fdba74 100%);
-    box-shadow:
-      0 1px 3px rgb(251 146 60 / 0.28),
-      inset 0 1px 0 rgb(255 255 255 / 0.55);
+  .table-shell thead.table-head th.task-details-col {
+    @apply px-0;
   }
 
-  .toolbar-est-btn-on:hover:not(:disabled) {
-    @apply border-orange-400;
-    background: linear-gradient(180deg, #fed7aa 0%, #fb923c 100%);
+  /* The subtasks toggle is wider than the Status column; paint it above the next sticky header. */
+  .table-shell thead.table-head th.status-col {
+    z-index: 4;
   }
 
-  .toolbar-est-btn-chevron {
-    @apply text-[13px] font-bold leading-none opacity-80;
+  .table-shell thead.table-head th.details-header-group {
+    @apply px-0;
+  }
+
+  .details-header-labels {
+    @apply grid w-full items-center text-center leading-4;
+  }
+
+  .details-header-labels > span {
+    @apply min-w-0 truncate;
   }
 
   .task-table-toolbar-group-label {
-    @apply mr-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500;
+    @apply shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] text-slate-500;
     background: linear-gradient(180deg, rgb(241 245 249 / 0.9) 0%, rgb(226 232 240 / 0.45) 100%);
     box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.65);
   }
 
   .task-table-toolbar-divider {
-    @apply hidden h-9 w-px shrink-0 self-center lg:block;
+    @apply hidden h-7 w-px shrink-0 self-center lg:block;
     background: linear-gradient(
       180deg,
       rgb(148 163 184 / 0) 0%,
@@ -630,27 +671,27 @@ body {
   }
 
   .toolbar-strip-btn-needs-progress {
-    @apply border-amber-300/90 text-amber-950;
-    background: linear-gradient(135deg, rgb(254 249 195 / 0.98) 0%, rgb(253 230 138 / 0.82) 100%);
+    @apply border-violet-300/90 text-violet-950;
+    background: linear-gradient(135deg, rgb(245 243 255 / 0.98) 0%, rgb(221 214 254 / 0.82) 100%);
     box-shadow:
-      0 0 0 1px rgb(251 191 36 / 0.35),
-      0 4px 16px rgb(245 158 11 / 0.18),
+      0 0 0 1px rgb(167 139 250 / 0.35),
+      0 4px 16px rgb(139 92 246 / 0.16),
       inset 0 1px 0 rgb(255 255 255 / 0.65);
   }
 
   .toolbar-strip-btn-needs-progress:hover:not(:disabled) {
-    @apply border-amber-400/90;
-    background: linear-gradient(135deg, rgb(254 243 199) 0%, rgb(252 211 77 / 0.88) 100%);
+    @apply border-violet-400/90;
+    background: linear-gradient(135deg, rgb(237 233 254) 0%, rgb(196 181 253 / 0.88) 100%);
     box-shadow:
-      0 0 0 1px rgb(245 158 11 / 0.4),
-      0 6px 18px rgb(245 158 11 / 0.22),
+      0 0 0 1px rgb(139 92 246 / 0.4),
+      0 6px 18px rgb(139 92 246 / 0.2),
       inset 0 1px 0 rgb(255 255 255 / 0.7);
   }
 
   .toolbar-strip-btn-badge {
     @apply ml-1.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-px text-[11px] font-bold tabular-nums text-white;
-    background: linear-gradient(180deg, rgb(217 119 6) 0%, rgb(180 83 9) 100%);
-    box-shadow: 0 2px 6px rgb(180 83 9 / 0.35);
+    background: linear-gradient(180deg, rgb(124 58 237) 0%, rgb(109 40 217) 100%);
+    box-shadow: 0 2px 6px rgb(109 40 217 / 0.35);
   }
 
   .toolbar-dropdown-shell {
@@ -729,6 +770,100 @@ body {
 
   .assignee-selected-tag {
     @apply max-w-full cursor-pointer truncate rounded px-1 py-0 text-[10px] font-medium leading-tight bg-white/70 text-current hover:brightness-95;
+  }
+
+  .assignee-selected-tag.assignee-selected-tag-match {
+    @apply bg-amber-300 font-bold text-amber-950 ring-1 ring-amber-500;
+  }
+
+  html.color-scheme-dark .assignee-selected-tag.assignee-selected-tag-match {
+    @apply bg-amber-400/80 text-slate-950 ring-amber-300;
+  }
+
+  .task-flag-chip.task-flag-chip-jira-assignee {
+    @apply border-amber-400 bg-amber-200 font-bold text-amber-950;
+  }
+
+  html.color-scheme-dark .task-flag-chip.task-flag-chip-jira-assignee {
+    @apply border-amber-300 bg-amber-400/80 text-slate-950;
+  }
+
+  /* Visible overflow lets the people flyout sit outside the Owner menu; header/footer keep the rounded corners. */
+  .owner-filter-shell,
+  .owner-people-flyout {
+    overflow: visible;
+  }
+
+  .owner-filter-shell > .toolbar-dropdown-header,
+  .owner-people-flyout > .toolbar-dropdown-header {
+    @apply rounded-t-2xl;
+  }
+
+  .owner-filter-shell > .toolbar-dropdown-footer {
+    @apply rounded-b-2xl;
+  }
+
+  .owner-choice-arrow {
+    @apply ml-auto self-center pl-1 text-lg font-semibold leading-none text-slate-400 transition-colors;
+  }
+
+  .toolbar-menu-choice:hover .owner-choice-arrow,
+  .toolbar-menu-choice-on .owner-choice-arrow {
+    @apply text-blue-600;
+  }
+
+  .owner-people-flyout {
+    @apply absolute top-0 z-30 w-56;
+    left: calc(100% + 1rem);
+  }
+
+  .owner-people-flyout::before {
+    content: "";
+    @apply absolute h-2.5 w-2.5 rotate-45 border-b border-l border-slate-200/70;
+    left: -6px;
+    top: 1rem;
+    background: rgb(248 250 252);
+  }
+
+  .owner-people-picker {
+    @apply px-2 py-2;
+  }
+
+  .group-stories-chip {
+    @apply max-w-full truncate rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[12px] font-semibold text-slate-700 transition hover:brightness-95;
+  }
+
+  .group-stories-chip-on {
+    @apply ring-2 ring-blue-400 ring-offset-1;
+  }
+
+  .owner-people-list {
+    @apply mt-1 max-h-[min(13rem,calc(100vh-20rem))] space-y-1 overflow-y-auto;
+  }
+
+  .owner-people-group-label {
+    @apply px-1.5 pt-1 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400;
+  }
+
+  .owner-people-option {
+    @apply flex min-w-0 cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1 text-[12.5px] font-medium text-slate-800 hover:bg-slate-100;
+  }
+
+  .owner-people-option-all {
+    @apply font-semibold text-slate-900;
+  }
+
+  html.color-scheme-dark .owner-people-flyout::before {
+    background: rgb(34 36 42);
+    border-color: rgb(255 255 255 / 0.08);
+  }
+
+  html.color-scheme-dark .owner-people-option {
+    @apply text-slate-200 hover:bg-white/5;
+  }
+
+  html.color-scheme-dark .owner-people-option-all {
+    @apply text-slate-100;
   }
 
   .task-status-picker-trigger {
@@ -812,12 +947,88 @@ body {
     @apply border-rose-200/90 bg-rose-50 text-rose-800;
   }
 
-  .task-flag-chip-pending-sync {
-    @apply border-amber-300/90 bg-amber-50 font-semibold text-amber-950;
+  /* Need remark (Mark Progress Now) — violet, quieter than Needs push */
+  .task-flag-chip-need-remark {
+    @apply border-violet-300/90 bg-violet-50 font-semibold text-violet-900;
   }
 
   .task-row-pending-mark-progress {
-    box-shadow: inset 3px 0 0 0 rgb(245 158 11);
+    box-shadow: inset 3px 0 0 0 rgb(139 92 246);
+  }
+
+  /* Needs push (planner edits Jira does not have yet) — bold orange */
+  .task-row-needs-push {
+    box-shadow: inset 5px 0 0 0 rgb(234 88 12);
+  }
+
+  .task-row-needs-push.task-row-pending-mark-progress {
+    box-shadow:
+      inset 5px 0 0 0 rgb(234 88 12),
+      inset 8px 0 0 0 rgb(167 139 250);
+  }
+
+  .task-flag-chip-needs-push {
+    @apply cursor-pointer gap-1 border-orange-500 font-bold text-white shadow-sm transition;
+    background: linear-gradient(180deg, rgb(251 146 60) 0%, rgb(234 88 12) 100%);
+  }
+
+  .task-flag-chip-needs-push:hover:not([aria-disabled="true"]) {
+    box-shadow: 0 0 0 2px rgb(254 215 170);
+    filter: brightness(1.05);
+  }
+
+  .task-flag-chip-needs-push[aria-disabled="true"] {
+    @apply cursor-default opacity-90;
+  }
+
+  .task-flag-chip-revert-push {
+    @apply cursor-pointer border-orange-300 bg-white px-1.5 font-bold text-orange-700 transition hover:bg-orange-50;
+  }
+
+  .task-flag-chip-revert-push[aria-disabled="true"] {
+    @apply cursor-default opacity-60 hover:bg-white;
+  }
+
+  html.color-scheme-dark .task-flag-chip-revert-push {
+    @apply border-orange-500/50 bg-slate-900 text-orange-300 hover:bg-orange-950/40;
+  }
+
+  .needs-push-dot {
+    @apply inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-white;
+    animation: needs-push-pulse 1.8s ease-in-out infinite;
+  }
+
+  @keyframes needs-push-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  .toolbar-strip-btn-needs-push {
+    @apply font-semibold text-orange-700;
+  }
+
+  .toolbar-strip-btn-needs-push:not(.toolbar-strip-btn-active):hover:not(:disabled) {
+    @apply border-orange-300 text-orange-800;
+    background: linear-gradient(180deg, rgb(255 255 255) 0%, rgb(255 247 237) 100%);
+    box-shadow: 0 2px 8px rgb(234 88 12 / 0.12);
+  }
+
+  .toolbar-strip-btn-needs-push.toolbar-strip-btn-active,
+  .toolbar-strip-btn-needs-push.toolbar-strip-btn-active:hover:not(:disabled) {
+    @apply border-orange-500 text-white;
+    background: linear-gradient(180deg, rgb(251 146 60) 0%, rgb(234 88 12) 100%);
+    box-shadow:
+      0 0 0 1px rgb(234 88 12 / 0.4),
+      inset 0 1px 2px rgb(124 45 18 / 0.25);
+  }
+
+  .toolbar-strip-btn-needs-push:not(.toolbar-strip-btn-active) .needs-push-dot {
+    @apply bg-orange-600;
   }
 
   .task-row-focus {
@@ -1710,6 +1921,23 @@ body {
     @apply min-w-0 break-words font-medium text-slate-900;
   }
 
+  .story-link-preview-status {
+    @apply w-fit max-w-full truncate rounded px-1.5 py-px text-[11px] font-bold uppercase tracking-[0.03em];
+  }
+
+  .story-link-preview-status-new,
+  .story-link-preview-status-unknown {
+    @apply bg-slate-200 text-slate-700;
+  }
+
+  .story-link-preview-status-indeterminate {
+    @apply bg-blue-100 text-blue-800;
+  }
+
+  .story-link-preview-status-done {
+    @apply bg-emerald-100 text-emerald-800;
+  }
+
   .story-link-preview-desc {
     @apply space-y-1 border-t border-slate-100 pt-2;
   }
@@ -1732,10 +1960,6 @@ body {
 
   .story-fields-menu-btn-open {
     @apply border-blue-300 bg-blue-50 text-blue-950;
-  }
-
-  .story-est-btn-open {
-    @apply border-blue-100 bg-blue-50/80 text-blue-950;
   }
 
   .story-fields-menu-panel {
@@ -1784,6 +2008,63 @@ body {
 
   .status-col {
     @apply w-[5.75rem] min-w-[5.75rem] max-w-[5.75rem] p-0.5 align-top;
+  }
+
+  .subtask-status-chips {
+    @apply mt-1 flex flex-col items-center gap-0.5;
+  }
+
+  .subtask-row-toggle {
+    @apply mx-auto mt-1 flex w-[85%] cursor-pointer items-center justify-center gap-0.5 rounded-full border border-blue-200 bg-blue-50 px-1 py-px text-[9px] font-semibold leading-tight text-blue-800 transition duration-150 ease-out;
+  }
+
+  .subtask-row-toggle:hover {
+    @apply border-blue-300 bg-blue-100 text-blue-900;
+  }
+
+  .subtask-row-toggle:focus-visible {
+    @apply outline-none ring-2 ring-blue-400 ring-offset-1;
+  }
+
+  .subtask-row-toggle-chevron {
+    @apply inline-block text-[8px] leading-none;
+  }
+
+  html.color-scheme-dark .subtask-row-toggle {
+    @apply border-blue-500/40 bg-blue-500/15 text-blue-200;
+  }
+
+  html.color-scheme-dark .subtask-row-toggle:hover {
+    @apply border-blue-400/60 bg-blue-500/25 text-blue-100;
+  }
+
+  .subtask-status-chips-closable {
+    @apply relative;
+  }
+
+  /* The generic `td > *` overflow-x: hidden rule would clip the close button that overhangs the top-right chip corner. */
+  .task-table-fit tbody tr.task-row > td > .subtask-status-chips-closable {
+    overflow: visible;
+  }
+
+  .subtask-chips-close {
+    @apply absolute -top-1.5 right-0 z-[1] flex h-3.5 w-3.5 cursor-pointer items-center justify-center rounded-full border border-slate-300 bg-white p-0 text-[10px] font-bold leading-none text-slate-500 shadow-sm transition duration-150 ease-out hover:scale-110 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600;
+  }
+
+  .subtask-chips-close:focus-visible {
+    @apply outline-none ring-2 ring-blue-400 ring-offset-1;
+  }
+
+  html.color-scheme-dark .subtask-chips-close {
+    @apply border-slate-600 bg-slate-800 text-slate-300;
+  }
+
+  html.color-scheme-dark .subtask-chips-close:hover {
+    @apply border-rose-400/60 bg-rose-500/20 text-rose-200;
+  }
+
+  .subtask-status-chip {
+    @apply block w-[85%] truncate rounded border px-1 py-px text-center text-[9px] font-semibold leading-tight no-underline hover:brightness-95;
   }
 
   .release-col {
@@ -1990,10 +2271,6 @@ body {
     @apply text-center text-[11px] font-medium text-slate-500;
   }
 
-  .task-details-row-toggle {
-    @apply w-fit shrink-0 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[9px] font-semibold text-slate-700 hover:bg-slate-50;
-  }
-
   .task-table-fit .task-details-chip.phase-be,
   .task-table-fit .task-details-chip.phase-fe,
   .task-table-fit .task-details-chip.phase-android,
@@ -2046,46 +2323,201 @@ body {
     color: var(--phase-buffer-text);
   }
 
-  html.color-scheme-dark .task-details-row-toggle,
-  html.color-scheme-dark .task-details-header-toggle {
-    @apply border-slate-600 bg-slate-900 text-slate-200 hover:bg-slate-800;
+  .table-header-toggle {
+    @apply inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-[10.5px] font-semibold normal-case tracking-normal text-blue-800 shadow-sm transition duration-150 ease-out;
   }
 
-  .task-details-row-toggle,
-  .task-details-header-toggle {
-    @apply shrink-0 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50;
+  .table-header-toggle:hover:not(:disabled) {
+    @apply -translate-y-px border-blue-300 bg-blue-100 text-blue-900 shadow;
   }
 
-  .task-details-header-toggle {
-    @apply normal-case tracking-normal;
+  .table-header-toggle:focus-visible {
+    @apply outline-none ring-2 ring-blue-400 ring-offset-1;
   }
 
-  .task-details-grid {
-    display: grid;
-    /* Match original phase column ratios: BE 7 / FE 7 / Mobile 15 / Int 8 / QC 7 / PM 8 */
-    grid-template-columns: minmax(0, 7fr) minmax(0, 7fr) minmax(0, 15fr) minmax(0, 8fr) minmax(0, 7fr) minmax(0, 8fr);
-    gap: 0.25rem;
-    align-items: start;
-    width: 100%;
-    min-width: 0;
+  .table-header-toggle:disabled {
+    @apply cursor-not-allowed opacity-50 shadow-none;
   }
 
-  .task-details-grid > .phase-be,
-  .task-details-grid > .phase-fe,
-  .task-details-grid > .mobile-phase-row,
-  .task-details-grid > .phase-int,
-  .task-details-grid > .phase-qc,
-  .task-details-grid > .flex {
-    min-width: 0;
+  .table-header-toggle-chevron {
+    @apply inline-block text-[9px] leading-none transition-transform duration-200;
+  }
+
+  .table-header-toggle[aria-expanded="true"] .table-header-toggle-chevron {
+    @apply rotate-180;
+  }
+
+  html.color-scheme-dark .table-header-toggle {
+    @apply border-blue-500/40 bg-blue-500/15 text-blue-200;
+  }
+
+  html.color-scheme-dark .table-header-toggle:hover:not(:disabled) {
+    @apply border-blue-400/60 bg-blue-500/25 text-blue-100;
+  }
+
+  /*
+   * Estimations card: drawn with ::before on each cell because border-radius and sticky borders
+   * do not work on collapsed-table cells. Start/end cells inset the card to leave a gap from neighbours.
+   */
+  .task-table-fit {
+    --details-card-bg: rgb(241 245 249);
+    --details-card-header-bg: rgb(241 245 249);
+    --details-card-edge: rgb(215 222 231);
+    --details-card-shadow: rgb(15 23 42 / 0.07);
+    --details-card-gap: 4px;
+    --details-card-radius: 10px;
+    /* Keep in sync with .status-col + .release-col + .flags-col + .tools-col widths. */
+    --task-table-fixed-right-width: calc(5.75rem + 8.75rem + 5.5rem + 5.25rem);
+  }
+
+  html.color-scheme-dark .task-table-fit {
+    --details-card-bg: rgb(255 255 255 / 0.04);
+    --details-card-header-bg: rgb(255 255 255 / 0.06);
+    --details-card-edge: rgb(255 255 255 / 0.09);
+    --details-card-shadow: rgb(0 0 0 / 0.35);
+  }
+
+  .task-table-fit td.details-group-cell {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .table-shell thead.table-head th.details-header-group::before,
+  .task-table-fit td.details-group-cell::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    border: 0 solid var(--details-card-edge);
+    background-color: var(--details-card-bg);
+  }
+
+  .table-shell thead.table-head th.details-header-group::before {
+    left: var(--details-card-gap);
+    right: var(--details-card-gap);
+    border-width: 1px;
+    border-radius: var(--details-card-radius) var(--details-card-radius) 0 0;
+    background-color: var(--details-card-header-bg);
+    box-shadow: 0 -1px 4px var(--details-card-shadow);
+  }
+
+  .task-table-fit td.details-group-start {
+    padding-left: calc(var(--details-card-gap) + 4px);
+  }
+
+  .task-table-fit td.details-group-end {
+    padding-right: calc(var(--details-card-gap) + 4px);
+  }
+
+  .task-table-fit td.details-group-start::before {
+    left: var(--details-card-gap);
+    border-left-width: 1px;
+    box-shadow: -3px 0 5px -3px var(--details-card-shadow);
+  }
+
+  .task-table-fit td.details-group-end::before {
+    right: var(--details-card-gap);
+    border-right-width: 1px;
+    box-shadow: 3px 0 5px -3px var(--details-card-shadow);
+  }
+
+  .task-table-fit td.details-group-start.details-group-end::before {
+    box-shadow:
+      -3px 0 5px -3px var(--details-card-shadow),
+      3px 0 5px -3px var(--details-card-shadow);
+  }
+
+  .task-table-fit tbody tr:last-child > td.details-group-cell {
+    padding-bottom: calc(var(--details-card-gap) + 4px);
+  }
+
+  .task-table-fit tbody tr:last-child > td.details-group-cell::before {
+    bottom: var(--details-card-gap);
+    border-bottom-width: 1px;
+  }
+
+  .task-table-fit tbody tr:last-child > td.details-group-start::before {
+    border-bottom-left-radius: var(--details-card-radius);
+  }
+
+  .task-table-fit tbody tr:last-child > td.details-group-end::before {
+    border-bottom-right-radius: var(--details-card-radius);
+  }
+
+  .task-table-fit td.details-corner-host {
+    position: relative;
+    padding-right: calc(var(--details-card-gap) + 30px);
+  }
+
+  .details-corner-toggle {
+    @apply absolute top-[3px] z-[1] flex h-[18px] cursor-pointer items-center justify-center gap-0.5 rounded-full border border-blue-200 bg-blue-50 px-1.5 py-0 font-bold leading-none text-blue-700 shadow-sm transition duration-150 ease-out;
+    right: calc(var(--details-card-gap) + 3px);
+  }
+
+  .details-corner-toggle-open {
+    @apply border-blue-500 bg-blue-600 text-white;
+  }
+
+  /* The generic `td > *` overflow-x: hidden rule turns overflow-y into auto, which drew scroll arrows on this button. */
+  .task-table-fit tbody tr.task-row > td > .details-corner-toggle {
+    overflow: visible;
+  }
+
+  .details-corner-toggle:hover {
+    @apply scale-105 border-blue-400 bg-blue-100 text-blue-800;
+  }
+
+  .details-corner-toggle[aria-expanded="true"]:hover {
+    @apply border-blue-600 bg-blue-700 text-white;
+  }
+
+  .details-corner-toggle:focus-visible {
+    @apply outline-none ring-2 ring-blue-400 ring-offset-1;
+  }
+
+  html.color-scheme-dark .details-corner-toggle {
+    @apply border-blue-500/40 bg-blue-500/15 text-blue-200;
+  }
+
+  html.color-scheme-dark .details-corner-toggle:hover {
+    @apply border-blue-400/60 bg-blue-500/25 text-blue-100;
+  }
+
+  html.color-scheme-dark .details-corner-toggle[aria-expanded="true"] {
+    @apply border-blue-400 bg-blue-600 text-white;
+  }
+
+  html.color-scheme-dark .details-corner-toggle[aria-expanded="true"]:hover {
+    @apply border-blue-300 bg-blue-500 text-white;
+  }
+
+  /*
+   * Single-story estimations panel (row under the story): same column widths as the full columns,
+   * right-aligned to the Details column edge so the other rows keep their layout.
+   */
+  .task-table-fit tr.task-details-panel-row > td {
+    @apply px-0 pb-1.5 pt-0;
+  }
+
+  /* One story's estimate boxes on one line under the row: just the boxes, no card background. */
+  .task-details-panel {
+    @apply grid items-start gap-1 p-1 text-left;
+    margin-left: auto;
+    margin-right: var(--task-table-fixed-right-width);
+    max-width: calc(100% - var(--task-table-fixed-right-width));
+  }
+
+  .task-details-panel-item {
+    @apply min-w-0;
   }
 
   .task-table-fit .task-details-chip {
     @apply px-1 py-px text-[9.5px];
   }
 
-  .task-table-fit .task-details-row-toggle,
-  .task-table-fit .task-details-header-toggle {
-    @apply px-1 py-px text-[9.5px];
+  .task-table-fit .table-header-toggle {
+    @apply px-2 py-px text-[9.5px];
   }
 
   .phase-be {
@@ -2608,6 +3040,41 @@ body {
     @apply max-w-[2.25rem];
   }
 
+  /* Bulk assignee editor: # and Story stay pinned while the role columns scroll right. */
+  .bulk-edit-grid {
+    @apply w-max min-w-full;
+  }
+
+  .bulk-edit-col-index {
+    @apply sticky left-0 z-[2] w-8 min-w-8 max-w-8;
+  }
+
+  .bulk-edit-col-story {
+    @apply sticky left-8 z-[2] w-[13rem] min-w-[13rem] max-w-[13rem];
+    box-shadow: 4px 0 6px -4px rgb(15 23 42 / 0.25);
+  }
+
+  .bulk-edit-grid thead .bulk-edit-col-index,
+  .bulk-edit-grid thead .bulk-edit-col-story {
+    @apply z-[3];
+  }
+
+  .bulk-edit-col-status {
+    @apply w-[7.5rem] min-w-[7.5rem] max-w-[7.5rem];
+  }
+
+  .bulk-edit-status-select {
+    @apply w-full cursor-pointer truncate border-0 px-1 py-1.5 text-[11px] font-semibold outline-none focus:ring-1 focus:ring-inset focus:ring-blue-400;
+  }
+
+  .bulk-edit-col-people {
+    @apply w-[4.5rem] min-w-[4.5rem] max-w-[4.5rem];
+  }
+
+  .bulk-edit-col-hours {
+    @apply w-[2.25rem] min-w-[2.25rem] max-w-[2.25rem] px-0 text-center;
+  }
+
   .bulk-story-input {
     @apply min-w-0;
   }
@@ -2637,7 +3104,7 @@ body {
   }
 
   .hover-hint {
-    @apply pointer-events-none fixed z-[200] max-w-72 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[12px] font-medium leading-snug text-slate-50 shadow-lg;
+    @apply pointer-events-none fixed z-[2000] max-w-80 whitespace-pre-line rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[12px] font-medium leading-snug text-slate-50 shadow-lg;
   }
 
   .appearance-toggle {
@@ -2783,6 +3250,22 @@ html.color-scheme-dark .story-link-preview-value {
   color: var(--foreground);
 }
 
+html.color-scheme-dark .story-link-preview-status-new,
+html.color-scheme-dark .story-link-preview-status-unknown {
+  background: rgb(148 163 184 / 0.2);
+  color: rgb(226 232 240);
+}
+
+html.color-scheme-dark .story-link-preview-status-indeterminate {
+  background: rgb(59 130 246 / 0.22);
+  color: rgb(191 219 254);
+}
+
+html.color-scheme-dark .story-link-preview-status-done {
+  background: rgb(16 185 129 / 0.2);
+  color: rgb(167 243 208);
+}
+
 html.color-scheme-dark .story-link-preview-desc {
   border-color: rgb(255 255 255 / 0.06);
 }
@@ -2860,9 +3343,31 @@ html.color-scheme-dark .task-table-toolbar-group-label {
 }
 
 html.color-scheme-dark .toolbar-strip-btn-needs-progress {
-  background: linear-gradient(135deg, rgb(69 52 20 / 0.95) 0%, rgb(92 62 18 / 0.88) 100%);
-  border-color: rgb(245 158 11 / 0.45);
-  color: rgb(254 243 199);
+  background: linear-gradient(135deg, rgb(46 30 82 / 0.95) 0%, rgb(59 36 110 / 0.88) 100%);
+  border-color: rgb(139 92 246 / 0.5);
+  color: rgb(237 233 254);
+}
+
+html.color-scheme-dark .toolbar-strip-btn-needs-push:not(.toolbar-strip-btn-active) {
+  color: rgb(253 186 116);
+}
+
+html.color-scheme-dark .toolbar-strip-btn-needs-push:not(.toolbar-strip-btn-active):hover:not(:disabled) {
+  border-color: rgb(251 146 60 / 0.5);
+  background: linear-gradient(180deg, rgb(48 40 36 / 0.98) 0%, rgb(58 40 28 / 0.94) 100%);
+}
+
+html.color-scheme-dark .toolbar-strip-btn-needs-push.toolbar-strip-btn-active,
+html.color-scheme-dark .toolbar-strip-btn-needs-push.toolbar-strip-btn-active:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgb(234 88 12) 0%, rgb(194 65 12) 100%);
+  border-color: rgb(251 146 60);
+  color: rgb(255 255 255);
+}
+
+html.color-scheme-dark .task-flag-chip-need-remark {
+  background-color: rgb(46 30 82 / 0.9);
+  border-color: rgb(139 92 246 / 0.5);
+  color: rgb(237 233 254);
 }
 
 html.color-scheme-dark .number-stepper {
@@ -2925,7 +3430,6 @@ html.color-scheme-dark .table-shell thead.table-head th {
   color: #d8d9de;
   box-shadow: inset 0 -1px 0 0 #2e3036;
 }
-
 html.color-scheme-dark .user-mgmt-squad-group-title {
   background-color: color-mix(in srgb, var(--surface) 92%, transparent);
   color: var(--muted);

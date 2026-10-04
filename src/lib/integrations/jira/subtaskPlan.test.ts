@@ -175,6 +175,20 @@ describe("subtaskPlanWarnings and assignee errors", () => {
       'Android has 3h on "Pricing Engine" but no assignee',
     ]);
   });
+
+  it("never reports missing assignees for a Technical Task (Jira assignee is the developer)", () => {
+    const task = {
+      ...baseTask(),
+      issueType: "Technical Task",
+      feDevs: [],
+      feHours: 6,
+      beDevs: [],
+      beHours: 2,
+      androidDevs: [],
+      androidHours: 3,
+    };
+    expect(subtaskPlanAssigneeErrors(task)).toEqual([]);
+  });
 });
 
 describe("buildBranchName", () => {

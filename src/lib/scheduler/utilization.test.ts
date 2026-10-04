@@ -22,6 +22,82 @@ const defaultFlags = {
 };
 
 describe("computeSprintUtilizationFromTasks", () => {
+  const technicalTask = (overrides: Partial<Task>): Task => ({
+    id: "tech",
+    storyName: "Technical",
+    storyLink: "",
+    poPriority: null,
+    issueType: "Technical Task",
+    beDevs: [],
+    beHours: 0,
+    androidDevs: [],
+    androidHours: 0,
+    iosDevs: [],
+    iosHours: 0,
+    needsIos: false,
+    feDevs: [],
+    feHours: 6,
+    integrationHours: 0,
+    integrationFlags: defaultFlags,
+    qcs: [],
+    qcHours: 0,
+    bufferHours: 0,
+    status: "To Do",
+    ...overrides,
+  });
+
+  it("gives a Technical Task's Dev hours to its Jira assignee on the roster", () => {
+    const resources: Resource[] = [
+      { name: "Abdelrahman Abbas", type: "BE", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },
+      { name: "QC-1", type: "QC", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },
+    ];
+    const result = computeSprintUtilizationFromTasks(
+      [
+        technicalTask({ id: "mine", jiraAssigneeName: "Abdelrahman Abbas", carriedFromPreviousSprint: true }),
+        technicalTask({ id: "qc-owned", jiraAssigneeName: "QC-1", feHours: 4 }),
+      ],
+      resources,
+      config,
+    );
+
+    const abbas = result.perMember.find((entry) => entry.name === "Abdelrahman Abbas");
+    const abbasOrigin = result.perMemberByOrigin.find((entry) => entry.name === "Abdelrahman Abbas");
+    const qc = result.perMember.find((entry) => entry.name === "QC-1");
+    expect(abbas?.takenHours).toBe(6);
+    expect(abbasOrigin).toMatchObject({ newSprintTakenHours: 0, carryOverTakenHours: 6 });
+    expect(qc?.takenHours).toBe(0);
+  });
+
+  it("splits a Technical Task's Dev hours across its FE/BE subtask assignees", () => {
+    const resources: Resource[] = [
+      { name: "BE-1", type: "BE", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },
+      { name: "FE-1", type: "FE", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },
+    ];
+    const result = computeSprintUtilizationFromTasks(
+      [
+        technicalTask({
+          feHours: 10,
+          jiraAssigneeName: "Off Roster",
+          jira: {
+            parentIssueKey: "BR-1",
+            lastPushedAt: null,
+            subtasks: [
+              { key: "BR-2", role: "be", assigneeName: "BE-1", hours: 6 },
+              { key: "BR-3", role: "fe", assigneeName: "FE-1", hours: 4 },
+            ],
+          },
+        }),
+      ],
+      resources,
+      config,
+    );
+
+    expect(result.perMember.map((entry) => [entry.name, entry.takenHours])).toEqual([
+      ["BE-1", 5],
+      ["FE-1", 5],
+    ]);
+  });
+
   it("counts remaining hours by status/replan and excludes next-sprint carry and inactive statuses", () => {
     const resources: Resource[] = [
       { name: "BE-1", type: "BE", ownershipMode: "shared", ourSquadHours: 40, capacityHours: 40 },

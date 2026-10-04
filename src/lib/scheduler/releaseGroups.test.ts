@@ -116,6 +116,34 @@ describe("alignReleaseGroups", () => {
     expect(aligned[0].productionReleaseDate?.toISOString()).toBe(aligned[1].productionReleaseDate?.toISOString());
   });
 
+  it("gives Blocked / Ready for Development members no dates and leaves them out of the group's shared date", () => {
+    const earlyUat = new Date("2026-05-05T13:00:00.000Z");
+    const lateUat = new Date("2026-05-10T16:00:00.000Z");
+    const prod = new Date("2026-05-11T10:00:00.000Z");
+
+    const aligned = alignReleaseGroups(
+      [],
+      [
+        scheduled("active", earlyUat, prod, "Bundle"),
+        scheduled("blocked", lateUat, prod, "Bundle", { status: "Blocked" }),
+        scheduled("rfd", lateUat, prod, null, { status: "Ready for Development" }),
+      ],
+      config,
+      new Date("2026-05-14T17:00:00.000Z"),
+    );
+
+    expect(aligned[0].uatReleaseDate?.toISOString()).toBe(earlyUat.toISOString());
+    for (const onHold of aligned.slice(1)) {
+      expect(onHold).toMatchObject({
+        uatReleaseDate: null,
+        productionReleaseDate: null,
+        releaseDate: null,
+        isOverflow: false,
+        thursdayReleaseScope: "none",
+      });
+    }
+  });
+
   it("uses the latest scheduled UAT (with real QC contention), not an optimistic hours-only estimate", () => {
     const earlyOptimistic = new Date("2026-06-05T12:00:00.000Z");
     const aliceFinishes = new Date("2026-08-11T15:00:00.000Z");

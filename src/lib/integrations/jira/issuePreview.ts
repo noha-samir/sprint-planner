@@ -4,9 +4,14 @@ import { jiraFetchIssuePreviewFields } from "./client";
 export const ISSUE_DESCRIPTION_PREVIEW_MAX_CHARS = 320;
 export const ISSUE_DESCRIPTION_PREVIEW_MAX_LINES = 4;
 
+/** Jira status category: "new" (To Do), "indeterminate" (in progress), "done", or "" when unknown. */
+export type JiraStatusCategory = "new" | "indeterminate" | "done" | "";
+
 export type JiraIssuePreview = {
   key: string;
   summary: string;
+  status: string;
+  statusCategory: JiraStatusCategory;
   assignee: string;
   reporter: string;
   descriptionPreview: string;
@@ -113,7 +118,25 @@ const displayNameFromUser = (user: unknown): string => {
 };
 
 /**
- * Load summary, assignee, reporter, and a short description preview for hover UI.
+ * Read a Jira status field.
+ * @param status Raw `fields.status` from the Jira REST API.
+ * @returns Status name and its colour category (empty strings when missing).
+ */
+export const jiraStatusFromField = (status: unknown): { status: string; statusCategory: JiraStatusCategory } => {
+  if (!status || typeof status !== "object") {
+    return { status: "", statusCategory: "" };
+  }
+  const record = status as { name?: string; statusCategory?: { key?: string } };
+  const categoryKey = record.statusCategory?.key;
+  return {
+    status: record.name?.trim() ?? "",
+    statusCategory:
+      categoryKey === "new" || categoryKey === "indeterminate" || categoryKey === "done" ? categoryKey : "",
+  };
+};
+
+/**
+ * Load summary, status, assignee, reporter, and a short description preview for hover UI.
  */
 export const fetchJiraIssuePreview = async (
   credentials: JiraApiCredentials,
@@ -125,6 +148,7 @@ export const fetchJiraIssuePreview = async (
   return {
     key,
     summary: typeof fields.summary === "string" ? fields.summary.trim() : "",
+    ...jiraStatusFromField(fields.status),
     assignee: displayNameFromUser(fields.assignee),
     reporter: displayNameFromUser(fields.reporter),
     descriptionPreview,

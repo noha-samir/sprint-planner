@@ -1,4 +1,4 @@
-import { addDays, format, parseISO, setHours, setMinutes } from "date-fns";
+import { addDays, differenceInCalendarDays, format, parseISO, setHours, setMinutes } from "date-fns";
 import type { Config } from "./types";
 
 const FRIDAY = 5;
@@ -172,6 +172,15 @@ export const getSprintWindowEnd = (config: Config): Date => {
   }
   return toWorkdayEnd(nextWorkingStart(parseISO(config.sprintStartDate), config), config);
 };
+
+/**
+ * Calendar days since the sprint window's last working day.
+ * @param config Sprint config (start date, working days, holidays).
+ * @param now Reference time (defaults to the current time).
+ * @returns 0 while the sprint is still running (including its last day), otherwise 1, 2, ….
+ */
+export const daysPastSprintWindowEnd = (config: Config, now: Date = new Date()): number =>
+  Math.max(0, differenceInCalendarDays(now, getSprintWindowEnd(config)));
 
 export const shiftIfPlanningSunday = (date: Date, config: Config): Date => {
   if (!isPlanningCycleSunday(date, config)) {

@@ -57,12 +57,17 @@ describe("resolveParentStatusFromChildren", () => {
   });
 
   it("does nothing when parent and subtasks are in the same stage", () => {
-    expect(resolveParentStatusFromChildren("Blocked", ["In Progress"])).toEqual({});
     expect(resolveParentStatusFromChildren("UAT", ["Ready for Testing"])).toEqual({});
     expect(resolveParentStatusFromChildren("To Do", ["To Do"])).toEqual({});
   });
 
   it("leaves Cancelled / Discoped parents alone", () => {
     expect(resolveParentStatusFromChildren("Cancelled", ["In Progress"])).toEqual({});
+  });
+
+  it("never moves or warns about a Blocked parent, whatever the subtasks say", () => {
+    expect(resolveParentStatusFromChildren("Blocked", ["Ready for Testing", "Testing"])).toEqual({});
+    expect(resolveParentStatusFromChildren(" blocked ", ["In Progress"])).toEqual({});
+    expect(resolveParentStatusFromChildren("Blocked", ["To Do"])).toEqual({});
   });
 });

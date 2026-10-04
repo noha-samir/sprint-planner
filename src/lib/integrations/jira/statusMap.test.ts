@@ -106,6 +106,55 @@ describe("pushPlannerStatusToJira", () => {
     expect(result.warning).toContain('Moved BR-1 from "To Do" to "In Progress" but could not continue');
   });
 
+  it("goes Ready for Development → To Do → In Progress when Jira has no direct transition", async () => {
+    vi.spyOn(client, "getJiraIssueStatusName").mockResolvedValue("Ready for Development");
+    vi.spyOn(client, "listJiraIssueTransitions")
+      .mockResolvedValueOnce([
+        { id: "c", name: "Cancel", toStatusName: "Cancelled" },
+        { id: "bl", name: "Block", toStatusName: "Blocked" },
+        { id: "bk", name: "Backlog", toStatusName: "Backlog" },
+        { id: "fr", name: "Final Review", toStatusName: "Final Review" },
+        { id: "td", name: "To Do", toStatusName: "To Do" },
+      ])
+      .mockResolvedValueOnce([{ id: "ip", name: "Start", toStatusName: "In Progress" }]);
+    const transition = vi.spyOn(client, "transitionJiraIssue").mockResolvedValue(undefined);
+
+    const result = await pushPlannerStatusToJira(credentials, "BR-1", "In Progress");
+
+    expect(transition.mock.calls.map((call) => call[2])).toEqual(["td", "ip"]);
+    expect(result).toEqual({ changed: true, fromStatus: "Ready for Development", toStatus: "In Progress" });
+  });
+
+  it("walks Backlog all the way to Ready for Testing within the step limit", async () => {
+    vi.spyOn(client, "getJiraIssueStatusName").mockResolvedValue("Backlog");
+    vi.spyOn(client, "listJiraIssueTransitions")
+      .mockResolvedValueOnce([{ id: "1", name: "Plan", toStatusName: "To Do" }])
+      .mockResolvedValueOnce([{ id: "2", name: "Start", toStatusName: "In Progress" }])
+      .mockResolvedValueOnce([{ id: "3", name: "Review", toStatusName: "Ready for Review" }])
+      .mockResolvedValueOnce([{ id: "4", name: "Ready", toStatusName: "Ready for Testing" }]);
+    const transition = vi.spyOn(client, "transitionJiraIssue").mockResolvedValue(undefined);
+
+    const result = await pushPlannerStatusToJira(credentials, "BR-1", "Ready for Testing");
+
+    expect(transition.mock.calls.map((call) => call[2])).toEqual(["1", "2", "3", "4"]);
+    expect(result.toStatus).toBe("Ready for Testing");
+    expect(result.warning).toBeUndefined();
+  });
+
+  it("does not step sideways between pre-development statuses", async () => {
+    vi.spyOn(client, "getJiraIssueStatusName").mockResolvedValue("Ready for Development");
+    vi.spyOn(client, "listJiraIssueTransitions").mockResolvedValue([
+      { id: "bk", name: "Backlog", toStatusName: "Backlog" },
+      { id: "sw", name: "Story Writing", toStatusName: "Story Writing" },
+    ]);
+    const transition = vi.spyOn(client, "transitionJiraIssue").mockResolvedValue(undefined);
+
+    const result = await pushPlannerStatusToJira(credentials, "BR-1", "In Progress");
+
+    expect(transition).not.toHaveBeenCalled();
+    expect(result.warning).toContain("Could not move BR-1");
+  });
+
   it("never steps backwards toward the target", async () => {
     vi.spyOn(client, "getJiraIssueStatusName").mockResolvedValue("Ready for Testing");
     vi.spyOn(client, "listJiraIssueTransitions").mockResolvedValue([

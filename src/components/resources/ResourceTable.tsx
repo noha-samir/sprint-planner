@@ -129,63 +129,6 @@ export function ResourceTable() {
   }, [isSuperAdmin, activeSquadId, squadHeaders]);
 
   useEffect(() => {
-    if (!isSuperAdmin || !activeSquadId) return;
-    let cancelled = false;
-    void (async () => {
-      const response = await fetch("/api/integrations/jira/assignees/seed-pms", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...squadHeaders },
-        body: JSON.stringify({}),
-      });
-      if (!response.ok || cancelled) return;
-      const body = (await response.json()) as {
-        created?: Array<{ name: string }>;
-        failed?: Array<{ query: string; reason: string }>;
-      };
-      if ((body.created?.length ?? 0) === 0 && (body.failed?.length ?? 0) === 0) return;
-      for (const row of body.created ?? []) {
-        addMappedResource({
-          name: row.name,
-          type: "PM",
-          ownershipMode: "shared",
-          ourSquadHours: totalWorkingHours,
-          capacityHours: totalWorkingHours,
-        });
-      }
-      const parts: string[] = [];
-      if ((body.created?.length ?? 0) > 0) {
-        parts.push(`Seeded PMs: ${(body.created ?? []).map((row) => row.name).join(", ")}`);
-      }
-      if ((body.failed?.length ?? 0) > 0) {
-        parts.push(
-          `Could not seed: ${(body.failed ?? []).map((row) => `${row.query} (${row.reason})`).join("; ")}`,
-        );
-      }
-      if (parts.length > 0 && !cancelled) {
-        if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
-        setBanner(parts.join(" · "));
-        bannerTimerRef.current = setTimeout(() => {
-          setBanner(null);
-          bannerTimerRef.current = null;
-        }, 10_000);
-      }
-      const configRes = await fetch("/api/integrations/jira/config", {
-        cache: "no-store",
-        headers: squadHeaders,
-      });
-      if (configRes.ok) {
-        const configBody = (await configRes.json()) as SquadJiraConfig;
-        setAssigneeMap(configBody.assigneeMap ?? {});
-        setAssigneeMapReady(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot seed per squad
-  }, [isSuperAdmin, activeSquadId, squadHeaders]);
-
-  useEffect(() => {
     if (!pendingFocus) return;
     const { type, index } = pendingFocus;
     const root = scrollerRef.current;

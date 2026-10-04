@@ -15,24 +15,33 @@ export type SyncIssueStatusResult = {
   warning?: string;
 };
 
-/** Forward workflow up to Ready for Testing: To Do → In Progress → Ready for Review → Ready for Testing. */
+/**
+ * Forward workflow up to Ready for Testing:
+ * (Ready for Development / Backlog / …) → To Do → In Progress → Ready for Review → Ready for Testing.
+ */
 const FORWARD_STEP_RANK: Record<string, number> = {
   "to do": 0,
+  todo: 0,
   "in progress": 1,
   "ready for review": 2,
   "ready for testing": 3,
 };
 
-const MAX_FORWARD_STEPS = Object.keys(FORWARD_STEP_RANK).length;
+const PRE_DEVELOPMENT_RANK = -1;
+
+/** Pre-development → To Do → In Progress → Ready for Review → Ready for Testing. */
+const MAX_FORWARD_STEPS = 4;
 
 /**
  * Position of a status on the forward workflow.
+ * Pre-development statuses (Ready for Development, Backlog, design / discovery) sit one step before To Do,
+ * since Jira usually only allows them to move to To Do first.
  * @returns Rank, or null when the status is not part of the stepped workflow (e.g. Blocked, Testing).
  */
 const forwardStepRank = (status: string): number | null => {
   const value = status.trim().toLowerCase();
   if (value in FORWARD_STEP_RANK) return FORWARD_STEP_RANK[value];
-  return isTodoTaskStatus(status) && !value.includes("review") ? 0 : null;
+  return isTodoTaskStatus(status) && !value.includes("review") ? PRE_DEVELOPMENT_RANK : null;
 };
 
 /**
@@ -59,7 +68,7 @@ const pickForwardStepTransition = (
 /**
  * Push planner status to Jira by transitioning the parent issue to that status name.
  * When the workflow has no direct transition, steps forward one status at a time
- * (To Do → In Progress → Ready for Review → Ready for Testing) until the target is reached.
+ * (Ready for Development → To Do → In Progress → Ready for Review → Ready for Testing) until the target is reached.
  * @returns `warning` when the target could not be reached (possibly after some forward steps).
  */
 export const pushPlannerStatusToJira = async (

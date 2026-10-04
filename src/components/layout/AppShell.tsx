@@ -256,6 +256,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <button
             type="button"
             className="sidebar-signout"
+            title="Sign out and clear your Jira token from this browser"
             onClick={() => void signOutAndClearJiraToken("/sign-in")}
           >
             Sign out

@@ -16,8 +16,8 @@ import {
   type BulkGridSelection,
   type BulkTaskDraftRow,
 } from "@/lib/planner/bulkTaskPaste";
-import { resourceDisplayName } from "@/lib/planner/resourceIdentity";
 import type { Resource, ResourceType } from "@/lib/scheduler/types";
+import { BulkAssigneeSelect } from "@/components/tasks/BulkAssigneeSelect";
 
 const DEFAULT_ROW_COUNT = 5;
 
@@ -53,99 +53,6 @@ const columnByField: Record<keyof BulkTaskDraftRow, ColumnDef> = {
 };
 
 const columns: ColumnDef[] = bulkDraftFieldOrderForGrid.map((field) => columnByField[field]);
-
-const splitNames = (raw: string): string[] =>
-  raw
-    .split(/[,;\n]+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-const joinNames = (names: string[]): string => names.join(", ");
-
-function BulkAssigneeSelect({
-  value,
-  options,
-  disabled,
-  onChange,
-  onFocusCell,
-}: {
-  value: string;
-  options: Resource[];
-  disabled?: boolean;
-  onChange: (next: string) => void;
-  onFocusCell?: () => void;
-}) {
-  const selected = useMemo(() => new Set(splitNames(value)), [value]);
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [open]);
-
-  return (
-    <div className="bulk-assignee-dropdown relative flex min-w-0 items-stretch" ref={rootRef}>
-      <input
-        type="text"
-        disabled={disabled}
-        className="bulk-assignee-input min-w-0 flex-1 border-0 bg-transparent px-1.5 py-1.5 text-xs text-slate-900 outline-none focus:ring-1 focus:ring-inset focus:ring-blue-400 disabled:opacity-45"
-        value={value}
-        placeholder="Paste or type…"
-        title={value || "Paste names or pick from dropdown"}
-        onFocus={() => onFocusCell?.()}
-        onChange={(event) => onChange(event.target.value)}
-      />
-      <button
-        type="button"
-        disabled={disabled}
-        className="bulk-assignee-menu-btn shrink-0 border-0 border-l border-slate-200 bg-transparent px-1.5 text-xs text-slate-500 outline-none hover:bg-slate-50 disabled:opacity-45"
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        aria-label="Choose assignees"
-        onClick={() => {
-          if (disabled) return;
-          onFocusCell?.();
-          setOpen((current) => !current);
-        }}
-      >
-        ▾
-      </button>
-      {open && !disabled ? (
-        <div className="bulk-assignee-menu" role="listbox" aria-multiselectable="true">
-          {options.length === 0 ? (
-            <div className="px-2 py-1.5 text-xs text-slate-500">No people</div>
-          ) : (
-            options.map((option) => {
-              const checked = selected.has(option.name);
-              return (
-                <label key={option.name} className="bulk-assignee-option">
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => {
-                      const next = new Set(selected);
-                      if (next.has(option.name)) next.delete(option.name);
-                      else next.add(option.name);
-                      onChange(joinNames([...next]));
-                    }}
-                  />
-                  <span className="min-w-0 truncate">{resourceDisplayName(option)}</span>
-                </label>
-              );
-            })
-          )}
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 export function BulkAddTasksModal({ resources, onConfirm, onCancel }: BulkAddTasksModalProps) {
   const [draftRows, setDraftRows] = useState<BulkTaskDraftRow[]>(() => createEmptyBulkDraftRows(DEFAULT_ROW_COUNT));
@@ -462,6 +369,7 @@ export function BulkAddTasksModal({ resources, onConfirm, onCancel }: BulkAddTas
                         type="button"
                         className="inline-flex h-7 w-7 items-center justify-center rounded text-slate-500 hover:bg-red-50 hover:text-red-700"
                         aria-label={`Remove row ${rowIndex + 1}`}
+                        title={`Remove row ${rowIndex + 1}`}
                         onClick={() => removeRow(rowIndex)}
                       >
                         ×
@@ -475,17 +383,32 @@ export function BulkAddTasksModal({ resources, onConfirm, onCancel }: BulkAddTas
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-4">
-          <button type="button" className="btn-secondary px-3 py-1.5 text-sm" onClick={() => addRows(5)}>
+          <button
+            type="button"
+            className="btn-secondary px-3 py-1.5 text-sm"
+            title="Add 5 more empty rows"
+            onClick={() => addRows(5)}
+          >
             + Add 5 rows
           </button>
           <div className="flex gap-2">
-            <button type="button" className="btn-secondary px-3 py-1.5 text-sm" onClick={onCancel}>
+            <button
+              type="button"
+              className="btn-secondary px-3 py-1.5 text-sm"
+              title="Close without creating any tasks"
+              onClick={onCancel}
+            >
               Cancel
             </button>
             <button
               type="button"
               className="btn-primary px-3 py-1.5 text-sm disabled:opacity-50"
               disabled={validRows.length === 0}
+              title={
+                validRows.length === 0
+                  ? "Fill in at least one valid row first"
+                  : "Add the filled rows to the planner"
+              }
               onClick={handleCreate}
             >
               Create {validRows.length > 0 ? validRows.length : ""} {validRows.length === 1 ? "task" : "tasks"}

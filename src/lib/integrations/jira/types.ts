@@ -1,3 +1,5 @@
+import type { JiraSyncedFields } from "@/lib/scheduler/types";
+
 export type JiraSubtaskRole = "fe" | "be" | "android" | "ios";
 
 export interface JiraTaskSubtaskRef {
@@ -5,6 +7,8 @@ export interface JiraTaskSubtaskRef {
   role: JiraSubtaskRole;
   assigneeName: string;
   hours: number;
+  /** Jira status name from the last pull/push; undefined when not known yet (e.g. just created). */
+  status?: string;
 }
 
 export interface TaskJiraMeta {
@@ -13,6 +17,8 @@ export interface TaskJiraMeta {
   /** ISO timestamp of the last successful pull from Jira. */
   lastPulledAt?: string | null;
   subtasks: JiraTaskSubtaskRef[];
+  /** Push-relevant values as Jira held them after the last pull/push. */
+  syncedFields?: JiraSyncedFields;
 }
 
 /** Jira custom field ids (e.g. customfield_10123) for the parent story. */

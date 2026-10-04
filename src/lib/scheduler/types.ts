@@ -66,6 +66,8 @@ export interface Task {
   isEmStory?: boolean;
   /** True when the Jira story assignee is one of this squad’s Product Managers. */
   isPmStory?: boolean;
+  /** Assignee of the Jira issue itself (roster name when mapped, else Jira display name); set on Pull. */
+  jiraAssigneeName?: string | null;
   /** Sync metadata after pushing subtasks to Jira. */
   jira?: {
     parentIssueKey: string;
@@ -76,8 +78,34 @@ export interface Task {
       role: "fe" | "be" | "android" | "ios";
       assigneeName: string;
       hours: number;
+      /** Jira status name from the last pull/push; undefined when not known yet. */
+      status?: string;
     }>;
+    /** Push-relevant values as Jira held them after the last pull/push; undefined = never baselined. */
+    syncedFields?: JiraSyncedFields;
   };
+}
+
+/**
+ * Snapshot of the story values that Push sends to Jira (names trimmed + sorted, iOS only when Needs iOS).
+ * Compared with the live task to show "Needs push".
+ */
+export interface JiraSyncedFields {
+  storyName: string;
+  status: string;
+  feHours: number;
+  beHours: number;
+  androidHours: number;
+  iosHours: number;
+  qcHours: number;
+  feDevs: string[];
+  beDevs: string[];
+  androidDevs: string[];
+  iosDevs: string[];
+  /** Primary QC (the only one Push writes to the QC Engineer field). */
+  qcEngineer: string;
+  /** Primary PM (the only one Push writes to the Product Manager field). */
+  productManager: string;
 }
 
 /** Maximum per-resource squad capacity (hours); minimum allowed is 0. */

@@ -1,3 +1,4 @@
+import { technicalTaskDevOwners } from "@/lib/planner/resourceIdentity";
 import { totalWorkingHoursForSprint } from "./calendar";
 import { isUtilizationExcludedStatus, resolveUtilizationEffort } from "./utilizationEffort";
 import type { Config, Resource, ScheduleResult, Task } from "./types";
@@ -123,6 +124,12 @@ export const computeUtilization = (
   });
 };
 
+/**
+ * Per-person Taken hours for the current sprint from remaining task effort (next-sprint and UAT/shipped stories skipped).
+ * Hours split evenly across each role's assignees; a Technical Task's Dev hours split evenly across its Jira
+ * developers (FE/BE subtask assignees, else the issue assignee).
+ * @returns Taken / remaining per roster person, the same split by new vs carried stories, and squad buffer/integration totals.
+ */
 export const computeSprintUtilizationFromTasks = (
   tasks: Task[],
   resources: Resource[],
@@ -149,24 +156,26 @@ export const computeSprintUtilizationFromTasks = (
     .filter((task) => !task.carryToNextSprint && !isUtilizationExcludedStatus(task.status))
     .forEach((task) => {
       const remaining = resolveUtilizationEffort(task);
-      const feAssignees = resolveAssignees(task.feDevs, "Unassigned-FE");
-      const beAssignees = resolveAssignees(task.beDevs, "Unassigned-BE");
       const androidAssignees = resolveAssignees(task.androidDevs, "Unassigned-MO");
       const iosAssignees = resolveAssignees(task.iosDevs, "Unassigned-MO");
       const qcAssignees = resolveAssignees(task.qcs, "Unassigned-QC");
       const originMap = task.carriedFromPreviousSprint ? carryOverMap : newSprintMap;
+      const technicalOwners = technicalTaskDevOwners(task, resources);
+      const technicalDevChunks = splitHours(remaining.feHours + remaining.beHours, technicalOwners.length);
 
-      allocateTaskHours(originMap, "FE", feAssignees, remaining.feHours);
-      allocateTaskHours(originMap, "BE", beAssignees, remaining.beHours);
-      allocateTaskHours(originMap, "MO", androidAssignees, remaining.androidHours);
-      allocateTaskHours(originMap, "MO", iosAssignees, remaining.iosHours);
-      allocateTaskHours(originMap, "QC", qcAssignees, remaining.qcHours);
-
-      allocateTaskHours(allocatedMap, "FE", feAssignees, remaining.feHours);
-      allocateTaskHours(allocatedMap, "BE", beAssignees, remaining.beHours);
-      allocateTaskHours(allocatedMap, "MO", androidAssignees, remaining.androidHours);
-      allocateTaskHours(allocatedMap, "MO", iosAssignees, remaining.iosHours);
-      allocateTaskHours(allocatedMap, "QC", qcAssignees, remaining.qcHours);
+      for (const map of [originMap, allocatedMap]) {
+        if (technicalOwners.length > 0) {
+          technicalOwners.forEach((owner, index) =>
+            addAllocatedHours(map, owner.type, owner.name, technicalDevChunks[index]),
+          );
+        } else {
+          allocateTaskHours(map, "FE", resolveAssignees(task.feDevs, "Unassigned-FE"), remaining.feHours);
+          allocateTaskHours(map, "BE", resolveAssignees(task.beDevs, "Unassigned-BE"), remaining.beHours);
+        }
+        allocateTaskHours(map, "MO", androidAssignees, remaining.androidHours);
+        allocateTaskHours(map, "MO", iosAssignees, remaining.iosHours);
+        allocateTaskHours(map, "QC", qcAssignees, remaining.qcHours);
+      }
 
       integrationHours += remaining.integrationHours;
       bufferHours += remaining.bufferHours;

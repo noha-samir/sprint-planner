@@ -1,5 +1,5 @@
 import { getProductionReleaseDateFrom, resolveUatReleaseDate } from "./calendar";
-import { isReleaseDateHandoffStatus } from "./taskStatus";
+import { hasNoComputedReleaseDates } from "./taskStatus";
 import type { Config, ScheduledTask, Task, ThursdayReleaseScope } from "./types";
 
 const resolveThursdayReleaseScope = (
@@ -19,7 +19,7 @@ export const normalizeReleaseGroup = (value: string | null | undefined): string 
   return trimmed.length > 0 ? trimmed : null;
 };
 
-/** Clear computed release dates when go-live is pending on PM or EM. */
+/** Clear computed release dates when go-live is pending on PM / EM or the story is on hold (Blocked, Ready for Development). */
 export const clearHandoffReleaseDates = (task: ScheduledTask): ScheduledTask => ({
   ...task,
   uatReleaseDate: null,
@@ -33,10 +33,10 @@ export const clearHandoffReleaseDates = (task: ScheduledTask): ScheduledTask => 
 /**
  * Earliest moment this scheduled story is ready for UAT: buffer end, else QC end,
  * else its existing UAT date. Never invents an earlier optimistic estimate.
- * UAT / STAGING / Ready for Production defer dates to PM or EM.
+ * UAT / STAGING / Ready for Production defer dates to PM or EM; Blocked / Ready for Development have none.
  */
 export const scheduledReadyForUat = (member: ScheduledTask, config: Config): Date | null => {
-  if (isReleaseDateHandoffStatus(member.status)) {
+  if (hasNoComputedReleaseDates(member.status)) {
     return null;
   }
   if (member.bufferEnd) {
@@ -53,7 +53,7 @@ export const scheduledReadyForUat = (member: ScheduledTask, config: Config): Dat
  * scheduled QC or buffer finish (fixes frozen snapshots and bad alignments).
  */
 export const clampReleaseDatesToWorkEnd = (task: ScheduledTask, config: Config): ScheduledTask => {
-  if (isReleaseDateHandoffStatus(task.status)) {
+  if (hasNoComputedReleaseDates(task.status)) {
     return clearHandoffReleaseDates(task);
   }
   const ready = scheduledReadyForUat(task, config);
@@ -129,7 +129,7 @@ export const alignReleaseGroups = (
     const isOverflow = sharedUat.getTime() > sprintEndDate.getTime();
 
     for (const member of members) {
-      if (isReleaseDateHandoffStatus(member.status)) {
+      if (hasNoComputedReleaseDates(member.status)) {
         alignedById.set(member.id, clearHandoffReleaseDates(member));
         continue;
       }

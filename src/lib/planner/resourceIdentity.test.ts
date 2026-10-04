@@ -33,18 +33,21 @@ describe("resourceIdentity", () => {
     ]);
   });
 
-  it("strips product owners and PMs from engineering role slots", () => {
+  it("strips roster PMs from engineering role slots", () => {
     const roster: Resource[] = [
       ...resources,
-      { name: "Ali Rekaby", type: "PM" },
+      { name: "Morgan Price", type: "PM" },
       { name: "Hala", type: "PM" },
     ];
     expect(
-      coerceAssigneesForRole(["Ali Rekaby", "Sam Lee", "Hala"], roster, ["FE"]),
+      coerceAssigneesForRole(["Morgan Price", "Sam Lee", "Hala"], roster, ["FE"]),
     ).toEqual(["Sam Lee"]);
-    expect(isBlockedEngineeringAssignee("Ali Rekaby", [{ name: "Ali Rekaby", type: "FE" }])).toBe(
-      true,
-    );
+    expect(isBlockedEngineeringAssignee("Morgan Price", roster)).toBe(true);
+  });
+
+  it("only blocks people the roster types as PM (no hard-coded names)", () => {
+    expect(isBlockedEngineeringAssignee("Morgan Price", [{ name: "Morgan Price", type: "FE" }])).toBe(false);
+    expect(isBlockedEngineeringAssignee("Unknown Person", resources)).toBe(false);
   });
 
   it("matchResourceByAssigneeLabel finds resources by name", () => {

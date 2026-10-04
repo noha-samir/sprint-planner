@@ -72,19 +72,19 @@ const baseTask = (overrides: Partial<Task> = {}): Task => ({
 });
 
 describe("bulkSyncTasksToJira", () => {
-  it("skips tasks without jira link or syncable content", async () => {
+  it("skips only tasks without a jira link; zero-hour stories still push", async () => {
     const config = defaultSquadJiraConfig();
     config.assigneeMap = { Karim: "acc-1" };
     const result = await bulkSyncTasksToJira(
       [
         baseTask({ storyLink: "" }),
-        baseTask({ feDevs: [], feHours: 0, beHours: 0, qcHours: 0 }),
+        baseTask({ id: "empty", feDevs: [], feHours: 0, beHours: 0, qcHours: 0 }),
         baseTask({ id: "task-2" }),
       ],
       config,
     );
-    expect(result.skipped).toBe(2);
-    expect(result.synced).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(result.synced).toBe(2);
     expect(result.failed).toBe(0);
   });
 
@@ -147,6 +147,31 @@ describe("bulkSyncTasksToJira", () => {
     expect(summary.indexOf("Warnings:")).toBeGreaterThan(summary.indexOf("Errors:"));
   });
 
+  it("pushes a Technical Task's Dev hours without missing-assignee errors", async () => {
+    const config = defaultSquadJiraConfig();
+    config.parentStoryFields.developmentEstimateHours = "customfield_dev";
+    config.parentStoryFields.testingEstimateHours = "customfield_test";
+    const { updateJiraParentIssue } = await import("./client");
+    vi.mocked(updateJiraParentIssue).mockClear();
+    const result = await bulkSyncTasksToJira(
+      [
+        baseTask({
+          id: "tech",
+          storyName: "Stop Redis errors",
+          issueType: "Technical Task",
+          feDevs: [],
+          feHours: 6,
+          qcHours: 0,
+        }),
+      ],
+      config,
+    );
+    expect(result.synced).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(result.results[0]?.errors ?? []).toEqual([]);
+    expect(vi.mocked(updateJiraParentIssue).mock.calls[0]?.[2]).toMatchObject({ customfield_dev: 6 });
+  });
+
   it("formatBulkSyncSummary uses plain language for not synced vs failed", () => {
     const summary = formatBulkSyncSummary({
       synced: 14,
@@ -174,7 +199,7 @@ describe("bulkSyncTasksToJira", () => {
     const summary = formatBulkSyncSummary({
       synced: 1,
       failed: 1,
-      skipped: 2,
+      skipped: 1,
       results: [
         {
           taskId: "t1",
@@ -182,13 +207,6 @@ describe("bulkSyncTasksToJira", () => {
           ok: false,
           skipped: true,
           skipReason: "No valid Jira story link",
-        },
-        {
-          taskId: "t2",
-          storyName: "Story B",
-          ok: false,
-          skipped: true,
-          skipReason: "No FE/BE assignees or FE/BE/QC hours to sync",
         },
         {
           taskId: "t3",
@@ -200,7 +218,6 @@ describe("bulkSyncTasksToJira", () => {
       ],
     });
     expect(summary).toContain("not synced — add a Jira link");
-    expect(summary).toContain("not synced — add an FE/BE assignee or FE/BE/QC hours");
     expect(summary).toContain("Errors:");
     expect(summary).toContain("• Permission denied");
     expect(summary).toContain("— Story C");
@@ -214,11 +231,11 @@ describe("bulkSyncTasksToJira", () => {
 
   it("formatBulkSyncConfirmMessage lists left-out story names", () => {
     const message = formatBulkSyncConfirmMessage(2, 4, 0, [
-      { name: "Box Trips permissions", reason: "no_hours" },
+      { name: "Box Trips permissions", reason: "no_link" },
       { name: "Unlinked draft", reason: "no_link" },
     ]);
     expect(message).toContain("2 stories skipped");
-    expect(message).toContain("• Box Trips permissions — no FE/BE assignee or FE/BE/QC hours");
+    expect(message).toContain("• Box Trips permissions — no Jira link");
     expect(message).toContain("• Unlinked draft — no Jira link");
   });
 

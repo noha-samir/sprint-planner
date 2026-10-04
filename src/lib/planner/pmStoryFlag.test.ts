@@ -29,10 +29,10 @@ describe("expandSquadPmMatchNames", () => {
   it("falls back to PM roster when API names are empty", () => {
     expect(
       expandSquadPmMatchNames([], [
-        { name: "Ali Rekaby", nickname: null, type: "PM" },
+        { name: "Morgan Price", nickname: null, type: "PM" },
         { name: "Dev", nickname: null, type: "FE" },
       ]),
-    ).toEqual(["Ali Rekaby"]);
+    ).toEqual(["Morgan Price"]);
   });
 });
 
@@ -52,8 +52,8 @@ describe("isSquadPmStory", () => {
 });
 
 describe("isOwnerPmStory", () => {
-  const pmNames = ["Ali Rekaby"];
-  const resources = [{ name: "Ali Rekaby", nickname: null, type: "PM" }];
+  const pmNames = ["Morgan Price"];
+  const resources = [{ name: "Morgan Price", nickname: null, type: "PM" }];
 
   it("is true when Jira assignee is a squad PM", () => {
     expect(isOwnerPmStory({ isPmStory: true, productManagers: [] }, pmNames, resources)).toBe(true);
@@ -62,14 +62,14 @@ describe("isOwnerPmStory", () => {
   it("is true when a Story lists a squad PM in Product Managers", () => {
     expect(
       isOwnerPmStory(
-        { isPmStory: false, productManagers: ["Ali Rekaby"], issueType: "Story" },
+        { isPmStory: false, productManagers: ["Morgan Price"], issueType: "Story" },
         pmNames,
         resources,
       ),
     ).toBe(true);
     expect(
       isOwnerPmStory(
-        { productManagers: ["Ali Rekaby"] },
+        { productManagers: ["Morgan Price"] },
         pmNames,
         resources,
       ),
@@ -79,9 +79,9 @@ describe("isOwnerPmStory", () => {
   it("matches Product Managers via PM roster even when API names are empty", () => {
     expect(
       isOwnerPmStory(
-        { productManagers: ["Ali Rekaby"], issueType: "Story" },
+        { productManagers: ["Morgan Price"], issueType: "Story" },
         [],
-        [{ name: "Ali Rekaby", nickname: null, type: "PM" }],
+        [{ name: "Morgan Price", nickname: null, type: "PM" }],
       ),
     ).toBe(true);
   });
@@ -91,7 +91,7 @@ describe("isOwnerPmStory", () => {
       isOwnerPmStory(
         {
           isPmStory: false,
-          productManagers: ["Ali Rekaby"],
+          productManagers: ["Morgan Price"],
           issueType: "Technical Task",
         },
         pmNames,
@@ -102,7 +102,7 @@ describe("isOwnerPmStory", () => {
       isOwnerPmStory(
         {
           isPmStory: true,
-          productManagers: ["Ali Rekaby"],
+          productManagers: ["Morgan Price"],
           issueType: "Technical Task",
         },
         pmNames,
@@ -128,7 +128,7 @@ function matchesOwnerFilter(
 }
 
 describe("owner filter matrix", () => {
-  const pmNames = ["Ali Rekaby"];
+  const pmNames = ["Morgan Price"];
 
   it("EM-only story appears in EM, not Team or PM", () => {
     expect(matchesOwnerFilter("em", true, {}, pmNames)).toBe(true);
@@ -142,23 +142,23 @@ describe("owner filter matrix", () => {
     expect(matchesOwnerFilter("non-em", false, { isPmStory: true }, pmNames)).toBe(false);
   });
 
-  it("Story with Rekaby as Product Manager appears in PM", () => {
+  it("Story with a squad PM as Product Manager appears in PM", () => {
     expect(
       matchesOwnerFilter(
         "pm",
         false,
-        { productManagers: ["Ali Rekaby"], issueType: "Story" },
+        { productManagers: ["Morgan Price"], issueType: "Story" },
         pmNames,
       ),
     ).toBe(true);
   });
 
-  it("technical task with Rekaby as Product Manager stays out of PM", () => {
+  it("technical task with a squad PM as Product Manager stays out of PM", () => {
     expect(
       matchesOwnerFilter(
         "pm",
         false,
-        { productManagers: ["Ali Rekaby"], issueType: "Technical Task" },
+        { productManagers: ["Morgan Price"], issueType: "Technical Task" },
         pmNames,
       ),
     ).toBe(false);
@@ -166,7 +166,7 @@ describe("owner filter matrix", () => {
       matchesOwnerFilter(
         "non-em",
         false,
-        { productManagers: ["Ali Rekaby"], issueType: "Technical Task" },
+        { productManagers: ["Morgan Price"], issueType: "Technical Task" },
         pmNames,
       ),
     ).toBe(true);

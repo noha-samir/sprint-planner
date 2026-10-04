@@ -111,16 +111,18 @@ export function ResourceInsightModal({ resourceName, onClose }: Props) {
     devCapacityHours > 0 ? Math.min(999, Math.round((takenHours / devCapacityHours) * 100)) : 0;
 
   const assignedTasks: ResourceInsightTaskRow[] = resource
-    ? buildResourceInsightTaskRows(tasks, resource).sort((a, b) => {
+    ? buildResourceInsightTaskRows(tasks, resource, resources).sort((a, b) => {
         if (a.origin !== b.origin) {
           return a.origin === "new" ? -1 : 1;
         }
         return b.totalHours - a.totalHours;
       })
     : [];
-  const hourSplit = sumResourceInsightHoursByOrigin(assignedTasks);
-  const newTasks = assignedTasks.filter((row) => row.origin === "new");
-  const carryTasks = assignedTasks.filter((row) => row.origin === "carry");
+  const activeTasks = assignedTasks.filter((row) => !row.pastDev);
+  const pastDevTasks = assignedTasks.filter((row) => row.pastDev);
+  const hourSplit = sumResourceInsightHoursByOrigin(activeTasks);
+  const newTasks = activeTasks.filter((row) => row.origin === "new");
+  const carryTasks = activeTasks.filter((row) => row.origin === "carry");
 
   if (!resourceName) {
     return null;
@@ -150,6 +152,7 @@ export function ResourceInsightModal({ resourceName, onClose }: Props) {
             <button
               type="button"
               className="btn-secondary shrink-0 self-start px-2 py-1 text-[13px] sm:self-center"
+              title="Close this person's details"
               onClick={onClose}
             >
               Close
@@ -216,15 +219,20 @@ export function ResourceInsightModal({ resourceName, onClose }: Props) {
 
               <div className="mt-2 rounded-lg border border-white/40 bg-white/50 p-2">
                 <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-[11px] font-semibold text-slate-800">
-                    Utilization stories ({assignedTasks.length})
+                  <span
+                    className="text-[11px] font-semibold text-slate-800"
+                    title={`${activeTasks.length} counted in Taken + ${pastDevTasks.length} past development`}
+                  >
+                    Utilization stories ({activeTasks.length}
+                    {pastDevTasks.length > 0 ? ` + ${pastDevTasks.length} past dev` : ""})
                   </span>
                   <span className="text-[10px] font-medium text-slate-600">
                     New {Math.round(hourSplit.newHours)}h · Carry {Math.round(hourSplit.carryHours)}h
                   </span>
                 </div>
                 <p className="mb-2 text-[10px] text-slate-600">
-                  UAT, Ready for Production, and Production stories stay on the board but are excluded from Taken.
+                  Includes Technical Tasks where this person is the Jira assignee or on a dev subtask. UAT, STAGING and Ready for Production
+                  stories are listed under Past development with no hours; Production stories are not listed.
                 </p>
                 <div className="max-h-72 space-y-2.5 overflow-y-auto pr-1">
                   {assignedTasks.length === 0 ? (
@@ -233,6 +241,7 @@ export function ResourceInsightModal({ resourceName, onClose }: Props) {
                     <>
                       {renderTaskSection("New this sprint", newTasks)}
                       {renderTaskSection("Carried from last sprint", carryTasks)}
+                      {renderTaskSection("Past development — no hours", pastDevTasks)}
                     </>
                   )}
                 </div>

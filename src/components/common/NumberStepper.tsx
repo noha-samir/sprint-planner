@@ -108,6 +108,7 @@ export function NumberStepper({
           className="number-stepper-btn"
           disabled={disabled || (value != null && value >= max)}
           aria-label="Increase"
+          title={`Increase by ${step}`}
           tabIndex={-1}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => bump(1)}
@@ -119,6 +120,7 @@ export function NumberStepper({
           className="number-stepper-btn"
           disabled={disabled || (value != null && value <= min) || (allowNull && value == null)}
           aria-label="Decrease"
+          title={`Decrease by ${step}`}
           tabIndex={-1}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => bump(-1)}

@@ -1,8 +1,16 @@
 import type { Task } from "@/lib/scheduler/types";
 import { effectiveIosHours, effectiveMobileHours, mobileAppLabel } from "@/lib/scheduler/mobilePlatform";
 import { splitHoursAcrossAssignees } from "./hours";
-import type { JiraSubtaskRole, PlannedJiraSubtask, PlannedJiraParentUpdate, SquadJiraConfig, TaskJiraMeta } from "./types";
+import type {
+  JiraSubtaskRole,
+  JiraTaskSubtaskRef,
+  PlannedJiraSubtask,
+  PlannedJiraParentUpdate,
+  SquadJiraConfig,
+  TaskJiraMeta,
+} from "./types";
 import { buildBranchName } from "./parentFields";
+import { isTechnicalTaskIssueType } from "@/lib/planner/taskIssueFilters";
 
 export type { PlannedJiraParentUpdate } from "./types";
 
@@ -114,6 +122,29 @@ export const buildSubtaskPlan = (
   return rows;
 };
 
+const SUBTASK_HOURS_EPSILON = 0.001;
+
+/**
+ * Whether an existing Jira subtask already holds this planned row, so push can leave it untouched.
+ * Assignee and hours are compared with the planner's last push/pull snapshot of that key; the summary with Jira's current one.
+ * @param row - Planned subtask that matched an existing Jira key.
+ * @param lastSynced - Same key from the task's Jira meta before this push (undefined when never synced).
+ * @param jiraSummary - Current summary of that subtask in Jira (undefined when not listed).
+ * @returns True when updating the subtask would not change anything.
+ */
+export const isPlannedSubtaskUnchanged = (
+  row: PlannedJiraSubtask,
+  lastSynced: JiraTaskSubtaskRef | undefined,
+  jiraSummary: string | undefined,
+): boolean => {
+  if (!lastSynced || jiraSummary === undefined) return false;
+  return (
+    jiraSummary.trim() === row.summary.trim() &&
+    lastSynced.assigneeName.trim() === row.assigneeName.trim() &&
+    Math.abs(lastSynced.hours - row.hours) < SUBTASK_HOURS_EPSILON
+  );
+};
+
 /** Warnings for assignee present with zero hours (subtask still created). */
 export const subtaskPlanWarnings = (plan: PlannedJiraSubtask[], task: Task): string[] => {
   const story = storyTitle(task);
@@ -125,8 +156,14 @@ export const subtaskPlanWarnings = (plan: PlannedJiraSubtask[], task: Task): str
     );
 };
 
-/** Errors when a role has hours but no assignee (reported after sync). */
+/**
+ * Errors when a role has hours but no assignee (reported after sync).
+ * Technical Tasks are skipped: their Jira assignee is the developer, and Dev hours live on the parent estimate.
+ * @param task - Planner story being pushed.
+ * @returns One message per role with hours and no named assignee (empty for Technical Tasks).
+ */
 export const subtaskPlanAssigneeErrors = (task: Task): string[] => {
+  if (isTechnicalTaskIssueType(task.issueType)) return [];
   const story = storyTitle(task);
   const errors: string[] = [];
   if (task.feHours > 0 && !primaryAssignee(task.feDevs)) {

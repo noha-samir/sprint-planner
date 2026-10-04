@@ -74,6 +74,7 @@ export function OrderInput({
         className="order-input-btn"
         disabled={disabled || (value != null && value <= min)}
         aria-label="Move earlier in schedule"
+        title="Move earlier in the schedule (lower order number)"
         tabIndex={-1}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => bump(-1)}
@@ -115,6 +116,7 @@ export function OrderInput({
         className="order-input-btn"
         disabled={disabled || (value != null && value >= max)}
         aria-label="Move later in schedule"
+        title="Move later in the schedule (higher order number)"
         tabIndex={-1}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => bump(1)}

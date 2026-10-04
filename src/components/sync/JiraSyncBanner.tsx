@@ -128,7 +128,13 @@ export function JiraSyncBanner() {
               ? `${doneVerb} finished with warnings`
               : `${doneVerb} finished`}
         </span>
-        <button type="button" className="jira-sync-banner-dismiss" aria-label="Dismiss" onClick={clearSummary}>
+        <button
+          type="button"
+          className="jira-sync-banner-dismiss"
+          aria-label="Dismiss"
+          title="Dismiss this summary"
+          onClick={clearSummary}
+        >
           ×
         </button>
       </div>

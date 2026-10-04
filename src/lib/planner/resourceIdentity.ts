@@ -1,4 +1,5 @@
-import type { Resource, ResourceType } from "@/lib/scheduler/types";
+import { isTechnicalTaskIssueType } from "@/lib/planner/taskIssueFilters";
+import type { Resource, ResourceType, Task } from "@/lib/scheduler/types";
 
 export type PlannerPersonRef = {
   name: string;
@@ -7,12 +8,6 @@ export type PlannerPersonRef = {
 };
 
 const normalize = (value: string) => value.trim().toLowerCase();
-
-/**
- * Product owners / POs who must never land in FE/BE/MO/QC assignee slots,
- * even if their roster type was set incorrectly.
- */
-export const BLOCKED_ENGINEERING_ASSIGNEE_NAMES = ["Ali Rekaby"] as const;
 
 const aliasesFor = (person: PlannerPersonRef): string[] => {
   const aliases = [person.name, person.nickname ?? ""]
@@ -87,19 +82,52 @@ export const matchResourceByAssigneeLabel = (
   return resources.find((resource) => resource.name === matched.name) ?? null;
 };
 
-/** True when this person must not be treated as an engineer assignee (FE/BE/MO/QC). */
+const TECHNICAL_TASK_DEV_TYPES: ReadonlySet<ResourceType> = new Set(["BE", "FE", "MO"]);
+
+/**
+ * Who owns a Technical Task's Dev hours. Technical Tasks keep no BE/FE people in the planner, so the developers
+ * come from Jira: the assignees of its FE/BE subtasks, or the issue's own assignee when it has none.
+ * @param task - Planner task (issue type, Jira assignee and subtasks from the last pull).
+ * @param resources - Roster to match against (pass `[resource]` to test one person).
+ * @returns Distinct roster engineers (BE / FE / Mobile); empty for other issue types or when nobody maps
+ *   (unassigned, off-roster, QC or PM).
+ */
+export const technicalTaskDevOwners = (
+  task: Pick<Task, "issueType" | "jiraAssigneeName" | "jira">,
+  resources: Resource[],
+): Resource[] => {
+  if (!isTechnicalTaskIssueType(task.issueType)) {
+    return [];
+  }
+  const subtaskDevNames = (task.jira?.subtasks ?? [])
+    .filter((subtask) => subtask.role === "fe" || subtask.role === "be")
+    .map((subtask) => subtask.assigneeName.trim())
+    .filter(Boolean);
+  const labels = subtaskDevNames.length > 0 ? subtaskDevNames : [task.jiraAssigneeName?.trim() ?? ""].filter(Boolean);
+
+  const owners = new Map<string, Resource>();
+  for (const label of labels) {
+    const owner = matchResourceByAssigneeLabel(label, resources);
+    if (owner && TECHNICAL_TASK_DEV_TYPES.has(owner.type)) {
+      owners.set(owner.name, owner);
+    }
+  }
+  return [...owners.values()];
+};
+
+/**
+ * True when this person must not be treated as an engineer assignee (FE/BE/MO/QC).
+ * @param name - Assignee label (roster name or Jira display name).
+ * @param people - Squad roster; a person typed PM there is blocked.
+ * @returns Whether the name maps to a roster PM.
+ */
 export const isBlockedEngineeringAssignee = (
   name: string,
   people: PlannerPersonRef[] = [],
 ): boolean => {
   const trimmed = name.trim();
   if (!trimmed) return false;
-  const lower = normalize(trimmed);
-  if (BLOCKED_ENGINEERING_ASSIGNEE_NAMES.some((blocked) => normalize(blocked) === lower)) {
-    return true;
-  }
-  const person = matchPlannerPerson(trimmed, people);
-  return person?.type === "PM";
+  return matchPlannerPerson(trimmed, people)?.type === "PM";
 };
 
 /** Remap assignee labels onto roster canonical names when a unique match exists. */

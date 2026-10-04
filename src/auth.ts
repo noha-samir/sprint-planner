@@ -30,6 +30,8 @@ const authSecret = (() => {
 
 const useSecureCookies = process.env.NODE_ENV === "production";
 const ENTITLEMENTS_REFRESH_MS = 5 * 60 * 1000;
+/** Sliding: every session refresh (the open app does one every 5 min) restarts this window. */
+const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 
 const applyEntitlementsToToken = async (
   token: Record<string, unknown>,
@@ -115,7 +117,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   secret: authSecret,
   session: {
     strategy: "jwt",
-    maxAge: 60 * 60 * 12,
+    maxAge: SESSION_MAX_AGE_SECONDS,
   },
   cookies: {
     sessionToken: {
@@ -318,7 +320,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
       const email = typeof token.email === "string" ? token.email.toLowerCase() : "";
       if (email) {
-        const currentVersion = await getSessionVersion(email);
+        let currentVersion: number;
+        try {
+          currentVersion = await getSessionVersion(email);
+        } catch (error) {
+          // A slow/waking database must not drop the session (the UI would fall back to view-only).
+          logger.warn("session_version_check_failed", {
+            email,
+            reason: error instanceof Error ? error.message : "unknown",
+          });
+          return token;
+        }
         const tokenVersion = typeof token.sessionVersion === "number" ? token.sessionVersion : 0;
         if (tokenVersion !== currentVersion) {
           return {

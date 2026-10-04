@@ -8,7 +8,8 @@ import {
   type ReleaseStrategy,
 } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
-import { ensureDefaultMobileResources, normalizeMobileAppFlag } from "@/lib/scheduler/mobilePlatform";
+import { normalizeMobileAppFlag } from "@/lib/scheduler/mobilePlatform";
+import { buildJiraSyncedFields, normalizeJiraSyncedFields } from "@/lib/integrations/jira/syncedFields";
 import { sanitizeSquadKey } from "./permissions";
 
 const EMPTY_PLANNER_PAYLOAD = {
@@ -226,6 +227,7 @@ export async function readSquadPlannerState(squadId: string): Promise<Record<str
         issueType: task.issueType ?? undefined,
         isEmStory: task.isEmStory,
         isPmStory: task.isPmStory,
+        jiraAssigneeName: task.jiraAssigneeName ?? null,
         jira: task.jiraLink
           ? {
               parentIssueKey: task.jiraLink.parentIssueKey,
@@ -236,21 +238,39 @@ export async function readSquadPlannerState(squadId: string): Promise<Record<str
                 role: (sub.role as string) === "mo" ? "android" : sub.role,
                 assigneeName: sub.assigneeName,
                 hours: sub.hours,
+                ...(sub.status ? { status: sub.status } : {}),
               })),
+              // No snapshot yet (linked before Needs push existed): treat the saved values as in sync with Jira.
+              syncedFields:
+                normalizeJiraSyncedFields(task.jiraLink.syncedFields) ??
+                buildJiraSyncedFields({
+                  storyName: task.storyName,
+                  status: task.status,
+                  feHours: task.feHours,
+                  beHours: task.beHours,
+                  androidHours: task.androidHours,
+                  iosHours: task.iosHours,
+                  needsIos: task.needsIos,
+                  qcHours: task.qcHours,
+                  feDevs,
+                  beDevs,
+                  androidDevs,
+                  iosDevs,
+                  qcs,
+                  productManagers,
+                }),
             }
           : undefined,
       };
     }),
-    resources: ensureDefaultMobileResources(
-      resources.map((resource) => ({
-        name: resource.name,
-        type: resource.type,
-        capacityHours: resource.capacityHours ?? undefined,
-        ownershipMode: resource.ownershipMode ?? undefined,
-        ourSquadHours: resource.ourSquadHours ?? undefined,
-        nickname: resource.nickname ?? undefined,
-      })),
-    ),
+    resources: resources.map((resource) => ({
+      name: resource.name,
+      type: resource.type,
+      capacityHours: resource.capacityHours ?? undefined,
+      ownershipMode: resource.ownershipMode ?? undefined,
+      ourSquadHours: resource.ourSquadHours ?? undefined,
+      nickname: resource.nickname ?? undefined,
+    })),
     config: configPayload,
     plannerMeta,
     timelineStartDate: config?.timelineStartDate ?? null,
@@ -417,50 +437,74 @@ export async function writeSquadPlannerState(
     await tx.taskNeedRemark.deleteMany({ where: { squadId: safe } });
     await tx.dashboardTaskOrder.deleteMany({ where: { squadId: safe } });
 
+    // Clients without subtask status support (stale tabs, older deploys) must not wipe saved statuses.
+    const previousSubtaskStatuses = await tx.taskJiraSubtask.findMany({
+      where: { jiraLink: { task: { squadId: safe } }, status: { not: null } },
+      select: { taskId: true, key: true, status: true },
+    });
+    const previousSubtaskStatusByKey = new Map(
+      previousSubtaskStatuses.map((row) => [`${row.taskId}:${row.key}`, row.status]),
+    );
+    // Same for Needs push snapshots: a save without one keeps the stored snapshot for the same Jira issue.
+    const previousSyncedFieldRows = await tx.taskJiraLink.findMany({
+      where: { task: { squadId: safe }, syncedFields: { not: Prisma.DbNull } },
+      select: { taskId: true, parentIssueKey: true, syncedFields: true },
+    });
+    const previousSyncedFieldsByTaskId = new Map(
+      previousSyncedFieldRows.map((row) => [row.taskId, row]),
+    );
+    // Same for the Jira issue assignee: a task saved without the field (stale tab) keeps the stored name.
+    const previousJiraAssigneeRows = await tx.task.findMany({
+      where: { squadId: safe, jiraAssigneeName: { not: null } },
+      select: { id: true, jiraAssigneeName: true },
+    });
+    const previousJiraAssigneeByTaskId = new Map(
+      previousJiraAssigneeRows.map((row) => [row.id, row.jiraAssigneeName]),
+    );
+
     await tx.task.deleteMany({ where: { squadId: safe } });
     await tx.resource.deleteMany({ where: { squadId: safe } });
 
-    const resourceRows = ensureDefaultMobileResources(
-      resources
-        .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
-        .map((resource) => {
-          const type: ResourceType =
-            resource.type === "FE" ||
-            resource.type === "BE" ||
-            resource.type === "MO" ||
-            resource.type === "QC" ||
-            resource.type === "PM" ||
-            resource.type === "OtherSquad"
-              ? resource.type
-              : "BE";
-          const ownershipMode: OwnershipMode | null =
-            resource.ownershipMode === "fullyMine" || resource.ownershipMode === "shared"
-              ? resource.ownershipMode
-              : null;
-          return {
-            name: typeof resource.name === "string" ? resource.name : "Unnamed",
-            type,
-            capacityHours:
-              resource.capacityHours === undefined || resource.capacityHours === null
-                ? undefined
-                : Number(resource.capacityHours),
-            ownershipMode: ownershipMode ?? undefined,
-            ourSquadHours:
-              resource.ourSquadHours === undefined || resource.ourSquadHours === null
-                ? undefined
-                : Number(resource.ourSquadHours),
-            nickname: typeof resource.nickname === "string" ? resource.nickname : undefined,
-          };
-        }),
-    ).map((resource) => ({
-      squadId: safe,
-      name: resource.name,
-      type: resource.type,
-      capacityHours: resource.capacityHours ?? null,
-      ownershipMode: resource.ownershipMode ?? null,
-      ourSquadHours: resource.ourSquadHours ?? null,
-      nickname: resource.nickname ?? null,
-    }));
+    const resourceRows = resources
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
+      .map((resource) => {
+        const type: ResourceType =
+          resource.type === "FE" ||
+          resource.type === "BE" ||
+          resource.type === "MO" ||
+          resource.type === "QC" ||
+          resource.type === "PM" ||
+          resource.type === "OtherSquad"
+            ? resource.type
+            : "BE";
+        const ownershipMode: OwnershipMode | null =
+          resource.ownershipMode === "fullyMine" || resource.ownershipMode === "shared"
+            ? resource.ownershipMode
+            : null;
+        return {
+          name: typeof resource.name === "string" ? resource.name : "Unnamed",
+          type,
+          capacityHours:
+            resource.capacityHours === undefined || resource.capacityHours === null
+              ? undefined
+              : Number(resource.capacityHours),
+          ownershipMode: ownershipMode ?? undefined,
+          ourSquadHours:
+            resource.ourSquadHours === undefined || resource.ourSquadHours === null
+              ? undefined
+              : Number(resource.ourSquadHours),
+          nickname: typeof resource.nickname === "string" ? resource.nickname : undefined,
+        };
+      })
+      .map((resource) => ({
+        squadId: safe,
+        name: resource.name,
+        type: resource.type,
+        capacityHours: resource.capacityHours ?? null,
+        ownershipMode: resource.ownershipMode ?? null,
+        ourSquadHours: resource.ourSquadHours ?? null,
+        nickname: resource.nickname ?? null,
+      }));
 
     if (resourceRows.length > 0) {
       await tx.resource.createMany({ data: resourceRows });
@@ -552,6 +596,12 @@ export async function writeSquadPlannerState(
           issueType: typeof task.issueType === "string" && task.issueType.trim() ? task.issueType.trim() : null,
           isEmStory: Boolean(task.isEmStory),
           isPmStory: Boolean(task.isPmStory),
+          jiraAssigneeName:
+            task.jiraAssigneeName === undefined
+              ? (previousJiraAssigneeByTaskId.get(id) ?? null)
+              : typeof task.jiraAssigneeName === "string" && task.jiraAssigneeName.trim()
+                ? task.jiraAssigneeName.trim()
+                : null,
         })),
       });
     }
@@ -568,6 +618,7 @@ export async function writeSquadPlannerState(
       parentIssueKey: string;
       lastPushedAt: Date | null;
       lastPulledAt: Date | null;
+      syncedFields: Prisma.InputJsonValue | typeof Prisma.DbNull;
     }> = [];
     const jiraSubtasks: Array<{
       taskId: string;
@@ -575,6 +626,7 @@ export async function writeSquadPlannerState(
       role: "fe" | "be" | "android" | "ios";
       assigneeName: string;
       hours: number;
+      status: string | null;
     }> = [];
 
     for (const { id, task } of normalizedTasks) {
@@ -608,11 +660,18 @@ export async function writeSquadPlannerState(
       const jira = asRecord(task.jira);
       const parentIssueKey = typeof jira.parentIssueKey === "string" ? jira.parentIssueKey : "";
       if (parentIssueKey) {
+        const previousSynced = previousSyncedFieldsByTaskId.get(id);
+        const syncedFields =
+          normalizeJiraSyncedFields(jira.syncedFields) ??
+          (previousSynced?.parentIssueKey === parentIssueKey
+            ? normalizeJiraSyncedFields(previousSynced.syncedFields)
+            : undefined);
         jiraLinks.push({
           taskId: id,
           parentIssueKey,
           lastPushedAt: parseDateTime(jira.lastPushedAt),
           lastPulledAt: parseDateTime(jira.lastPulledAt),
+          syncedFields: syncedFields ? asJson(syncedFields) : Prisma.DbNull,
         });
         const subtasks = Array.isArray(jira.subtasks) ? jira.subtasks : [];
         for (const row of subtasks) {
@@ -634,6 +693,10 @@ export async function writeSquadPlannerState(
             role,
             assigneeName: typeof sub.assigneeName === "string" ? sub.assigneeName : "",
             hours: Number(sub.hours) || 0,
+            status:
+              typeof sub.status === "string" && sub.status.trim()
+                ? sub.status.trim()
+                : (previousSubtaskStatusByKey.get(`${id}:${key}`) ?? null),
           });
         }
       }

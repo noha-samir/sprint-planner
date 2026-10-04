@@ -99,7 +99,7 @@ export function JiraPushConflictDialog({ eligibleCount, changed, leftOut, onChoo
               <ul className="space-y-1 text-slate-600">
                 {leftOut.map((story) => (
                   <li key={`${story.name}-${story.reason}`}>
-                    {story.name} — {story.reason === "no_link" ? "no Jira link" : "no FE/BE assignee or hours"}
+                    {story.name} — no Jira link
                   </li>
                 ))}
               </ul>
@@ -108,17 +108,28 @@ export function JiraPushConflictDialog({ eligibleCount, changed, leftOut, onChoo
         </div>
 
         <div className="mt-4 flex flex-wrap justify-end gap-2">
-          <button type="button" className="btn-secondary px-3 py-1.5 text-sm" onClick={() => onChoose("cancel")}>
+          <button
+            type="button"
+            className="btn-secondary px-3 py-1.5 text-sm"
+            title="Don't push anything"
+            onClick={() => onChoose("cancel")}
+          >
             Cancel
           </button>
           <button
             type="button"
             className="btn-secondary px-3 py-1.5 text-sm text-rose-700"
+            title="Push the planner values and replace the newer edits in Jira"
             onClick={() => onChoose("push")}
           >
             Push anyway (overwrite Jira)
           </button>
-          <button type="button" className="btn-primary px-3 py-1.5 text-sm" onClick={() => onChoose("pull")}>
+          <button
+            type="button"
+            className="btn-primary px-3 py-1.5 text-sm"
+            title="Bring the latest Jira changes into the planner first, then review before pushing"
+            onClick={() => onChoose("pull")}
+          >
             Pull {changed.length === 1 ? "this story" : "these stories"} first
           </button>
         </div>

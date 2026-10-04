@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { format } from "date-fns";
 import { useSession } from "next-auth/react";
 import { StartNewSprintModal } from "@/components/tasks/StartNewSprintModal";
 import { TaskTable } from "@/components/tasks/TaskTable";
 import { sessionCapabilities } from "@/lib/access/control";
-import { getSprintWindowEnd, parseCalendarDate } from "@/lib/scheduler/calendar";
+import { daysPastSprintWindowEnd, getSprintWindowEnd, parseCalendarDate } from "@/lib/scheduler/calendar";
 import { usePlannerStore } from "@/store/usePlannerStore";
 
 function SprintWindowSummary() {
@@ -26,11 +26,29 @@ function SprintWindowSummary() {
   );
 }
 
+const SPRINT_ENDED_RECHECK_MS = 60_000;
+
+/**
+ * Days since the current sprint window ended, re-checked every minute so a tab left open overnight updates.
+ * @returns 0 until the planner store has hydrated or while the sprint is still running.
+ */
+function useDaysPastSprintEnd(): number {
+  const hasHydrated = usePlannerStore((state) => state.hasHydrated);
+  const config = usePlannerStore((state) => state.config);
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), SPRINT_ENDED_RECHECK_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+  return hasHydrated ? daysPastSprintWindowEnd(config, now) : 0;
+}
+
 function NewSprintButton() {
   const { data: session } = useSession();
   const startNewSprint = usePlannerStore((state) => state.startNewSprint);
   const tasks = usePlannerStore((state) => state.tasks);
   const activeSquadId = usePlannerStore((state) => state.activeSquadId);
+  const daysPastSprintEnd = useDaysPastSprintEnd();
   const [modalOpen, setModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const canManageSprintLifecycle =
@@ -40,12 +58,25 @@ function NewSprintButton() {
   }
 
   const nextSprintStories = tasks.filter((task) => !!task.carryToNextSprint).length;
+  const sprintEnded = daysPastSprintEnd > 0;
+  const sprintEndedLabel = daysPastSprintEnd === 1 ? "yesterday" : `${daysPastSprintEnd} days ago`;
 
   return (
     <>
+      {sprintEnded ? (
+        <span
+          className="sprint-ended-reminder"
+          role="status"
+          title={`The sprint window ended ${sprintEndedLabel}.\nClick "Start New Sprint" to save this sprint to History and plan the next one.`}
+        >
+          <span className="sprint-ended-reminder-dot" aria-hidden />
+          Sprint ended {sprintEndedLabel} — time to start a new one
+        </span>
+      ) : null}
       <button
-        className="btn-danger disabled:opacity-50"
+        className={`btn-danger disabled:opacity-50${sprintEnded ? " sprint-start-due" : ""}`}
         disabled={busy}
+        title="Close this sprint and roll unfinished stories into a new one"
         onClick={() => setModalOpen(true)}
       >
         Start New Sprint

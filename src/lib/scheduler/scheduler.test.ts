@@ -3,6 +3,7 @@ import { format } from "date-fns";
 import {
   addWorkingDays,
   advanceByWorkingHours,
+  daysPastSprintWindowEnd,
   getProductionReleaseDateFrom,
   getSprintWindowEnd,
   isNonWorkingDay,
@@ -37,6 +38,14 @@ describe("calendar utilities", () => {
     const end = getSprintWindowEnd(holidayLastSlot);
     expect(dateKey(end)).toBe("2026-05-13");
     expect(end.getHours()).toBe(17);
+  });
+
+  it("counts calendar days past the sprint window end (0 until the last working day is over)", () => {
+    const holidayLastSlot: Config = { ...config, sprintStartDate: "2026-05-03", planningSunday: "2026-05-03", extraHolidays: ["2026-05-14"] };
+    expect(daysPastSprintWindowEnd(holidayLastSlot, new Date("2026-05-05T10:00:00"))).toBe(0);
+    expect(daysPastSprintWindowEnd(holidayLastSlot, new Date("2026-05-13T23:30:00"))).toBe(0);
+    expect(daysPastSprintWindowEnd(holidayLastSlot, new Date("2026-05-14T08:00:00"))).toBe(1);
+    expect(daysPastSprintWindowEnd(holidayLastSlot, new Date("2026-05-20T12:00:00"))).toBe(7);
   });
 
   it("treats planning day as non-working even if it matches sprint start", () => {
@@ -379,6 +388,59 @@ describe("scheduler behavior", () => {
     expect(task.uatReleaseDate).toBeNull();
     expect(task.productionReleaseDate).toBeNull();
     expect(task.bufferEnd!.getTime()).toBeGreaterThan(task.bufferStart!.getTime());
+  });
+
+  it("keeps scheduling Blocked / Ready for Development work but gives it no release dates", () => {
+    const resources: Resource[] = [
+      { name: "BE-1", type: "BE", capacityHours: 40 },
+      { name: "QC-1", type: "QC", capacityHours: 40 },
+    ];
+    const flags = {
+      needsDevOps: false,
+      needsCdc: false,
+      needsDbSync: false,
+      needsOtherSquad: false,
+      needsThirdParty: false,
+    };
+    const story = (id: string, status: string): Task => ({
+      id,
+      storyName: id,
+      storyLink: "",
+      poPriority: null,
+      feDevs: [],
+      feHours: 0,
+      beDevs: ["BE-1"],
+      beHours: 8,
+      androidDevs: [],
+      androidHours: 0,
+      iosDevs: [],
+      iosHours: 0,
+      needsIos: false,
+      integrationHours: 0,
+      integrationFlags: flags,
+      qcs: ["QC-1"],
+      qcHours: 4,
+      bufferHours: 0,
+      status,
+    });
+
+    const result = schedule(
+      [story("blocked", "Blocked"), story("rfd", "Ready for Development"), story("active", "In Progress")],
+      resources,
+      config,
+    );
+    const byId = new Map(result.tasks.map((task) => [task.id, task]));
+
+    for (const id of ["blocked", "rfd"]) {
+      const onHold = byId.get(id)!;
+      expect(onHold.beBlocks.length).toBeGreaterThan(0);
+      expect(onHold.qcEnd).not.toBeNull();
+      expect(onHold.uatReleaseDate).toBeNull();
+      expect(onHold.productionReleaseDate).toBeNull();
+      expect(onHold.releaseDate).toBeNull();
+      expect(onHold.isOverflow).toBe(false);
+    }
+    expect(byId.get("active")!.uatReleaseDate).not.toBeNull();
   });
 
   it("does not create integration window when integration hours are zero", () => {

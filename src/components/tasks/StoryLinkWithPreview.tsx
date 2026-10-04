@@ -110,6 +110,8 @@ export function StoryLinkWithPreview({
       const data: JiraIssuePreview = {
         key: body.key || issueKey,
         summary: body.summary ?? "",
+        status: body.status ?? "",
+        statusCategory: body.statusCategory ?? "",
         assignee: body.assignee ?? "",
         reporter: body.reporter ?? "",
         descriptionPreview: body.descriptionPreview ?? "",
@@ -229,6 +231,19 @@ export function StoryLinkWithPreview({
                   <div className="story-link-preview-row">
                     <span className="story-link-preview-label">Assignee</span>
                     <span className="story-link-preview-value">{preview.assignee || "—"}</span>
+                  </div>
+                  <div className="story-link-preview-row">
+                    <span className="story-link-preview-label">Status</span>
+                    {preview.status ? (
+                      <span
+                        className={`story-link-preview-status story-link-preview-status-${preview.statusCategory || "unknown"}`}
+                        title={`Jira status: ${preview.status}`}
+                      >
+                        {preview.status}
+                      </span>
+                    ) : (
+                      <span className="story-link-preview-value">—</span>
+                    )}
                   </div>
                   <div className="story-link-preview-desc">
                     <span className="story-link-preview-label">Description</span>

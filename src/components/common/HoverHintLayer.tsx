@@ -2,19 +2,23 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  computeHoverHintPosition,
   HOVER_HINT_DELAY_MS,
+  HOVER_HINT_MENU_SELECTOR,
   readHoverHintTarget,
   restoreNativeTitle,
   stashNativeTitle,
+  type HoverHintPosition,
 } from "@/lib/ui/hoverHint";
 
-type HintState = {
-  text: string;
-  x: number;
-  y: number;
-};
+type HintState = HoverHintPosition & { text: string };
 
-const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+const placementTransform: Record<HoverHintPosition["placement"], string | undefined> = {
+  below: undefined,
+  right: undefined,
+  above: "translateY(-100%)",
+  left: "translateX(-100%)",
+};
 
 /**
  * Delayed explanation for any element with a `title`.
@@ -56,15 +60,13 @@ export function HoverHintLayer() {
       activeRef.current = found.element;
       stashNativeTitle(found.element, found.text);
       timerRef.current = window.setTimeout(() => {
-        const rect = found.element.getBoundingClientRect();
-        const width = Math.min(288, window.innerWidth - 16);
-        const x = clamp(rect.left, 8, Math.max(8, window.innerWidth - width - 8));
-        const spaceBelow = window.innerHeight - rect.bottom;
-        const y =
-          spaceBelow < 72
-            ? clamp(rect.top - 8, 8, window.innerHeight - 8)
-            : clamp(rect.bottom + 8, 8, window.innerHeight - 8);
-        setHint({ text: found.text, x, y });
+        const menu = found.element.closest(HOVER_HINT_MENU_SELECTOR);
+        const position = computeHoverHintPosition(
+          found.element.getBoundingClientRect(),
+          menu ? menu.getBoundingClientRect() : null,
+          { width: window.innerWidth, height: window.innerHeight },
+        );
+        setHint({ text: found.text, ...position });
       }, HOVER_HINT_DELAY_MS);
     };
 
@@ -103,7 +105,11 @@ export function HoverHintLayer() {
   }
 
   return (
-    <div className="hover-hint" role="tooltip" style={{ left: hint.x, top: hint.y }}>
+    <div
+      className="hover-hint"
+      role="tooltip"
+      style={{ left: hint.x, top: hint.y, transform: placementTransform[hint.placement] }}
+    >
       {hint.text}
     </div>
   );

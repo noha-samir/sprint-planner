@@ -207,7 +207,38 @@ describe("syncTaskFromJira", () => {
     expect(result.patch.androidDevs).toEqual(["Reese"]);
     expect(result.jira.subtasks).toHaveLength(3);
     expect(result.jira.lastPulledAt).toBeTruthy();
+    expect(result.patch.jiraAssigneeName).toBeNull();
     vi.unstubAllGlobals();
+  });
+
+  it("saves the Jira issue's own assignee: roster name when mapped, Jira display name otherwise", async () => {
+    const pullWithParentAssignee = async (assignee: { accountId: string; displayName: string }) => {
+      mockedListParentSubtasks.mockResolvedValueOnce([]);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) =>
+          url.includes("/issue/BR-1?")
+            ? {
+                ok: true,
+                json: async () => ({
+                  fields: { status: { name: "In Progress" }, issuetype: { name: "Technical Task" }, assignee },
+                }),
+              }
+            : { ok: false, text: async () => "missing" },
+        ),
+      );
+      const config = { ...defaultSquadJiraConfig(), assigneeMap: { "Mohamed Elkholaey": "acc-kh" } };
+      const result = await syncTaskFromJira(baseTask(), config, [{ name: "Mohamed Elkholaey", type: "BE" }]);
+      vi.unstubAllGlobals();
+      return result.patch.jiraAssigneeName;
+    };
+
+    await expect(pullWithParentAssignee({ accountId: "acc-kh", displayName: "M. Elkholaey" })).resolves.toBe(
+      "Mohamed Elkholaey",
+    );
+    await expect(pullWithParentAssignee({ accountId: "acc-x", displayName: "Guest Engineer" })).resolves.toBe(
+      "Guest Engineer",
+    );
   });
 
   it("rejects Discoped stories", async () => {
@@ -612,6 +643,10 @@ describe("syncTaskFromJira parent status from subtasks", () => {
     const result = await syncTaskFromJira(baseTask(), defaultSquadJiraConfig());
     expect(result.patch.status).toBe("In Progress");
     expect(result.statusFromChildren).toEqual({ from: "To Do", to: "In Progress" });
+    expect(Object.fromEntries(result.jira.subtasks.map((row) => [row.key, row.status]))).toEqual({
+      "BR-10": "In Progress",
+      "BR-11": "To Do",
+    });
     vi.unstubAllGlobals();
   });
 

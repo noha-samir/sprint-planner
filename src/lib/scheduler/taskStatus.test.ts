@@ -8,7 +8,9 @@ import {
   isReleaseDateHandoffStatus,
   isReleasePendingOnEmStatus,
   isReleasePendingOnPmStatus,
-  releaseDateHandoffLabel,
+  isReleaseDateOnHoldStatus,
+  hasNoComputedReleaseDates,
+  noReleaseDateLabel,
   normalizeTaskStatus,
   buildStatusFilterOptions,
   defaultVisibleStatusFilter,
@@ -51,10 +53,22 @@ describe("taskStatus", () => {
     expect(isReleaseDateHandoffStatus("UAT")).toBe(true);
     expect(isReleaseDateHandoffStatus("Ready for Production")).toBe(true);
     expect(isReleaseDateHandoffStatus("Testing")).toBe(false);
-    expect(releaseDateHandoffLabel("UAT")).toBe("Pending on PM");
-    expect(releaseDateHandoffLabel("STAGING")).toBe("Pending on PM");
-    expect(releaseDateHandoffLabel("Ready for Production")).toBe("Pending on EM");
-    expect(releaseDateHandoffLabel("Testing")).toBeNull();
+    expect(noReleaseDateLabel("UAT")).toBe("Pending on PM");
+    expect(noReleaseDateLabel("STAGING")).toBe("Pending on PM");
+    expect(noReleaseDateLabel("Ready for Production")).toBe("Pending on EM");
+    expect(noReleaseDateLabel("Testing")).toBeNull();
+  });
+
+  it("puts Blocked and Ready for Development on hold with no release dates", () => {
+    expect(isReleaseDateOnHoldStatus("Blocked")).toBe(true);
+    expect(isReleaseDateOnHoldStatus(" ready for development ")).toBe(true);
+    expect(isReleaseDateOnHoldStatus("To Do")).toBe(false);
+    expect(hasNoComputedReleaseDates("Blocked")).toBe(true);
+    expect(hasNoComputedReleaseDates("Ready for Development")).toBe(true);
+    expect(hasNoComputedReleaseDates("UAT")).toBe(true);
+    expect(hasNoComputedReleaseDates("In Progress")).toBe(false);
+    expect(noReleaseDateLabel("Blocked")).toBe("On hold");
+    expect(noReleaseDateLabel("Ready for Development")).toBe("Awaiting dev");
   });
 
   it("hides inactive and released statuses in the default status filter", () => {
@@ -90,6 +104,11 @@ describe("taskStatus", () => {
     const keys = DEFAULT_JIRA_STORY_STATUSES.map((status) => taskStatusColorKey(status));
     expect(new Set(keys).size).toBe(keys.length);
     expect(keys).not.toContain("default");
+  });
+
+  it("colors Jira Done like Production instead of the neutral default", () => {
+    expect(taskStatusColorKey("Done")).toBe("production");
+    expect(taskStatusColorKey("done")).toBe("production");
   });
 
   it("orders resource insight buckets To Do → In Progress → In Review → Done", () => {

@@ -83,7 +83,12 @@ const splitAssigneeCell = (raw: string): string[] => {
     .filter(Boolean);
 };
 
-const parseEstimationHours = (raw: string): number => {
+/**
+ * Parse an hours cell: empty, invalid or negative becomes 0; otherwise capped at 80 and rounded to 2 decimals.
+ * Accepts a comma as the decimal separator.
+ * @param raw - Cell text.
+ */
+export const parseEstimationHours = (raw: string): number => {
   const trimmed = raw.trim();
   if (!trimmed) {
     return 0;
@@ -95,7 +100,12 @@ const parseEstimationHours = (raw: string): number => {
   return Math.min(80, Math.round(value * 100) / 100);
 };
 
-const buildResourceSets = (resources: Resource[]) => {
+/**
+ * Group roster names by resource type for O(1) name checks while parsing assignee cells.
+ * @param resources - Squad roster.
+ * @returns Map of resource type to the set of roster names with that type.
+ */
+export const buildResourceSets = (resources: Resource[]) => {
   const byType = new Map<ResourceType, Set<string>>();
   resources.forEach((resource) => {
     const names = byType.get(resource.type) ?? new Set<string>();
@@ -105,7 +115,15 @@ const buildResourceSets = (resources: Resource[]) => {
   return byType;
 };
 
-const resolveAssignees = (
+/**
+ * Split an assignee cell ("Ali, Sara") and keep only names on the roster for that role.
+ * @param raw - Cell text; names separated by commas, semicolons or new lines.
+ * @param type - Resource type the cell belongs to.
+ * @param label - Role label used in warnings, e.g. "BE".
+ * @param knownNames - Roster names for that role (see `buildResourceSets`).
+ * @returns Unique known names in typed order, plus one warning per unknown name.
+ */
+export const resolveAssignees = (
   raw: string,
   type: ResourceType,
   label: string,
@@ -1000,45 +1018,68 @@ const ensureTrailingEmptyRows = (rows: BulkTaskDraftRow[], minEmpty = 2): BulkTa
   return [...rows, ...createEmptyBulkDraftRows(minEmpty - trailingEmpty)];
 };
 
-const applyPasteToSelection = (
-  current: BulkTaskDraftRow[],
+/**
+ * Excel-style range paste shared by the bulk grids: the clipboard table repeats to fill the
+ * selected range (one copied value fills every selected cell). Rows outside `rows` are skipped.
+ * @param rows - Current grid rows (not mutated).
+ * @param table - Parsed clipboard cells.
+ * @param range - Selected grid range (any corner order).
+ * @param applyCell - Returns the updated row for one target column and clipboard cell.
+ * @returns New rows array with the range filled.
+ */
+export const pasteTableIntoGridRange = <Row>(
+  rows: Row[],
   table: ClipboardCell[][],
-  selection: BulkGridSelection,
-): BulkTaskDraftRow[] => {
-  const sel = normalizeBulkGridSelection(selection);
+  range: BulkGridSelection,
+  applyCell: (row: Row, colIndex: number, cell: ClipboardCell) => Row,
+): Row[] => {
+  const sel = normalizeBulkGridSelection(range);
   const selRows = sel.endRow - sel.startRow + 1;
   const selCols = sel.endCol - sel.startCol + 1;
   const clipRows = Math.max(table.length, 1);
   const clipCols = Math.max(...table.map((row) => row.length), 1);
-
-  const next = ensureRowCount([...current], sel.endRow + 1);
+  const next = [...rows];
 
   for (let rowOffset = 0; rowOffset < selRows; rowOffset += 1) {
+    const targetRowIndex = sel.startRow + rowOffset;
+    if (targetRowIndex >= next.length) {
+      break;
+    }
     for (let colOffset = 0; colOffset < selCols; colOffset += 1) {
       const clipboardRow = table[rowOffset % clipRows] ?? [];
       const cell = clipboardRow[colOffset % clipCols];
       if (!cell) {
         continue;
       }
-
-      const targetRowIndex = sel.startRow + rowOffset;
-      const targetColIndex = sel.startCol + colOffset;
-      const field = bulkDraftFieldOrder[targetColIndex];
-      if (!field) {
-        continue;
-      }
-
-      const draft = { ...next[targetRowIndex] };
-      applyClipboardCell(draft, field, cell);
-      if (cell.href && field !== "storyLink" && !draft.storyLink) {
-        applyHyperlinkToStoryFields(draft, cell);
-      }
-      next[targetRowIndex] = draft;
+      next[targetRowIndex] = applyCell(next[targetRowIndex], sel.startCol + colOffset, cell);
     }
   }
 
   return next;
 };
+
+const applyPasteToSelection = (
+  current: BulkTaskDraftRow[],
+  table: ClipboardCell[][],
+  selection: BulkGridSelection,
+): BulkTaskDraftRow[] =>
+  pasteTableIntoGridRange(
+    ensureRowCount([...current], normalizeBulkGridSelection(selection).endRow + 1),
+    table,
+    selection,
+    (row, colIndex, cell) => {
+      const field = bulkDraftFieldOrder[colIndex];
+      if (!field) {
+        return row;
+      }
+      const draft = { ...row };
+      applyClipboardCell(draft, field, cell);
+      if (cell.href && field !== "storyLink" && !draft.storyLink) {
+        applyHyperlinkToStoryFields(draft, cell);
+      }
+      return draft;
+    },
+  );
 
 /**
  * Apply a parsed clipboard table onto draft rows starting at the focused cell.

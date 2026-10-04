@@ -46,22 +46,22 @@ describe("resolveSquadPmRosterNames", () => {
   it("resolves PM names and account ids from roster + Jira config when pmEmails is empty", async () => {
     vi.mocked(prisma.squad.findUnique).mockResolvedValue({ pmEmails: [] } as never);
     vi.mocked(prisma.resource.findMany).mockResolvedValue([
-      { name: "Ali Rekaby", nickname: null, jiraMappings: [] },
+      { name: "Morgan Price", nickname: null, jiraMappings: [] },
       { name: "Ahmed Sharaf", nickname: null, jiraMappings: [] },
     ] as never);
     vi.mocked(readSquadJiraConfig).mockResolvedValue({
       assigneeMap: {
-        "Ali Rekaby": "acct-ali",
+        "Morgan Price": "acct-ali",
         "Ahmed Sharaf": "acct-sharaf",
       },
-      productManagerName: "Ali Rekaby",
+      productManagerName: "Morgan Price",
       productManagerJiraAccountId: "acct-ali",
     } as never);
 
     const result = await resolveSquadPmRosterNames("ventures");
 
     expect(result.pmEmails).toEqual([]);
-    expect(result.pmNames).toEqual(expect.arrayContaining(["Ali Rekaby", "Ahmed Sharaf"]));
+    expect(result.pmNames).toEqual(expect.arrayContaining(["Morgan Price", "Ahmed Sharaf"]));
     expect(result.pmAccountIds).toEqual(expect.arrayContaining(["acct-ali", "acct-sharaf"]));
   });
 

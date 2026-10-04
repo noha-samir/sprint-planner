@@ -53,6 +53,7 @@ export function MobileStartDateModal({ task, disabled = false, onClose, onSave }
             type="button"
             disabled={disabled}
             className="btn-secondary px-3 py-1.5 text-sm disabled:opacity-50"
+            title="Remove the mobile start date so mobile starts with FE/BE"
             onClick={() => {
               setDraft("");
               onSave(null);
@@ -61,13 +62,19 @@ export function MobileStartDateModal({ task, disabled = false, onClose, onSave }
           >
             Clear
           </button>
-          <button type="button" className="btn-secondary px-3 py-1.5 text-sm" onClick={onClose}>
+          <button
+            type="button"
+            className="btn-secondary px-3 py-1.5 text-sm"
+            title="Close without changing the date"
+            onClick={onClose}
+          >
             Cancel
           </button>
           <button
             type="button"
             disabled={disabled}
             className="btn-primary px-3 py-1.5 text-sm disabled:opacity-50"
+            title="Save the mobile start date"
             onClick={() => {
               const next = draft.trim();
               onSave(next || null);

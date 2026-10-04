@@ -1,4 +1,5 @@
 import {
+  isBlockedTaskStatus,
   isBufferPhaseTaskStatus,
   isDiscopedTaskStatus,
   isReleasedTaskStatus,
@@ -72,6 +73,7 @@ export type ParentStatusFromChildrenResult = {
 
 /**
  * Forward-only parent status update from subtasks.
+ * Cancelled / Discoped / Blocked parents are never changed: someone set them on purpose.
  * @param parentStatus - Current Jira parent status name.
  * @param childStatuses - Jira status names of every subtask.
  * @returns `status` to apply when the subtasks are further along; `warning` when they are behind; empty otherwise.
@@ -80,7 +82,7 @@ export const resolveParentStatusFromChildren = (
   parentStatus: string,
   childStatuses: Array<string | undefined>,
 ): ParentStatusFromChildrenResult => {
-  if (!parentStatus.trim() || isCancelledStatus(parentStatus)) return {};
+  if (!parentStatus.trim() || isCancelledStatus(parentStatus) || isBlockedTaskStatus(parentStatus)) return {};
   const implied = deriveParentStatusFromChildren(childStatuses);
   if (!implied) return {};
 

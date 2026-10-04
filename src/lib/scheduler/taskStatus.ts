@@ -75,6 +75,8 @@ export const isBufferPhaseTaskStatus = (status: string): boolean => {
 
 export const isUatTaskStatus = (status: string): boolean => normalize(status) === "uat";
 
+export const isBlockedTaskStatus = (status: string): boolean => normalize(status) === "blocked";
+
 /** UAT / STAGING — go-live dates pending on the PM. */
 export const isReleasePendingOnPmStatus = (status: string): boolean => {
   const value = normalize(status);
@@ -89,13 +91,34 @@ export const isReleasePendingOnEmStatus = (status: string): boolean =>
 export const isReleaseDateHandoffStatus = (status: string): boolean =>
   isReleasePendingOnPmStatus(status) || isReleasePendingOnEmStatus(status);
 
-/** UI label for deferred UAT/Production dates, or null when the scheduler still owns them. */
-export const releaseDateHandoffLabel = (status: string): "Pending on PM" | "Pending on EM" | null => {
+const isReadyForDevelopmentStatus = (status: string): boolean => normalize(status) === "ready for development";
+
+/** Blocked / Ready for Development — work is not moving, so no UAT/Production dates are promised. */
+export const isReleaseDateOnHoldStatus = (status: string): boolean =>
+  isBlockedTaskStatus(status) || isReadyForDevelopmentStatus(status);
+
+/**
+ * Whether the scheduler leaves UAT/Production dates empty for this status: go-live handed to PM/EM, or work on hold.
+ * The story's work hours are still scheduled.
+ */
+export const hasNoComputedReleaseDates = (status: string): boolean =>
+  isReleaseDateHandoffStatus(status) || isReleaseDateOnHoldStatus(status);
+
+export type NoReleaseDateLabel = "Pending on PM" | "Pending on EM" | "On hold" | "Awaiting dev";
+
+/** UI label shown instead of UAT/Production dates, or null when the scheduler computes them. */
+export const noReleaseDateLabel = (status: string): NoReleaseDateLabel | null => {
   if (isReleasePendingOnEmStatus(status)) {
     return "Pending on EM";
   }
   if (isReleasePendingOnPmStatus(status)) {
     return "Pending on PM";
+  }
+  if (isBlockedTaskStatus(status)) {
+    return "On hold";
+  }
+  if (isReadyForDevelopmentStatus(status)) {
+    return "Awaiting dev";
   }
   return null;
 };
@@ -215,6 +238,7 @@ const STATUS_COLOR_BY_NAME: Record<string, TaskStatusColorKey> = {
   "ready for production": "ready-for-production",
   production: "production",
   released: "production",
+  done: "production",
   closed: "closed",
   cancelled: "cancelled",
 };

@@ -83,13 +83,14 @@ export const jiraFetchIssuePreviewFields = async (
   issueKey: string,
 ): Promise<{
   summary?: string;
+  status?: unknown;
   assignee?: unknown;
   reporter?: unknown;
   description?: unknown;
 }> => {
   const response = await jiraFetch(
     credentials,
-    `/issue/${encodeURIComponent(issueKey)}?fields=${encodeURIComponent("summary,assignee,reporter,description")}`,
+    `/issue/${encodeURIComponent(issueKey)}?fields=${encodeURIComponent("summary,status,assignee,reporter,description")}`,
   );
   if (!response.ok) {
     await response.text().catch(() => "");
@@ -101,6 +102,7 @@ export const jiraFetchIssuePreviewFields = async (
   const body = (await response.json()) as {
     fields?: {
       summary?: string;
+      status?: unknown;
       assignee?: unknown;
       reporter?: unknown;
       description?: unknown;

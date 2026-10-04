@@ -12,6 +12,7 @@ import {
   type CarryWizardRow,
 } from "@/lib/planner/sprintCarryOver";
 import type { CarryOverRemainingByTaskId } from "@/store/taskRules";
+import { listJiraPendingChanges } from "@/lib/integrations/jira/syncedFields";
 import { parseCalendarDate, todayDateKey } from "@/lib/scheduler/calendar";
 
 type Props = {
@@ -64,6 +65,16 @@ export function StartNewSprintModal({
       setValidationError(null);
     }
   }, [open, currentSprintTasks]);
+
+  const needsPushNames = useMemo(
+    () =>
+      open
+        ? tasks
+            .filter((task) => listJiraPendingChanges(task).length > 0)
+            .map((task) => task.storyName.trim() || task.storyLink.trim() || task.id)
+        : [],
+    [open, tasks],
+  );
 
   const currentSprintStories = Math.max(0, totalStories - nextSprintStories);
   const storyWord = totalStories === 1 ? "story" : "stories";
@@ -173,6 +184,25 @@ export function StartNewSprintModal({
                 <li>Sprint start / planning dates become the date you pick; old extra holidays clear.</li>
               </ol>
             </div>
+
+            {needsPushNames.length > 0 ? (
+              <div className="mt-3 rounded-xl border border-orange-300 bg-orange-50 px-3 py-2.5 text-[13px] text-orange-900">
+                <p className="font-semibold">
+                  {needsPushNames.length} {needsPushNames.length === 1 ? "story still needs" : "stories still need"} a
+                  Jira push
+                </p>
+                <p className="mt-1">
+                  These were edited in the planner but Jira still shows the old values. Push them first (orange
+                  &quot;Needs push&quot; badge on the board) so Jira matches the sprint snapshot.
+                </p>
+                <ul className="mt-1.5 list-disc space-y-0.5 pl-4">
+                  {needsPushNames.slice(0, 5).map((name, index) => (
+                    <li key={`${index}-${name}`}>{name}</li>
+                  ))}
+                  {needsPushNames.length > 5 ? <li>…and {needsPushNames.length - 5} more</li> : null}
+                </ul>
+              </div>
+            ) : null}
           </>
         ) : (
           <>
@@ -186,6 +216,7 @@ export function StartNewSprintModal({
                   type="button"
                   className="btn-secondary px-2 py-1 text-[11px] disabled:opacity-50"
                   disabled={busy}
+                  title="Count the full estimate as remaining for every untouched dev story you're carrying over"
                   onClick={() => setCarryRows((rows) => applyFullEstimateToAllDevRows(rows))}
                 >
                   Full estimates for all dev carry (untouched)
@@ -303,6 +334,7 @@ export function StartNewSprintModal({
             type="button"
             className="btn-secondary px-3 py-1.5 text-sm disabled:opacity-50"
             disabled={busy}
+            title={step === 2 ? "Go back to the sprint start date" : "Close without starting a new sprint"}
             onClick={() => {
               if (step === 2) {
                 setStep(1);
@@ -319,6 +351,11 @@ export function StartNewSprintModal({
               type="button"
               className="btn-danger px-3 py-1.5 text-sm disabled:opacity-50"
               disabled={busy || !isValidDateKey(sprintStartDate)}
+              title={
+                carryRows.length > 0
+                  ? "Next: set remaining hours for stories carried over"
+                  : "Start the new sprint from the chosen date"
+              }
               onClick={handleNext}
             >
               {carryRows.length > 0 ? "Next: remaining hours" : busy ? "Starting…" : "Start new sprint"}
@@ -328,6 +365,7 @@ export function StartNewSprintModal({
               type="button"
               className="btn-danger px-3 py-1.5 text-sm disabled:opacity-50"
               disabled={busy || !isValidDateKey(sprintStartDate)}
+              title="Start the new sprint with these remaining hours"
               onClick={handleConfirm}
             >
               {busy ? "Starting…" : "Start new sprint"}

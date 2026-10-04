@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { format } from "date-fns";
 import { useSession } from "next-auth/react";
@@ -10,15 +10,28 @@ import {
 } from "@/lib/scheduler/calendar";
 import { sessionCapabilities } from "@/lib/access/control";
 import { isJiraStoryLink, buildJiraIssueBrowseUrl, parseJiraIssueKey } from "@/lib/integrations/jira/issueKey";
+import { buildSubtaskStatusChips } from "@/lib/integrations/jira/subtaskStatusChips";
 import { safeStoryHref } from "@/lib/ui/safeStoryHref";
 import { issueTypeChipClass } from "@/lib/ui/issueTypeChip";
 import {
   buildIssueTypeFilterOptions,
   isParentlessPlannerTask,
+  isStandaloneIssueType,
   taskMatchesIssueTypeFilter,
 } from "@/lib/planner/taskIssueFilters";
 import { isTaskEligibleForJiraPull, isTaskEligibleForJiraSync, listBulkSyncLeftOutStories, resolveTaskForJiraSync } from "@/lib/integrations/jira/syncEligibility";
-import { JIRA_SYNC_ADDED_TAG, withNeedsPushTag } from "@/lib/integrations/jira/jiraSyncTag";
+import {
+  JIRA_NEEDS_PUSH_TAG,
+  JIRA_SYNC_ADDED_TAG,
+  withoutLegacyNeedsPushTag,
+} from "@/lib/integrations/jira/jiraSyncTag";
+import {
+  buildRevertToJiraPatch,
+  formatJiraPendingChangesHint,
+  formatRevertToJiraHint,
+  listJiraPendingChanges,
+  type JiraPendingChange,
+} from "@/lib/integrations/jira/syncedFields";
 import type { RemoteChangedTask } from "@/lib/integrations/jira/remoteChanges";
 import { formatBulkSyncConfirmMessage, formatBulkSyncSummaryModel, bulkSyncHasActionErrors, type BulkSyncTaskResult } from "@/lib/integrations/jira/bulkSyncMessages";
 import {
@@ -36,6 +49,13 @@ import { getTasksNeedingRemark } from "@/lib/planner/pendingMarkProgress";
 import { copySelectedStoriesToClipboard } from "@/lib/planner/copySelectedStories";
 import { sortTasksForDashboard } from "@/lib/planner/dashboardTaskOrder";
 import { isOwnerPmStory } from "@/lib/planner/pmStoryFlag";
+import {
+  buildOwnerPeopleMatchSet,
+  isOwnerPeopleMatch,
+  listOwnerPeopleGroups,
+  taskHasAssignedPerson,
+  type OwnerPeopleScope,
+} from "@/lib/planner/ownerPeopleFilter";
 import { buildTaskDetailsSummaryChips, buildTaskDetailsSummaryRows } from "@/lib/planner/taskDetailsSummary";
 import { buildReleaseGroupColorMap } from "@/lib/planner/releaseGroupColors";
 import { savePlannerAfterJiraSync, type PlannerSaveResult } from "@/lib/planner/flushPlannerState";
@@ -59,6 +79,11 @@ import { ResourceInsightModal } from "@/components/resources/ResourceInsightModa
 import { NumberStepper } from "@/components/common/NumberStepper";
 import { OrderInput } from "@/components/common/OrderInput";
 import { BulkAddTasksModal } from "@/components/tasks/BulkAddTasksModal";
+import { BulkAssigneesModal, type BulkAssigneesReason } from "@/components/tasks/BulkAssigneesModal";
+import { GroupStoriesModal } from "@/components/tasks/GroupStoriesModal";
+import { BulkStatusModal } from "@/components/tasks/BulkStatusModal";
+import { normalizeReleaseGroup } from "@/lib/scheduler/releaseGroups";
+import { hasMissingAssignees } from "@/lib/planner/bulkAssignees";
 import { StoryLinkWithPreview } from "@/components/tasks/StoryLinkWithPreview";
 import { MobileStartDateModal } from "@/components/tasks/MobileStartDateModal";
 import { ReleaseGroupInput } from "@/components/tasks/ReleaseGroupInput";
@@ -80,7 +105,7 @@ import {
   isDiscopedTaskStatus,
   isExcludedFromSchedule,
   isHiddenByDefaultStatusFilter,
-  releaseDateHandoffLabel,
+  noReleaseDateLabel,
   statusChipClass,
   statusFilterClass,
   statusRowClass,
@@ -164,6 +189,18 @@ const splitTodoLines = (raw: string | undefined) =>
     .filter(Boolean);
 const formatTagLabel = (tag: string) => tag.trim().split(/\s+/).join(" - ");
 
+/** Latest of last pull / last push as "dd MMM HH:mm", or null when the story never synced. */
+const lastJiraSyncLabel = (task: Task): string | null => {
+  const times = [task.jira?.lastPushedAt, task.jira?.lastPulledAt]
+    .map((value) => (value ? Date.parse(value) : Number.NaN))
+    .filter(Number.isFinite);
+  return times.length > 0 ? format(new Date(Math.max(...times)), "dd MMM HH:mm") : null;
+};
+
+/** Stable key of a story's pending changes (detects edits made during this session). */
+const pendingChangesSignature = (changes: JiraPendingChange[] | undefined): string =>
+  (changes ?? []).map((change) => `${change.field}:${change.to}`).join("|");
+
 const toolbarTriggerClass = (active: boolean, extraClass = "") =>
   ["toolbar-strip-btn", "inline-flex", "items-center", "gap-1.5", active ? "toolbar-strip-btn-active" : "", extraClass]
     .filter(Boolean)
@@ -186,6 +223,103 @@ function ToolbarDropdownHeader({ title, subtitle }: { title: string; subtitle?: 
   );
 }
 
+type TableHeaderToggleProps = {
+  expanded: boolean;
+  disabled: boolean;
+  label: string;
+  title: string;
+  onToggle: () => void;
+};
+
+/**
+ * Show/hide pill placed above a table header label (e.g. estimations, subtask statuses).
+ * @param expanded - Whether the controlled content is currently visible (flips the chevron).
+ * @param disabled - Blocks the toggle when there is nothing to show.
+ * @param label - Button text for the current state.
+ * @param title - Hover hint for the current state.
+ * @param onToggle - Called on click; the caller flips its own visibility state.
+ */
+function TableHeaderToggle({ expanded, disabled, label, title, onToggle }: TableHeaderToggleProps) {
+  return (
+    <button
+      type="button"
+      className="table-header-toggle"
+      disabled={disabled}
+      aria-expanded={expanded}
+      title={title}
+      onClick={onToggle}
+    >
+      <span>{label}</span>
+      <span className="table-header-toggle-chevron" aria-hidden>
+        ▾
+      </span>
+    </button>
+  );
+}
+
+type DetailsCornerToggleProps = {
+  expanded: boolean;
+  storyLabel: string;
+  onToggle: () => void;
+};
+
+/**
+ * Corner pill that opens (pencil ▾) or closes (▴) one story's estimates editor below the row.
+ * @param expanded - Whether the story's estimates editor is open.
+ * @param storyLabel - Story name used in the accessible label.
+ * @param onToggle - Flips the story's expanded state.
+ */
+function DetailsCornerToggle({ expanded, storyLabel, onToggle }: DetailsCornerToggleProps) {
+  return (
+    <button
+      type="button"
+      className={`details-corner-toggle${expanded ? " details-corner-toggle-open" : ""}`}
+      aria-expanded={expanded}
+      aria-label={`${expanded ? "Close" : "Edit"} estimates for ${storyLabel}`}
+      title={
+        expanded
+          ? "Close the estimates editor for this story"
+          : "Edit this story's estimates — opens hours, people and buffer for BE / FE / Mobile / QC / PM below the row"
+      }
+      onClick={onToggle}
+    >
+      {expanded ? null : (
+        <svg viewBox="0 0 16 16" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+          <path d="M11 2.5l2.5 2.5L6 12.5H3.5V10z" strokeLinejoin="round" />
+        </svg>
+      )}
+      <span aria-hidden className="text-[9px] leading-none">{expanded ? "▴" : "▾"}</span>
+    </button>
+  );
+}
+
+/**
+ * Hover text for an assignee picker trigger: who is assigned, or what to pick when empty.
+ * @param roleLabel - Plural role name shown in the hint, e.g. "backend developers".
+ * @param names - Currently assigned names.
+ */
+const assigneePickerHint = (roleLabel: string, names: readonly string[] | null | undefined): string =>
+  names && names.length > 0 ? `Assigned: ${names.join(", ")} — click to change` : `Choose ${roleLabel}`;
+
+type EstimateCellProps = {
+  inline: boolean;
+  className: string;
+  children: ReactNode;
+};
+
+/**
+ * One estimation block (e.g. Backend): a table cell while the estimation columns are open,
+ * or a grid item in the single-story panel row (same column widths, other rows unchanged).
+ * @param inline - Render as a panel grid item instead of a table cell.
+ * @param className - Table cell classes used in column mode.
+ * @param children - Block content (phase box with hours and assignees).
+ */
+function EstimateCell({ inline, className, children }: EstimateCellProps) {
+  if (inline) {
+    return <div className="task-details-panel-item">{children}</div>;
+  }
+  return <td className={className}>{children}</td>;
+}
 type AssigneePickerKind = "be" | "fe" | "android" | "ios" | "int" | "qc" | "pm" | "status";
 
 type AssigneePickerOpen = {
@@ -207,6 +341,18 @@ const jiraSyncSaveFailureMessage = (result: PlannerSaveResult, subject: string):
     ? `Planner save failed — someone else saved this planner at the same time; ${subject} are on screen but not saved. Click Reload in the sidebar, then run the Jira action again`
     : `Planner save failed — ${subject} are on screen but not saved; wait before refreshing`;
 
+/** Backend → PM/Buffer estimation columns shown when Details is expanded (widths as % of the table). */
+const DETAILS_ESTIMATE_COLUMNS = [
+  { key: "be", widthPercent: 7 },
+  { key: "fe", widthPercent: 7 },
+  { key: "mobile", widthPercent: 15 },
+  { key: "integration", widthPercent: 8 },
+  { key: "qc", widthPercent: 7 },
+  { key: "pm-buffer", widthPercent: 8 },
+] as const;
+
+const DETAILS_ESTIMATE_GRID_TEMPLATE = DETAILS_ESTIMATE_COLUMNS.map((column) => `${column.widthPercent}fr`).join(" ");
+const DETAILS_ESTIMATE_TOTAL_PERCENT = DETAILS_ESTIMATE_COLUMNS.reduce((sum, column) => sum + column.widthPercent, 0);
 const JIRA_RETRY_DELAY_MS = 1500;
 
 /**
@@ -272,9 +418,16 @@ export function TaskTable() {
   const [insightResourceName, setInsightResourceName] = useState<string | null>(null);
   const [taskPendingDelete, setTaskPendingDelete] = useState<string | null>(null);
   const [taskTagModalId, setTaskTagModalId] = useState<string | null>(null);
+  const [groupStoriesIds, setGroupStoriesIds] = useState<string[] | null>(null);
+  const [bulkStatusIds, setBulkStatusIds] = useState<string[] | null>(null);
   const [taskTodoModalId, setTaskTodoModalId] = useState<string | null>(null);
   const [moStartDateModalId, setMoStartDateModalId] = useState<string | null>(null);
   const [isBulkAddOpen, setIsBulkAddOpen] = useState(false);
+  const [bulkAssignees, setBulkAssignees] = useState<{
+    taskIds: string[];
+    reason: BulkAssigneesReason;
+    openedAt: number;
+  } | null>(null);
   const [tagInputDraft, setTagInputDraft] = useState("");
   const [todoModalDraft, setTodoModalDraft] = useState("");
   const [isImportingTasks, setIsImportingTasks] = useState(false);
@@ -304,6 +457,9 @@ export function TaskTable() {
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [expandedJiraTaskIds, setExpandedJiraTaskIds] = useState<string[]>([]);
   const [expandedDetailsTaskIds, setExpandedDetailsTaskIds] = useState<string[]>([]);
+  const [detailsColumnsOpen, setDetailsColumnsOpen] = useState(false);
+  const [subtaskStatusesVisible, setSubtaskStatusesVisible] = useState(false);
+  const [expandedSubtaskTaskIds, setExpandedSubtaskTaskIds] = useState<string[]>([]);
   const [mobileOptionsOpen, setMobileOptionsOpen] = useState<{
     taskId: string;
     trigger: HTMLElement;
@@ -339,10 +495,12 @@ export function TaskTable() {
   const [visibleStatuses, setVisibleStatuses] = useState<string[]>(defaultVisibleStatuses);
   const [sprintFilter, setSprintFilter] = useState<"all" | "currentSprint" | "nextSprint">("currentSprint");
   const [emFilter, setEmFilter] = useState<"all" | "em" | "non-em" | "pm">("all");
+  const [ownerPeople, setOwnerPeople] = useState<string[]>([]);
   const [squadPmNames, setSquadPmNames] = useState<string[]>([]);
   const [squadPmReady, setSquadPmReady] = useState(false);
   const [typeFilter, setTypeFilter] = useState<string[]>(() => buildIssueTypeFilterOptions([]));
   const [kindFilter, setKindFilter] = useState<"all" | "stories" | "standalone">("all");
+  const [needsPushOnly, setNeedsPushOnly] = useState(false);
   const [typeFilterOpen, setTypeFilterOpen] = useState(false);
   const [ownerFilterOpen, setOwnerFilterOpen] = useState(false);
   const [kindFilterOpen, setKindFilterOpen] = useState(false);
@@ -492,6 +650,15 @@ export function TaskTable() {
     () => getTasksNeedingRemark(plannerMeta, activeTasks.map((task) => task.id)),
     [plannerMeta, activeTasks],
   );
+  const pendingJiraChangesById = useMemo(() => {
+    const byId = new Map<string, JiraPendingChange[]>();
+    for (const task of tasks) {
+      const changes = listJiraPendingChanges(task);
+      if (changes.length > 0) byId.set(task.id, changes);
+    }
+    return byId;
+  }, [tasks]);
+  const needsPushFilterActive = needsPushOnly && pendingJiraChangesById.size > 0;
   const anyEmStoryMarked = useMemo(() => tasks.some((task) => Boolean(task.isEmStory)), [tasks]);
   const anyPmStoryMarked = useMemo(
     () =>
@@ -509,8 +676,8 @@ export function TaskTable() {
     () => (selectedTimelineTaskId ? taskResultMap.get(selectedTimelineTaskId) ?? null : null),
     [taskResultMap, selectedTimelineTaskId],
   );
-  const selectedTimelineHandoffLabel = selectedTimelineTask
-    ? releaseDateHandoffLabel(selectedTimelineTask.status)
+  const selectedTimelineNoReleaseLabel = selectedTimelineTask
+    ? noReleaseDateLabel(selectedTimelineTask.status)
     : null;
   const modalCurrentPhase = useMemo(
     () =>
@@ -601,8 +768,73 @@ export function TaskTable() {
     setTasksMenuOpen(false);
   }, [addTask, isEditor, sprintFilter, visibleStatuses]);
 
+  /**
+   * Open the bulk assignee editor for the given stories (display order is kept).
+   * @param taskIds - Stories to edit.
+   * @param reason - Why it opened; drives the intro text.
+   */
+  const openBulkAssignees = (taskIds: string[], reason: BulkAssigneesReason) => {
+    if (!isEditor || taskIds.length === 0) return;
+    setTasksMenuOpen(false);
+    setBulkAssignees({ taskIds, reason, openedAt: Date.now() });
+  };
+
+  /**
+   * Auto-open the editor after stories were added, only when at least one of them still misses
+   * a developer or QC. Reads the store directly because the new tasks are not in this render yet.
+   * @param newTaskIds - Ids returned by `addTasks`.
+   * @param reason - "added" for Bulk insertion / Import, "jira" for a Jira pull.
+   */
+  const openBulkAssigneesForNewTasks = (newTaskIds: string[], reason: BulkAssigneesReason) => {
+    if (newTaskIds.length === 0) return;
+    const newIdSet = new Set(newTaskIds);
+    const needsPeople = usePlannerStore
+      .getState()
+      .tasks.some((task) => newIdSet.has(task.id) && hasMissingAssignees(task));
+    if (needsPeople) {
+      openBulkAssignees(newTaskIds, reason);
+    }
+  };
+
+  const ownerPeopleScope: OwnerPeopleScope | null =
+    emFilter === "non-em" ? "team" : emFilter === "pm" ? "pm" : null;
+  const ownerPeopleGroups = useMemo(
+    () => (ownerPeopleScope ? listOwnerPeopleGroups(ownerPeopleScope, resources) : []),
+    [ownerPeopleScope, resources],
+  );
+  // Ignore picks that are no longer on this squad's roster (renamed, removed, or squad switched).
+  const pickedOwnerPeople = useMemo(() => {
+    const rosterNames = new Set(ownerPeopleGroups.flatMap((group) => group.names));
+    return ownerPeople.filter((name) => rosterNames.has(name));
+  }, [ownerPeople, ownerPeopleGroups]);
+  const ownerPeopleMatchSet = useMemo(
+    () => buildOwnerPeopleMatchSet(pickedOwnerPeople, resources),
+    [pickedOwnerPeople, resources],
+  );
+  const ownerScopeLabel = emFilter === "em" ? "EM" : emFilter === "non-em" ? "Team" : emFilter === "pm" ? "PM" : "";
   const ownerFilterSummary =
-    emFilter === "em" ? "EM" : emFilter === "non-em" ? "Team" : emFilter === "pm" ? "PM" : "";
+    pickedOwnerPeople.length === 1
+      ? pickedOwnerPeople[0].split(/\s+/)[0]
+      : pickedOwnerPeople.length > 1
+        ? `${ownerScopeLabel}·${pickedOwnerPeople.length}`
+        : ownerScopeLabel;
+  const ownerFilterHint = !ownerScopeLabel
+    ? "Filter by EM, team, or PM — pick Team or PM to choose specific people"
+    : pickedOwnerPeople.length > 0
+      ? `Jira work assigned to:\n${pickedOwnerPeople.join("\n")}`
+      : `Owner: ${ownerScopeLabel}`;
+  const changeOwnerFilter = (value: typeof emFilter) => {
+    setEmFilter(value);
+    setOwnerPeople([]);
+  };
+  const toggleOwnerPerson = (name: string) =>
+    setOwnerPeople((current) =>
+      current.includes(name) ? current.filter((picked) => picked !== name) : [...current, name],
+    );
+  const assigneeTagClass = (name: string) =>
+    isOwnerPeopleMatch(name, ownerPeopleMatchSet)
+      ? "assignee-selected-tag assignee-selected-tag-match"
+      : "assignee-selected-tag";
   const kindFilterSummary =
     kindFilter === "stories" ? "Stories" : kindFilter === "standalone" ? "Standalone" : "";
 
@@ -1059,15 +1291,11 @@ export function TaskTable() {
         synced += 1;
         if (body.patch) {
           // Hours / assignees / status changes light Need remark; jira meta alone does not.
-          const patch: Partial<Task> = body.statusFromChildren
-            ? {
-                ...body.patch,
-                tags: withNeedsPushTag(
-                  usePlannerStore.getState().tasks.find((item) => item.id === task.id)?.tags,
-                  true,
-                ),
-              }
-            : body.patch;
+          // A child-driven status shows "Needs push" through jira.syncedFields, so the legacy tag is dropped.
+          const currentTags = usePlannerStore.getState().tasks.find((item) => item.id === task.id)?.tags;
+          const cleanedTags = withoutLegacyNeedsPushTag(currentTags);
+          const patch: Partial<Task> =
+            cleanedTags !== currentTags ? { ...body.patch, tags: cleanedTags } : body.patch;
           pulledPatches.push({ id: task.id, patch });
         }
         markJiraDone({ taskId: task.id, ok: true });
@@ -1183,16 +1411,20 @@ export function TaskTable() {
     }
   };
 
-  const bulkSyncToJira = () => {
+  /**
+   * Push stories to Jira: remote-change check → confirm / conflict dialog → push → save → summary banner.
+   * Shared by Actions → Push to Jira and the row "Needs push" badge.
+   * @param taskIds - Stories to push (non-eligible ones are reported as left out).
+   */
+  const pushTasksToJira = (taskIds: string[]) => {
     runAfterBulkMenuClose(async () => {
       if (!activeSquadId) {
         window.alert("Select a squad before syncing to Jira.");
         return;
       }
 
-      const selectedRows = orderedTasks.filter((task) => selectedTaskIdSet.has(task.id));
-      const selectedTasksForSync = selectedRows
-        .map((row) => getTaskForJiraSync(row.id))
+      const selectedTasksForSync = taskIds
+        .map((taskId) => getTaskForJiraSync(taskId))
         .filter((task): task is Task => task !== null);
 
       const eligibleTasks = selectedTasksForSync.filter(isTaskEligibleForJiraSync);
@@ -1207,7 +1439,7 @@ export function TaskTable() {
         window.alert(
           discopedTasks.length > 0
             ? "Discoped stories are not synced to Jira."
-            : "No selected stories with a Jira link and hours to sync.",
+            : "No selected stories with a Jira link.",
         );
         return;
       }
@@ -1285,7 +1517,6 @@ export function TaskTable() {
             jira: Task["jira"];
             warnings: string[];
             errors: string[];
-            statusSynced: boolean;
             statusFromChildren: BulkSyncTaskResult["statusFromChildren"];
           }>(response);
           if (!response.ok) {
@@ -1301,14 +1532,9 @@ export function TaskTable() {
             return;
           }
           synced += 1;
-          if (body.jira || body.statusSynced || body.statusFromChildren) {
+          if (body.jira || body.statusFromChildren) {
             const latestTags = usePlannerStore.getState().tasks.find((item) => item.id === task.id)?.tags;
-            // Pushed status from subtasks but Jira refused the transition → keep flagging it.
-            const tags = body.statusSynced
-              ? withNeedsPushTag(latestTags, false)
-              : body.statusFromChildren
-                ? withNeedsPushTag(latestTags, true)
-                : latestTags;
+            const tags = withoutLegacyNeedsPushTag(latestTags);
             pushedPatches.push({
               id: task.id,
               patch: {
@@ -1390,6 +1616,9 @@ export function TaskTable() {
       });
     });
   };
+
+  const bulkSyncToJira = () =>
+    pushTasksToJira(orderedTasks.filter((task) => selectedTaskIdSet.has(task.id)).map((task) => task.id));
 
   const bulkPullFromJira = () => {
     runAfterBulkMenuClose(async () => {
@@ -1551,6 +1780,7 @@ export function TaskTable() {
         forceSave: missingStories.length > 0,
         addedTaskIds,
       });
+      openBulkAssigneesForNewTasks(addedTaskIds, "jira");
     });
   };
 
@@ -1565,14 +1795,20 @@ export function TaskTable() {
       if (sprintFilter === "currentSprint") return !task.carryToNextSprint;
       return true;
     }).filter((task) => {
-      const pmStory = isOwnerPmStory(task, squadPmNames, resources);
-      if (emFilter === "em" && !task.isEmStory) return false;
-      // PM bucket: assignee is PM, or Story lists a squad PM; EM stays under Owner → EM.
-      if (emFilter === "pm" && (!pmStory || task.isEmStory)) return false;
-      if (emFilter === "non-em" && (task.isEmStory || pmStory)) return false;
+      // Picked people show their whole workload, so EM / PM ownership no longer hides rows.
+      if (ownerPeopleMatchSet.size > 0) {
+        if (!taskHasAssignedPerson(task, ownerPeopleMatchSet)) return false;
+      } else {
+        const pmStory = isOwnerPmStory(task, squadPmNames, resources);
+        if (emFilter === "em" && !task.isEmStory) return false;
+        // PM bucket: assignee is PM, or Story lists a squad PM; EM stays under Owner → EM.
+        if (emFilter === "pm" && (!pmStory || task.isEmStory)) return false;
+        if (emFilter === "non-em" && (task.isEmStory || pmStory)) return false;
+      }
       if (!taskMatchesIssueTypeFilter(task, typeFilter)) return false;
       if (kindFilter === "standalone" && !isParentlessPlannerTask(task)) return false;
       if (kindFilter === "stories" && isParentlessPlannerTask(task)) return false;
+      if (needsPushFilterActive && !pendingJiraChangesById.has(task.id)) return false;
       return true;
     });
     const releaseDateById = new Map(
@@ -1583,7 +1819,7 @@ export function TaskTable() {
         ? plannerMeta.dashboardTaskOrder
         : null;
     return sortTasksForDashboard(filtered, releaseDateById, pinnedOrder);
-  }, [tasks, safeResult.tasks, visibleStatuses, sprintFilter, emFilter, typeFilter, kindFilter, isUatTrackingEnabled, plannerMeta.dashboardTaskOrder, squadPmNames, resources]);
+  }, [tasks, safeResult.tasks, visibleStatuses, sprintFilter, emFilter, ownerPeopleMatchSet, typeFilter, kindFilter, needsPushFilterActive, pendingJiraChangesById, isUatTrackingEnabled, plannerMeta.dashboardTaskOrder, squadPmNames, resources]);
 
   useEffect(() => {
     if (!focusTaskId) return;
@@ -1606,9 +1842,10 @@ export function TaskTable() {
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const expandedJiraTaskIdSet = useMemo(() => new Set(expandedJiraTaskIds), [expandedJiraTaskIds]);
   const expandedDetailsTaskIdSet = useMemo(() => new Set(expandedDetailsTaskIds), [expandedDetailsTaskIds]);
-  const detailsColumnsVisible =
-    orderedTasks.length > 0 && orderedTasks.some((task) => expandedDetailsTaskIdSet.has(task.id));
+  const expandedSubtaskTaskIdSet = useMemo(() => new Set(expandedSubtaskTaskIds), [expandedSubtaskTaskIds]);
+  const detailsColumnsVisible = detailsColumnsOpen && orderedTasks.length > 0;
   const tableColSpan = detailsColumnsVisible ? 12 : 7;
+  const hasVisibleSubtasks = orderedTasks.some((task) => (task.jira?.subtasks?.length ?? 0) > 0);
   const visibleSelectedCount = useMemo(
     () => orderedTasks.filter((task) => selectedTaskIdSet.has(task.id)).length,
     [orderedTasks, selectedTaskIdSet],
@@ -1617,12 +1854,103 @@ export function TaskTable() {
     () => orderedTasks.filter((task) => selectedTaskIdSet.has(task.id)),
     [orderedTasks, selectedTaskIdSet],
   );
+  const groupStoriesTasks = useMemo(() => {
+    if (!groupStoriesIds) return [];
+    const idSet = new Set(groupStoriesIds);
+    return tasks.filter((task) => idSet.has(task.id));
+  }, [groupStoriesIds, tasks]);
+  const groupStoriesCurrentGroups = useMemo(() => {
+    const countByGroup = new Map<string, number>();
+    for (const task of groupStoriesTasks) {
+      const group = normalizeReleaseGroup(task.releaseGroup);
+      if (group) countByGroup.set(group, (countByGroup.get(group) ?? 0) + 1);
+    }
+    return [...countByGroup].map(([name, count]) => ({ name, count }));
+  }, [groupStoriesTasks]);
+  const boardReleaseGroups = useMemo(
+    () =>
+      groupStoriesIds
+        ? [
+            ...new Set(
+              tasks
+                .map((task) => normalizeReleaseGroup(task.releaseGroup))
+                .filter((group): group is string => group != null),
+            ),
+          ].sort((left, right) => left.localeCompare(right))
+        : [],
+    [groupStoriesIds, tasks],
+  );
+  const bulkStatusTasks = useMemo(() => {
+    if (!bulkStatusIds) return [];
+    const idSet = new Set(bulkStatusIds);
+    return tasks.filter((task) => idSet.has(task.id));
+  }, [bulkStatusIds, tasks]);
+  const bulkStatusCurrent = useMemo(() => {
+    const countByStatus = new Map<string, number>();
+    for (const task of bulkStatusTasks) {
+      countByStatus.set(task.status, (countByStatus.get(task.status) ?? 0) + 1);
+    }
+    return [...countByStatus].map(([status, count]) => ({ status, count }));
+  }, [bulkStatusTasks]);
+  const bulkAssigneesTasks = useMemo(() => {
+    if (!bulkAssignees) return [];
+    const tasksById = new Map(tasks.map((task) => [task.id, task]));
+    return bulkAssignees.taskIds
+      .map((taskId) => tasksById.get(taskId))
+      .filter((task): task is Task => task != null);
+  }, [bulkAssignees, tasks]);
   const selectedJiraPushEligibleCount = useMemo(
     () => selectedTasks.filter((task) => isTaskEligibleForJiraSync(task)).length,
     [selectedTasks],
   );
 
   const jiraSyncInProgress = jiraSyncActive || jiraSyncPreparing !== null;
+
+  const needsPushCount = pendingJiraChangesById.size;
+  const needsPushToolbarHint = useMemo(() => {
+    if (needsPushCount === 0) return "";
+    const names = tasks
+      .filter((task) => pendingJiraChangesById.has(task.id))
+      .slice(0, 6)
+      .map((task) => `• ${storyDisplayName(task)} (${pendingJiraChangesById.get(task.id)?.length ?? 0} changes)`);
+    const more = needsPushCount > names.length ? [`• …and ${needsPushCount - names.length} more`] : [];
+    const noun = needsPushCount === 1 ? "story was" : "stories were";
+    return [
+      `Filter — ${needsPushCount} ${noun} edited in the planner since the last Jira sync; Jira still shows the old values:`,
+      ...names,
+      ...more,
+      needsPushFilterActive
+        ? "Click to turn the filter off and show all stories again."
+        : "Click to show only these stories (orange stripe). This does not push anything.",
+      "To push: select the stories, then Actions → Push to Jira.",
+    ].join("\n");
+  }, [needsPushCount, tasks, pendingJiraChangesById, needsPushFilterActive]);
+
+  // Pending changes per story the first time it was seen this session; leaving warns only about newer edits.
+  const firstSeenPendingRef = useRef(new Map<string, string>());
+  const latestPendingRef = useRef(pendingJiraChangesById);
+  useEffect(() => {
+    latestPendingRef.current = pendingJiraChangesById;
+    const seen = firstSeenPendingRef.current;
+    for (const task of tasks) {
+      if (!seen.has(task.id)) seen.set(task.id, pendingChangesSignature(pendingJiraChangesById.get(task.id)));
+    }
+  }, [tasks, pendingJiraChangesById]);
+
+  useEffect(() => {
+    if (!isEditor) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      const seen = firstSeenPendingRef.current;
+      const editedThisSession = [...latestPendingRef.current].some(
+        ([taskId, changes]) => seen.get(taskId) !== pendingChangesSignature(changes),
+      );
+      if (!editedThisSession) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [isEditor]);
   const allVisibleSelected =
     orderedTasks.length > 0 && visibleSelectedCount === orderedTasks.length;
 
@@ -1637,7 +1965,17 @@ export function TaskTable() {
       const next = current.filter((id) => visibleIds.has(id));
       return next.length === current.length ? current : next;
     });
+    setExpandedSubtaskTaskIds((current) => {
+      const next = current.filter((id) => visibleIds.has(id));
+      return next.length === current.length ? current : next;
+    });
   }, [orderedTasks]);
+
+  const toggleSubtaskStatusesExpanded = (taskId: string) => {
+    setExpandedSubtaskTaskIds((current) =>
+      current.includes(taskId) ? current.filter((id) => id !== taskId) : [...current, taskId],
+    );
+  };
 
   const toggleTaskSelected = (taskId: string) => {
     setSelectedTaskIds((current) =>
@@ -1666,27 +2004,55 @@ export function TaskTable() {
     );
   };
 
-  const expandDetailsForVisible = () => {
-    setExpandedDetailsTaskIds((current) => [
-      ...new Set([...current, ...orderedTasks.map((task) => task.id)]),
-    ]);
-  };
-
-  const collapseDetailsForVisible = () => {
-    const visibleIds = new Set(orderedTasks.map((task) => task.id));
-    setExpandedDetailsTaskIds((current) => current.filter((id) => !visibleIds.has(id)));
-  };
-
-  const allVisibleDetailsExpanded =
-    orderedTasks.length > 0 && orderedTasks.every((task) => expandedDetailsTaskIdSet.has(task.id));
-
-  const toggleDetailsForVisible = () => {
-    if (allVisibleDetailsExpanded) {
-      collapseDetailsForVisible();
-    } else {
-      expandDetailsForVisible();
+  /** Header Show/Hide: hiding also closes stories opened one by one so nothing stays expanded. */
+  const toggleDetailsColumns = () => {
+    if (detailsColumnsVisible) {
+      setDetailsColumnsOpen(false);
+      setExpandedDetailsTaskIds([]);
+      return;
     }
+    setDetailsColumnsOpen(true);
   };
+
+  const detailsHeaderToggle = (
+    <TableHeaderToggle
+      expanded={detailsColumnsVisible}
+      disabled={orderedTasks.length === 0}
+      label={detailsColumnsVisible ? "Hide estimations" : "Show estimations"}
+      title={
+        detailsColumnsVisible
+          ? "Hide the Backend–PM estimation columns for all visible stories"
+          : "Show Backend–PM estimation hours for all visible stories"
+      }
+      onToggle={toggleDetailsColumns}
+    />
+  );
+
+  /** Header Show/Hide: hiding also closes subtask lists opened one by one so nothing stays expanded. */
+  const toggleSubtaskStatuses = () => {
+    if (subtaskStatusesVisible) {
+      setSubtaskStatusesVisible(false);
+      setExpandedSubtaskTaskIds([]);
+      return;
+    }
+    setSubtaskStatusesVisible(true);
+  };
+
+  const subtaskStatusesHeaderToggle = (
+    <TableHeaderToggle
+      expanded={subtaskStatusesVisible}
+      disabled={!hasVisibleSubtasks}
+      label={subtaskStatusesVisible ? "Hide subtasks" : "Show subtasks"}
+      title={
+        hasVisibleSubtasks
+          ? subtaskStatusesVisible
+            ? "Hide Jira subtask statuses under each story status"
+            : "Show Jira subtask statuses under each story status"
+          : "No visible story has linked Jira subtasks"
+      }
+      onToggle={toggleSubtaskStatuses}
+    />
+  );
 
   const positionMobileOptions = (trigger: HTMLElement) => {
     const rect = trigger.getBoundingClientRect();
@@ -1852,6 +2218,22 @@ export function TaskTable() {
     });
   };
 
+  const openGroupStoriesForSelected = () => {
+    runAfterBulkMenuClose(() => {
+      if (selectedTasks.length > 0) {
+        setGroupStoriesIds(selectedTasks.map((task) => task.id));
+      }
+    });
+  };
+
+  const openBulkStatusForSelected = () => {
+    runAfterBulkMenuClose(() => {
+      if (selectedTasks.length > 0) {
+        setBulkStatusIds(selectedTasks.map((task) => task.id));
+      }
+    });
+  };
+
   const addTodoForSelected = () => {
     runAfterBulkMenuClose(() => {
       if (selectedTasks.length === 0) {
@@ -1876,6 +2258,17 @@ export function TaskTable() {
       });
       setActionFeedback(`Todo added to ${selectedTasks.length} selected stories.`);
     });
+  };
+
+  /** Row ↺ next to Needs push: after a confirm, set the edited fields back to what Jira had at the last pull/push. */
+  const revertTaskToJira = (task: Task, changes: JiraPendingChange[]) => {
+    if (jiraSyncInProgress) return;
+    const storyLabel = task.storyName.trim() || task.storyLink.trim() || "this story";
+    if (!window.confirm(`${storyLabel}\n\n${formatRevertToJiraHint(changes)}`)) return;
+    updateTask(task.id, buildRevertToJiraPatch(task));
+    setActionFeedback(
+      `Reverted ${changes.length} ${changes.length === 1 ? "field" : "fields"} on "${storyLabel}" to the Jira values.`,
+    );
   };
 
   const removeSelectedTasks = () => {
@@ -1925,7 +2318,8 @@ export function TaskTable() {
         window.alert("No valid stories found in the file. Check the template columns and try again.");
         return;
       }
-      addTasks(validRows);
+      const newTaskIds = addTasks(validRows);
+      openBulkAssigneesForNewTasks(newTaskIds, "added");
       const warningCount = validRows.filter((row) => row.warnings.length > 0).length;
       setActionFeedback(
         warningCount > 0
@@ -1983,6 +2377,7 @@ export function TaskTable() {
                 className={toolbarTriggerClass(isSprintFilterOpen || sprintFilter !== "currentSprint")}
                 aria-expanded={isSprintFilterOpen}
                 aria-haspopup="listbox"
+                title="Choose which sprint's stories to show"
                 onClick={() => {
                   if (!isSprintFilterOpen) closeOtherFilterMenus("sprint");
                   setIsSprintFilterOpen((current) => !current);
@@ -1990,7 +2385,7 @@ export function TaskTable() {
               >
                 <span>Sprint</span>
                 <ToolbarMenuChevron open={isSprintFilterOpen} />
-                <span className="toolbar-strip-btn-value capitalize">{sprintFilterSummary}</span>
+                <span className="toolbar-strip-btn-value w-[3.25rem] capitalize">{sprintFilterSummary}</span>
               </button>
               {isSprintFilterOpen ? (
                 <div className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,15rem)]">
@@ -2006,6 +2401,13 @@ export function TaskTable() {
                           key={option}
                           type="button"
                           className={`toolbar-menu-item ${on ? "toolbar-menu-item-active" : ""}`}
+                          title={
+                            option === "currentSprint"
+                              ? "Show only stories in the current sprint"
+                              : option === "nextSprint"
+                                ? "Show only stories planned for the next sprint"
+                                : "Show stories from every sprint"
+                          }
                           onClick={() => {
                             setSprintFilter(option);
                             setIsSprintFilterOpen(false);
@@ -2029,6 +2431,7 @@ export function TaskTable() {
                 className={toolbarTriggerClass(isStatusFilterOpen || isStatusFilterCustom)}
                 aria-expanded={isStatusFilterOpen}
                 aria-haspopup="true"
+                title="Choose which statuses to show in the table"
                 onClick={() => {
                   if (!isStatusFilterOpen) closeOtherFilterMenus("status");
                   setIsStatusFilterOpen((current) => !current);
@@ -2036,7 +2439,7 @@ export function TaskTable() {
               >
                 <span>Status</span>
                 <ToolbarMenuChevron open={isStatusFilterOpen} />
-                <span className="toolbar-strip-btn-value tabular-nums">
+                <span className="toolbar-strip-btn-value min-w-10 tabular-nums">
                   {visibleStatuses.length}/{statusFilterOptions.length}
                 </span>
               </button>
@@ -2075,6 +2478,7 @@ export function TaskTable() {
                     <button
                       type="button"
                       className="toolbar-dropdown-footer-btn"
+                      title="Show stories in every status"
                       onClick={() => {
                         setVisibleStatuses([...statusFilterOptions]);
                         setIsStatusFilterOpen(false);
@@ -2085,6 +2489,7 @@ export function TaskTable() {
                     <button
                       type="button"
                       className="toolbar-dropdown-footer-btn"
+                      title="Go back to the default status selection"
                       onClick={() => {
                         setVisibleStatuses(defaultVisibleStatusOptions);
                         setIsStatusFilterOpen(false);
@@ -2095,6 +2500,7 @@ export function TaskTable() {
                     <button
                       type="button"
                       className="toolbar-dropdown-footer-btn"
+                      title="Untick every status"
                       onClick={() => {
                         setVisibleStatuses([]);
                         setIsStatusFilterOpen(false);
@@ -2111,6 +2517,7 @@ export function TaskTable() {
                 type="button"
                 className={toolbarTriggerClass(typeFilterOpen || isTypeFilterCustom)}
                 aria-expanded={typeFilterOpen}
+                title="Choose which Jira issue types to show"
                 onClick={() => {
                   if (!typeFilterOpen) closeOtherFilterMenus("type");
                   setTypeFilterOpen((value) => !value);
@@ -2118,7 +2525,7 @@ export function TaskTable() {
               >
                 <span>Type</span>
                 <ToolbarMenuChevron open={typeFilterOpen} />
-                <span className="toolbar-strip-btn-value tabular-nums">
+                <span className="toolbar-strip-btn-value min-w-10 tabular-nums">
                   {typeFilter.length}/{typeFilterOptions.length}
                 </span>
               </button>
@@ -2165,6 +2572,7 @@ export function TaskTable() {
                       <button
                         type="button"
                         className="toolbar-dropdown-footer-btn"
+                        title="Show every issue type"
                         onClick={() => {
                           setTypeFilter([...typeFilterOptions]);
                           setTypeFilterOpen(false);
@@ -2175,6 +2583,7 @@ export function TaskTable() {
                       <button
                         type="button"
                         className="toolbar-dropdown-footer-btn"
+                        title="Untick every issue type"
                         onClick={() => {
                           setTypeFilter([]);
                           setTypeFilterOpen(false);
@@ -2192,7 +2601,7 @@ export function TaskTable() {
                 className={toolbarTriggerClass(ownerFilterOpen || emFilter !== "all")}
                 aria-expanded={ownerFilterOpen}
                 aria-haspopup="true"
-                title={ownerFilterSummary ? `Owner: ${ownerFilterSummary}` : "Filter by EM, team, or PM"}
+                title={ownerFilterHint}
                 onClick={() => {
                   if (!ownerFilterOpen) closeOtherFilterMenus("owner");
                   setOwnerFilterOpen((value) => !value);
@@ -2200,53 +2609,113 @@ export function TaskTable() {
               >
                 <span>Owner</span>
                 <ToolbarMenuChevron open={ownerFilterOpen} />
-                {ownerFilterSummary ? (
-                  <span className="toolbar-strip-btn-value">{ownerFilterSummary}</span>
-                ) : null}
+                <span className="toolbar-strip-btn-value w-12">{ownerFilterSummary || "All"}</span>
               </button>
               {ownerFilterOpen ? (
                 <div
-                  className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,16rem)]"
+                  className="toolbar-dropdown-shell owner-filter-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,16rem)]"
                   aria-label="Filter by owner"
                 >
                   <ToolbarDropdownHeader title="Owner" subtitle="Who owns the work on this squad." />
                   <div className="space-y-1 px-2 py-2">
                     {(
                       [
-                        { value: "all" as const, label: "All", hint: "EM, team, and PM" },
-                        { value: "em" as const, label: "EM", hint: "Assigned to this squad’s EM" },
+                        { value: "all" as const, label: "All", hint: "EM, team, and PM", people: false },
+                        { value: "em" as const, label: "EM", hint: "Assigned to this squad’s EM", people: false },
                         {
                           value: "non-em" as const,
                           label: "Team",
-                          hint: "Engineers / QC — excludes EM and PM-owned",
+                          hint: "Engineers / QC — excludes EM and PM-owned. Pick people on the right.",
+                          people: true,
                         },
                         {
                           value: "pm" as const,
                           label: "PM",
-                          hint: "Assignee is a squad PM, or Story Product Manager is",
+                          hint: "Assignee is a squad PM, or Story Product Manager is. Pick PMs on the right.",
+                          people: true,
                         },
                       ] as const
                     ).map((option) => {
                       const on = emFilter === option.value;
                       return (
-                        <label
-                          key={option.value}
-                          className={`toolbar-menu-choice ${on ? "toolbar-menu-choice-on" : ""}`}
-                        >
-                          <input
-                            type="radio"
-                            name="story-owner-filter"
-                            className="mt-0.5"
-                            checked={on}
-                            onChange={() => setEmFilter(option.value)}
-                          />
-                          <span className="min-w-0">
-                            <span className="block font-semibold text-slate-900">{option.label}</span>
-                            <span className="mt-0.5 block text-[11px] font-normal leading-snug text-slate-500">
-                              {option.hint}
+                        <div key={option.value} className="relative">
+                          <label
+                            className={`toolbar-menu-choice ${on ? "toolbar-menu-choice-on" : ""}`}
+                            title={option.people ? `${option.label}: choose specific people in the panel that opens on the right` : undefined}
+                          >
+                            <input
+                              type="radio"
+                              name="story-owner-filter"
+                              className="mt-0.5"
+                              checked={on}
+                              onChange={() => changeOwnerFilter(option.value)}
+                            />
+                            <span className="min-w-0">
+                              <span className="block font-semibold text-slate-900">{option.label}</span>
+                              <span className="mt-0.5 block text-[11px] font-normal leading-snug text-slate-500">
+                                {option.hint}
+                              </span>
                             </span>
-                          </span>
-                        </label>
+                            {option.people ? (
+                              <span className="owner-choice-arrow" aria-hidden>
+                                ›
+                              </span>
+                            ) : null}
+                          </label>
+                          {option.people && on && ownerPeopleScope ? (
+                            <div
+                              className="toolbar-dropdown-shell owner-people-flyout"
+                              aria-label={`Pick ${ownerScopeLabel} people`}
+                            >
+                              <ToolbarDropdownHeader
+                                title={ownerPeopleScope === "pm" ? "Squad PMs" : "Team people"}
+                                subtitle="Shows what Jira assigns them: the task itself, a dev subtask (parent shown once), or QC Engineer — EM and PM stories included."
+                              />
+                              {ownerPeopleGroups.length === 0 ? (
+                                <p className="px-3 py-2.5 text-[12px] text-slate-500">
+                                  No {ownerPeopleScope === "pm" ? "PMs" : "engineers or QC"} on Resources yet.
+                                </p>
+                              ) : (
+                                <div className="owner-people-picker">
+                                  <label
+                                    className="owner-people-option owner-people-option-all"
+                                    title={`Show every ${ownerScopeLabel} story`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={pickedOwnerPeople.length === 0}
+                                      onChange={() => setOwnerPeople([])}
+                                    />
+                                    <span>All {ownerPeopleScope === "pm" ? "PMs" : "team"}</span>
+                                  </label>
+                                  <div className="owner-people-list">
+                                    {ownerPeopleGroups.map((group) => (
+                                      <div key={group.label}>
+                                        {ownerPeopleScope === "team" ? (
+                                          <div className="owner-people-group-label">{group.label}</div>
+                                        ) : null}
+                                        {group.names.map((name) => (
+                                          <label
+                                            key={name}
+                                            className="owner-people-option"
+                                            title={`Show what Jira assigns to ${name}: tasks assigned to them, stories with their FE / BE / Mobile subtask, or where they are QC Engineer`}
+                                          >
+                                            <input
+                                              type="checkbox"
+                                              checked={pickedOwnerPeople.includes(name)}
+                                              onChange={() => toggleOwnerPerson(name)}
+                                            />
+                                            <span className="truncate">{name}</span>
+                                          </label>
+                                        ))}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
                       );
                     })}
                   </div>
@@ -2254,8 +2723,9 @@ export function TaskTable() {
                     <button
                       type="button"
                       className="toolbar-dropdown-footer-btn"
+                      title="Show stories from every owner"
                       onClick={() => {
-                        setEmFilter("all");
+                        changeOwnerFilter("all");
                         setOwnerFilterOpen(false);
                       }}
                     >
@@ -2268,7 +2738,7 @@ export function TaskTable() {
             <div className="relative" ref={kindFilterRef}>
               <button
                 type="button"
-                className={toolbarTriggerClass(kindFilterOpen || kindFilter !== "all")}
+                className={toolbarTriggerClass(kindFilterOpen || Boolean(kindFilterSummary))}
                 aria-expanded={kindFilterOpen}
                 aria-haspopup="true"
                 title={kindFilterSummary ? `Kind: ${kindFilterSummary}` : "Filter stories vs standalone items"}
@@ -2279,9 +2749,7 @@ export function TaskTable() {
               >
                 <span>Kind</span>
                 <ToolbarMenuChevron open={kindFilterOpen} />
-                {kindFilterSummary ? (
-                  <span className="toolbar-strip-btn-value">{kindFilterSummary}</span>
-                ) : null}
+                <span className="toolbar-strip-btn-value w-[4.75rem]">{kindFilterSummary || "All"}</span>
               </button>
               {kindFilterOpen ? (
                 <div
@@ -2324,12 +2792,40 @@ export function TaskTable() {
                       );
                     })}
                   </div>
+                  <div className="border-t border-slate-100 px-2 py-2">
+                    <label
+                      className={`toolbar-menu-choice ${needsPushFilterActive ? "toolbar-menu-choice-on" : ""}${pendingJiraChangesById.size === 0 ? " opacity-60" : ""}`}
+                      title={
+                        pendingJiraChangesById.size === 0
+                          ? "Every linked story matches Jira — nothing to push"
+                          : "Show only stories edited in the planner since their last Jira sync (orange stripe)"
+                      }
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={needsPushFilterActive}
+                        disabled={pendingJiraChangesById.size === 0}
+                        onChange={(event) => setNeedsPushOnly(event.target.checked)}
+                      />
+                      <span className="min-w-0">
+                        <span className="block font-semibold text-slate-900">
+                          Unpushed changes only ({pendingJiraChangesById.size})
+                        </span>
+                        <span className="mt-0.5 block text-[11px] font-normal leading-snug text-slate-500">
+                          Stories with planner edits Jira does not have yet
+                        </span>
+                      </span>
+                    </label>
+                  </div>
                   <div className="toolbar-dropdown-footer">
                     <button
                       type="button"
                       className="toolbar-dropdown-footer-btn"
+                      title="Show stories and standalone items, and turn off Unpushed changes only"
                       onClick={() => {
                         setKindFilter("all");
+                        setNeedsPushOnly(false);
                         setKindFilterOpen(false);
                       }}
                     >
@@ -2339,6 +2835,18 @@ export function TaskTable() {
                 </div>
               ) : null}
             </div>
+            {needsPushCount > 0 ? (
+              <button
+                type="button"
+                className={toolbarTriggerClass(needsPushFilterActive, "toolbar-strip-btn-needs-push")}
+                aria-pressed={needsPushFilterActive}
+                title={needsPushToolbarHint}
+                onClick={() => setNeedsPushOnly((value) => !value)}
+              >
+                <span className="needs-push-dot" aria-hidden />
+                <span>Unpushed ({needsPushCount})</span>
+              </button>
+            ) : null}
           </div>
           <div className="task-table-toolbar-divider" aria-hidden />
           <div className="task-table-toolbar-actions">
@@ -2397,6 +2905,7 @@ export function TaskTable() {
                 className={toolbarTriggerClass(tasksMenuOpen)}
                 aria-expanded={tasksMenuOpen}
                 aria-haspopup="menu"
+                title="Add, import or bulk-insert tasks"
                 onClick={() => {
                   setIsSprintFilterOpen(false);
                   setIsStatusFilterOpen(false);
@@ -2425,6 +2934,7 @@ export function TaskTable() {
                         type="button"
                         role="menuitem"
                         className="toolbar-menu-item"
+                        title="Add one empty task row to the table"
                         onClick={handleAddTask}
                       >
                         Add singular task
@@ -2436,6 +2946,7 @@ export function TaskTable() {
                         role="menuitem"
                         className="toolbar-menu-item"
                         disabled={isImportingTasks}
+                        title="Import tasks from an Excel, CSV or text file"
                         onClick={() => {
                           setTasksMenuOpen(false);
                           importFileInputRef.current?.click();
@@ -2467,6 +2978,7 @@ export function TaskTable() {
                         type="button"
                         role="menuitem"
                         className="toolbar-menu-item"
+                        title="Type or paste several tasks at once"
                         onClick={() => {
                           setTasksMenuOpen(false);
                           setIsBulkAddOpen(true);
@@ -2475,32 +2987,31 @@ export function TaskTable() {
                         Bulk insertion
                       </button>
                     ) : null}
+                    {isEditor ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="toolbar-menu-item"
+                        disabled={orderedTasks.length === 0}
+                        title={
+                          visibleSelectedCount > 0
+                            ? `Edit status, people and hours (BE / FE / Mobile / QC / PM / buffer) for the ${visibleSelectedCount} ticked ${visibleSelectedCount === 1 ? "story" : "stories"} in a spreadsheet`
+                            : "Edit status, people and hours (BE / FE / Mobile / QC / PM / buffer) for every visible story in a spreadsheet"
+                        }
+                        onClick={() =>
+                          openBulkAssignees(
+                            (visibleSelectedCount > 0 ? selectedTasks : orderedTasks).map((task) => task.id),
+                            "manual",
+                          )
+                        }
+                      >
+                        Bulk edit details
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
             </div>
-            <button
-              type="button"
-              className={`task-table-toolbar-details-btn toolbar-est-btn ${
-                allVisibleDetailsExpanded ? "toolbar-est-btn-on" : ""
-              }`}
-              disabled={orderedTasks.length === 0}
-              aria-pressed={allVisibleDetailsExpanded}
-              title={
-                allVisibleDetailsExpanded
-                  ? "Collapse Backend–PM estimation columns for all visible stories"
-                  : "Expand Backend–PM estimation columns for all visible stories"
-              }
-              onClick={() => {
-                setTasksMenuOpen(false);
-                toggleDetailsForVisible();
-              }}
-            >
-              <span>{allVisibleDetailsExpanded ? "Hide Estimations" : "Show Estimations"}</span>
-              <span className="toolbar-est-btn-chevron" aria-hidden>
-                {allVisibleDetailsExpanded ? "▴" : "▾"}
-              </span>
-            </button>
           </div>
         </div>
       </div>
@@ -2521,6 +3032,7 @@ export function TaskTable() {
             type="button"
             className="task-action-feedback-dismiss"
             aria-label="Dismiss"
+            title="Dismiss this message"
             onClick={() => setActionFeedback(null)}
           >
             ×
@@ -2529,6 +3041,19 @@ export function TaskTable() {
       ) : null}
       <div ref={tableScrollRef} className="table-shell task-table-scroll">
         <table className="task-table-fit text-[13px]">
+          {detailsColumnsVisible ? (
+            <colgroup>
+              <col />
+              <col />
+              {DETAILS_ESTIMATE_COLUMNS.map((column) => (
+                <col key={column.key} style={{ width: `${column.widthPercent}%` }} />
+              ))}
+              <col />
+              <col />
+              <col />
+              <col />
+            </colgroup>
+          ) : null}
           <thead className="table-head">
               <tr>
               <th className="story-select-col text-center align-middle" title="Select stories, set PO schedule order (Ord), and release group (Grp)">
@@ -2642,7 +3167,7 @@ export function TaskTable() {
                                   visibleSelectedCount === 0
                                     ? "Select stories first"
                                     : selectedJiraPushEligibleCount === 0
-                                      ? "No selected stories with a Jira link and hours to push"
+                                      ? "No selected stories with a Jira link (Discoped stories never push)"
                                       : `Push ${selectedJiraPushEligibleCount} selected ${selectedJiraPushEligibleCount === 1 ? "story" : "stories"} to Jira`
                                 }
                                 onClick={bulkSyncToJira}
@@ -2725,6 +3250,7 @@ export function TaskTable() {
                                 role="menuitem"
                                 className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-orange-900 hover:bg-orange-50 disabled:opacity-45"
                                 disabled={visibleSelectedCount === 0}
+                                title={visibleSelectedCount === 0 ? "Select stories first" : "Add a tag to the selected stories"}
                                 onClick={addTagForSelected}
                               >
                                 <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
@@ -2735,8 +3261,26 @@ export function TaskTable() {
                               <button
                                 type="button"
                                 role="menuitem"
+                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-violet-900 hover:bg-violet-50 disabled:opacity-45"
+                                disabled={visibleSelectedCount === 0}
+                                title={
+                                  visibleSelectedCount === 0
+                                    ? "Select stories first"
+                                    : "Put the selected stories in one release group so they ship together (shared UAT / production dates)"
+                                }
+                                onClick={openGroupStoriesForSelected}
+                              >
+                                <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
+                                  ⧉
+                                </span>
+                                Group stories
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
                                 className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-indigo-900 hover:bg-indigo-50 disabled:opacity-45"
                                 disabled={visibleSelectedCount === 0}
+                                title={visibleSelectedCount === 0 ? "Select stories first" : "Add a todo item to the selected stories"}
                                 onClick={addTodoForSelected}
                               >
                                 <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
@@ -2744,12 +3288,54 @@ export function TaskTable() {
                                 </span>
                                 Add Todo
                               </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-blue-900 hover:bg-blue-50 disabled:opacity-45"
+                                disabled={visibleSelectedCount === 0}
+                                title={
+                                  visibleSelectedCount === 0
+                                    ? "Select stories first"
+                                    : "Edit status, people and hours (BE / FE / Mobile / QC / PM / buffer) for the selected stories in a spreadsheet"
+                                }
+                                onClick={() =>
+                                  runAfterBulkMenuClose(() =>
+                                    openBulkAssignees(
+                                      selectedTasks.map((task) => task.id),
+                                      "manual",
+                                    ),
+                                  )
+                                }
+                              >
+                                <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
+                                  ☷
+                                </span>
+                                Bulk edit details…
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-cyan-900 hover:bg-cyan-50 disabled:opacity-45"
+                                disabled={visibleSelectedCount === 0}
+                                title={
+                                  visibleSelectedCount === 0
+                                    ? "Select stories first"
+                                    : "Set one status on the selected stories (planner only — push to update Jira)"
+                                }
+                                onClick={openBulkStatusForSelected}
+                              >
+                                <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
+                                  ◉
+                                </span>
+                                Set status…
+                              </button>
                               {canManageSprintLifecycle ? (
                               <button
                                 type="button"
                                 role="menuitem"
                                 className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-violet-900 hover:bg-violet-50 disabled:opacity-45"
                                 disabled={visibleSelectedCount === 0}
+                                title={visibleSelectedCount === 0 ? "Select stories first" : "Set PM buffer hours for the selected stories"}
                                 onClick={setBufferHoursForSelected}
                               >
                                 <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
@@ -2763,6 +3349,13 @@ export function TaskTable() {
                                 role="menuitem"
                                 className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-orange-900 hover:bg-orange-50 disabled:opacity-45"
                                 disabled={visibleSelectedCount === 0}
+                                title={
+                                  visibleSelectedCount === 0
+                                    ? "Select stories first"
+                                    : selectedJiraUpdatesVisible
+                                      ? "Collapse the Jira updates panel for the selected stories"
+                                      : "Expand the Jira updates panel for the selected stories"
+                                }
                                 onClick={toggleJiraUpdatesForSelected}
                               >
                                 <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
@@ -2775,6 +3368,7 @@ export function TaskTable() {
                                 role="menuitem"
                                 className="flex w-full items-center gap-2 rounded-lg border-t border-slate-100 px-2.5 py-2 text-left text-[12px] font-semibold text-rose-800 hover:bg-rose-50 disabled:opacity-45"
                                 disabled={visibleSelectedCount === 0}
+                                title={visibleSelectedCount === 0 ? "Select stories first" : "Remove the selected stories from the planner"}
                                 onClick={removeSelectedTasks}
                               >
                                 <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
@@ -2794,23 +3388,35 @@ export function TaskTable() {
                 </th>
               <th className={`${detailsColumnsVisible ? "w-[16%]" : "w-[51%]"} text-center`}>Story</th>
               {detailsColumnsVisible ? (
-                <>
-                  <th className="w-[7%] text-center">Backend</th>
-                  <th className="w-[7%] text-center">Frontend</th>
-                  <th className="w-[15%] text-center">Mobile</th>
-                  <th className="w-[8%] text-center">Integration</th>
-                  <th className="w-[7%] text-center">QC</th>
-                  <th className="w-[8%] text-center leading-tight">
-                    <div className="flex flex-col items-center gap-0">
-                      <span>PM</span>
-                      <span className="text-[9px] font-normal normal-case text-slate-500">/ Buffer</span>
+                <th colSpan={DETAILS_ESTIMATE_COLUMNS.length} className="details-header-group text-center">
+                  <div className="header-toggle-cell header-toggle-cell-end">
+                    {detailsHeaderToggle}
+                    <div className="details-header-labels" style={{ gridTemplateColumns: DETAILS_ESTIMATE_GRID_TEMPLATE }}>
+                      <span>Backend</span>
+                      <span>Frontend</span>
+                      <span>Mobile</span>
+                      <span>Integration</span>
+                      <span>QC</span>
+                      <span>
+                        PM <span className="text-[9px] font-normal normal-case text-slate-500">/ Buff</span>
+                      </span>
                     </div>
-                  </th>
-                </>
+                  </div>
+                </th>
               ) : (
-                <th className="task-details-col w-[20%] text-center">Details</th>
+                <th className="task-details-col w-[20%] text-center">
+                  <div className="header-toggle-cell header-toggle-cell-end">
+                    {detailsHeaderToggle}
+                    <span>Details</span>
+                  </div>
+                </th>
               )}
-              <th className="status-col text-center">Status</th>
+              <th className="status-col text-center">
+                <div className="header-toggle-cell">
+                  {subtaskStatusesHeaderToggle}
+                  <span>Status</span>
+                </div>
+              </th>
               <th className="release-col text-center leading-tight">
                 <div className="flex flex-col items-center justify-center gap-0.5">
                   <span>Release Dates</span>
@@ -2837,10 +3443,11 @@ export function TaskTable() {
                     <button
                       type="button"
                       className="btn-secondary px-3 py-1.5 text-[13px]"
+                      title="Clear every filter so all stories show again"
                       onClick={() => {
                         setVisibleStatuses(defaultVisibleStatusOptions);
                         setSprintFilter("all");
-                        setEmFilter("all");
+                        changeOwnerFilter("all");
                         setTypeFilter([...typeFilterOptions]);
                         setKindFilter("all");
                       }}
@@ -2853,7 +3460,7 @@ export function TaskTable() {
             ) : null}
             {orderedTasks.map((task, taskIndex) => {
               const computed = taskResultMap.get(task.id);
-              const releaseHandoffLabel = releaseDateHandoffLabel(task.status);
+              const noReleaseLabel = noReleaseDateLabel(task.status);
               const productionReleaseDate = computed?.releaseDate
                 ? computed.productionReleaseDate ?? getProductionReleaseDateFrom(computed.releaseDate, config)
                 : null;
@@ -2864,217 +3471,26 @@ export function TaskTable() {
               const storyLabel = storyDisplayName(task);
               const todoLineCount = splitTodoLines(task.taskNotes).length;
               const needsMarkProgress = pendingMarkProgressIds.has(task.id);
+              const pendingJiraChanges = pendingJiraChangesById.get(task.id);
+              const needsPushHint = pendingJiraChanges
+                ? formatJiraPendingChangesHint(pendingJiraChanges, lastJiraSyncLabel(task), isEditor)
+                : "";
               const taskNumber = taskIndex + 1;
-              const detailsExpanded = expandedDetailsTaskIdSet.has(task.id);
               const detailsRows = buildTaskDetailsSummaryRows(task);
               const detailsChips = buildTaskDetailsSummaryChips(task);
-              return (
-                <tr
-                  key={task.id}
-                  data-task-id={task.id}
-                  className={`task-row border-t border-slate-200 ${statusRowClass(task.status)}${needsMarkProgress ? " task-row-pending-mark-progress" : ""}${focusTaskId === task.id ? " task-row-focus" : ""}`}
-                >
-                  <td className="story-select-col">
-                      <div className="story-select-cell-stack">
-                        <span
-                          className="story-select-task-tag"
-                          title={`Row ${taskNumber} of ${orderedTasks.length} in this view`}
-                          aria-label={`Row ${taskNumber}`}
-                        >
-                          <svg className="story-select-task-tag-svg" viewBox="0 0 32 32" aria-hidden>
-                            <defs>
-                              <linearGradient id={`fold-face-${task.id}`} x1="0" y1="0" x2="1" y2="1">
-                                <stop offset="0%" stopColor="#edf2f7" />
-                                <stop offset="55%" stopColor="#c5d0de" />
-                                <stop offset="100%" stopColor="#9aa8ba" />
-                              </linearGradient>
-                            </defs>
-                            <path
-                              className="story-select-task-tag-face"
-                              d="M0 0 H32 L0 32 Z"
-                              fill={`url(#fold-face-${task.id})`}
-                            />
-                          </svg>
-                          <span className="story-select-task-tag-num">{taskNumber}</span>
-                        </span>
-                        <label
-                          className={`story-select-check-wrap${isEditor ? "" : " pointer-events-none opacity-50"}`}
-                          title={isEditor ? `Select ${storyLabel}` : "View only"}
-                        >
-                          <input
-                            type="checkbox"
-                            className="story-select-checkbox"
-                            checked={isEditor && selectedTaskIdSet.has(task.id)}
-                            disabled={!isEditor}
-                            onChange={() => {
-                              if (!isEditor) return;
-                              toggleTaskSelected(task.id);
-                            }}
-                            aria-label={`Select ${storyLabel}`}
-                          />
-                        </label>
-                        <OrderInput
-                          value={task.poPriority}
-                          disabled={!isEditor}
-                          onChange={(value) => {
-                            if (!isEditor) return;
-                            updateTask(task.id, { poPriority: value });
-                          }}
-                        />
-                        <ReleaseGroupInput
-                          taskId={task.id}
-                          value={task.releaseGroup ?? null}
-                          storyLabel={storyLabel}
-                          colorMap={releaseGroupColorMap}
-                          help={RELEASE_GROUP_HELP}
-                          disabled={!isEditor}
-                          onCommit={(next) => {
-                            if (!isEditor) return;
-                            updateTask(task.id, { releaseGroup: next });
-                          }}
-                        />
-                      </div>
-                    </td>
-                  <td className="story-name-cell">
-                    <div className="story-cell-group min-w-0">
-                      <div className="story-name-row">
-                        <div className="story-title-wrap">
-                          {(() => {
-                            const href = storyHref(task.storyLink);
-                            return href ? (
-                            <StoryLinkWithPreview
-                              href={href}
-                              label={storyLabel}
-                              storyLink={task.storyLink}
-                              squadId={activeSquadId}
-                              className="story-title-link"
-                            />
-                            ) : (
-                            <span className="story-title-text" title={storyLabel}>
-                              {storyLabel}
-                            </span>
-                            );
-                          })()}
-                        </div>
-                      </div>
-                      <div className="story-fields-menu story-fields-menu-below">
-                          {task.issueType ? (
-                            <span
-                              className={`task-flag-chip task-story-type-chip ${issueTypeChipClass(task.issueType)}`}
-                              title={`Issue type: ${task.issueType}`}
-                            >
-                              <span className="task-flag-chip-label">{task.issueType}</span>
-                            </span>
-                          ) : null}
-                          {task.isEmStory ? (
-                            <span
-                              className="task-flag-chip task-story-type-chip task-flag-chip-type-em"
-                              title="Jira assignee matches this squad’s Engineering Manager (User Management email)"
-                            >
-                              <span className="task-flag-chip-label">EM</span>
-                            </span>
-                          ) : null}
-                          {isOwnerPmStory(task, squadPmNames, resources) ? (
-                            <span
-                              className="task-flag-chip task-story-type-chip task-flag-chip-type-pm"
-                              title="Jira assignee is a squad PM, or this Story lists that PM in Product Managers"
-                            >
-                              <span className="task-flag-chip-label">PM</span>
-                            </span>
-                          ) : null}
-                          {(task.tags ?? []).map((tag) =>
-                            isEditor ? (
-                              <span
-                                key={tag}
-                                className="task-flag-chip task-story-type-chip task-flag-chip-tag group inline-flex items-start gap-1"
-                                title={tag}
-                              >
-                                <span className="task-flag-chip-label">{formatTagLabel(tag)}</span>
-                                <button
-                                  type="button"
-                                  className="shrink-0 text-slate-500 opacity-0 transition group-hover:opacity-100 hover:text-rose-700 focus-visible:opacity-100 focus-visible:outline-none"
-                                  aria-label={`Remove tag ${tag}`}
-                                  onClick={() => {
-                                    setAssigneePickerOpen(null);
-                                    updateTask(task.id, {
-                                      tags: (task.tags ?? []).filter((item) => item !== tag),
-                                    });
-                                  }}
-                                >
-                                  ×
-                                </button>
-                              </span>
-                            ) : (
-                              <span
-                                key={tag}
-                                className="task-flag-chip task-story-type-chip task-flag-chip-tag"
-                                title={tag}
-                              >
-                                <span className="task-flag-chip-label">{formatTagLabel(tag)}</span>
-                              </span>
-                            ),
-                          )}
-                          {todoLineCount > 0 ? (
-                            <button
-                              type="button"
-                              className="task-flag-chip task-story-type-chip task-flag-chip-todo"
-                              onClick={() => {
-                                setAssigneePickerOpen(null);
-                                setTodoModalDraft(task.taskNotes ?? "");
-                                setTaskTodoModalId(task.id);
-                              }}
-                            >
-                              <span className="task-flag-chip-label">Todo ({todoLineCount})</span>
-                            </button>
-                          ) : null}
-                          <div className="story-est-edit-group">
-                            {isEditor ? (
-                              <button
-                                type="button"
-                                className={`story-fields-menu-btn${storyFieldsOpen?.taskId === task.id ? " story-fields-menu-btn-open" : ""}`}
-                                aria-expanded={storyFieldsOpen?.taskId === task.id}
-                                aria-haspopup="true"
-                                aria-label={`Edit name and link for ${storyLabel}`}
-                                title="Edit name & link"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  const trigger = event.currentTarget;
-                                  setIsBulkStoryMenuOpen(false);
-                                  setAssigneePickerOpen(null);
-                                  setStoryFieldsDraft({
-                                    storyName: task.storyName ?? "",
-                                    storyLink: task.storyLink ?? "",
-                                  });
-                                  setStoryFieldsOpen((open) =>
-                                    open?.taskId === task.id ? null : { taskId: task.id, trigger },
-                                  );
-                                }}
-                              >
-                                Edit link
-                                <span aria-hidden>{storyFieldsOpen?.taskId === task.id ? "▴" : "▾"}</span>
-                              </button>
-                            ) : null}
-                            <button
-                              type="button"
-                              className={`story-fields-menu-btn${detailsExpanded ? " story-est-btn-open" : ""}`}
-                              aria-expanded={detailsExpanded}
-                              title={
-                                detailsExpanded
-                                  ? "Collapse Backend–PM estimation columns for this story"
-                                  : "Expand Backend–PM estimation columns for this story"
-                              }
-                              onClick={() => toggleDetailsExpanded(task.id)}
-                            >
-                              {detailsExpanded ? "Hide Est." : "Show Est."}
-                              <span aria-hidden>{detailsExpanded ? "▴" : "▾"}</span>
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                  </td>
-                  {detailsExpanded ? (
-                  <>
-                  <td className="min-w-0">
+              const detailsExpanded = expandedDetailsTaskIdSet.has(task.id);
+              // Standalone issues (Bug/Task/…) have no role breakdown: always show their Dev/Testing chips.
+              const standaloneRow = isStandaloneIssueType(task.issueType);
+              const showEstimateColumns = !standaloneRow && detailsColumnsVisible;
+              const showEstimatePanel = !standaloneRow && !detailsColumnsVisible && detailsExpanded;
+              const subtaskCount = task.jira?.subtasks?.length ?? 0;
+              const rowSubtasksExpanded = expandedSubtaskTaskIdSet.has(task.id);
+              const subtaskStatusChips =
+                subtaskStatusesVisible || rowSubtasksExpanded ? buildSubtaskStatusChips(task) : [];
+              const rowSubtaskChipsClosable = !subtaskStatusesVisible && rowSubtasksExpanded;
+              const renderEstimateCells = (inline: boolean) => (
+                <>
+                  <EstimateCell inline={inline} className="details-group-cell details-group-start min-w-0">
                     <div className={`phase-be w-full min-w-0 ${phaseClass("BE")}`}>
                       <div className="phase-box-header">
                         <div className="phase-col-label">BE Devs</div>
@@ -3095,6 +3511,7 @@ export function TaskTable() {
                             className="assignee-picker-trigger"
                             aria-expanded={assigneePickerOpen?.taskId === task.id && assigneePickerOpen?.kind === "be"}
                             aria-haspopup="listbox"
+                            title={assigneePickerHint("backend developers", task.beDevs)}
                             onClick={(event) => toggleAssigneePicker(task.id, "be", event.currentTarget)}
                           >
                             <span className={`min-w-0 truncate ${task.beDevs.length === 0 ? "text-slate-500" : ""}`}>
@@ -3139,7 +3556,7 @@ export function TaskTable() {
                           <button
                             key={name}
                             type="button"
-                            className="assignee-selected-tag"
+                            className={assigneeTagClass(name)}
                             title={`${name} — planned hours`}
                             onClick={() => openAssigneeInsight(name, resources, setInsightResourceName)}
                           >
@@ -3148,8 +3565,8 @@ export function TaskTable() {
                         ))}
                       </div>
                     </div>
-                  </td>
-                  <td className="min-w-0">
+                  </EstimateCell>
+                  <EstimateCell inline={inline} className="details-group-cell min-w-0">
                     <div className={`phase-fe w-full min-w-0 ${phaseClass("FE")}`}>
                       <div className="phase-box-header">
                         <div className="phase-col-label">FE Devs</div>
@@ -3170,6 +3587,7 @@ export function TaskTable() {
                             className="assignee-picker-trigger"
                             aria-expanded={assigneePickerOpen?.taskId === task.id && assigneePickerOpen?.kind === "fe"}
                             aria-haspopup="listbox"
+                            title={assigneePickerHint("frontend developers", task.feDevs)}
                             onClick={(event) => toggleAssigneePicker(task.id, "fe", event.currentTarget)}
                           >
                             <span className={`min-w-0 truncate ${task.feDevs.length === 0 ? "text-slate-500" : ""}`}>
@@ -3214,7 +3632,7 @@ export function TaskTable() {
                           <button
                             key={name}
                             type="button"
-                            className="assignee-selected-tag"
+                            className={assigneeTagClass(name)}
                             title={`${name} — planned hours`}
                             onClick={() => openAssigneeInsight(name, resources, setInsightResourceName)}
                           >
@@ -3223,8 +3641,8 @@ export function TaskTable() {
                         ))}
                       </div>
                     </div>
-                  </td>
-                  <td className="min-w-0">
+                  </EstimateCell>
+                  <EstimateCell inline={inline} className="details-group-cell min-w-0">
                     <div className="mobile-phase-row">
                       <div
                         className={`mobile-phase-platforms${task.needsIos ? " mobile-phase-platforms-split" : ""}`}
@@ -3274,6 +3692,7 @@ export function TaskTable() {
                                     assigneePickerOpen?.taskId === task.id && assigneePickerOpen?.kind === "android"
                                   }
                                   aria-haspopup="listbox"
+                                  title={assigneePickerHint("Android developers", task.androidDevs)}
                                   onClick={(event) => toggleAssigneePicker(task.id, "android", event.currentTarget)}
                                 >
                                   <span
@@ -3327,6 +3746,7 @@ export function TaskTable() {
                                 mobileOptionsOpen?.taskId === task.id ? " mobile-options-toggle-on" : ""
                               }`}
                               aria-expanded={mobileOptionsOpen?.taskId === task.id}
+                              title="Mobile options: app, iOS need and mobile start date"
                               onClick={(event) => toggleMobileOptions(task.id, event.currentTarget)}
                             >
                               {mobileOptionsOpen?.taskId === task.id ? "Opts ▴" : "Opts ▾"}
@@ -3416,7 +3836,7 @@ export function TaskTable() {
                               <button
                                 key={name}
                                 type="button"
-                                className="assignee-selected-tag"
+                                className={assigneeTagClass(name)}
                                 title={`${name} — planned hours`}
                                 onClick={() => openAssigneeInsight(name, resources, setInsightResourceName)}
                               >
@@ -3448,6 +3868,7 @@ export function TaskTable() {
                                     assigneePickerOpen?.taskId === task.id && assigneePickerOpen?.kind === "ios"
                                   }
                                   aria-haspopup="listbox"
+                                  title={assigneePickerHint("iOS developers", task.iosDevs)}
                                   onClick={(event) => toggleAssigneePicker(task.id, "ios", event.currentTarget)}
                                 >
                                   <span
@@ -3500,7 +3921,7 @@ export function TaskTable() {
                                 <button
                                   key={name}
                                   type="button"
-                                  className="assignee-selected-tag"
+                                  className={assigneeTagClass(name)}
                                   title={`${name} — planned hours`}
                                   onClick={() => openAssigneeInsight(name, resources, setInsightResourceName)}
                                 >
@@ -3512,8 +3933,8 @@ export function TaskTable() {
                         ) : null}
                       </div>
                     </div>
-                  </td>
-                  <td className="min-w-0">
+                  </EstimateCell>
+                  <EstimateCell inline={inline} className="details-group-cell min-w-0">
                     <div className={`phase-int w-full min-w-0 ${phaseClass("Integration")}`}>
                       <div className="phase-box-header">
                         <div className="phase-col-label">Integration</div>
@@ -3547,6 +3968,7 @@ export function TaskTable() {
                                   assigneePickerOpen?.taskId === task.id && assigneePickerOpen?.kind === "int"
                                 }
                                 aria-haspopup="listbox"
+                                title="Choose integration needs (DevOps, CDC, DB sync, other squad, third party)"
                                 onClick={(event) => toggleAssigneePicker(task.id, "int", event.currentTarget)}
                               >
                                 <span className={`min-w-0 truncate ${intSelectedCount === 0 ? "text-slate-500" : ""}`}>
@@ -3655,8 +4077,8 @@ export function TaskTable() {
                         ) : null}
                       </div>
                     </div>
-                  </td>
-                  <td className="min-w-0">
+                  </EstimateCell>
+                  <EstimateCell inline={inline} className="details-group-cell min-w-0">
                     <div className={`phase-qc w-full min-w-0 ${phaseClass("QC")}`}>
                       <div className="phase-box-header">
                         <div className="phase-col-label">QC Eng</div>
@@ -3677,6 +4099,7 @@ export function TaskTable() {
                             className="assignee-picker-trigger"
                             aria-expanded={assigneePickerOpen?.taskId === task.id && assigneePickerOpen?.kind === "qc"}
                             aria-haspopup="listbox"
+                            title={assigneePickerHint("QC engineers", task.qcs)}
                             onClick={(event) => toggleAssigneePicker(task.id, "qc", event.currentTarget)}
                           >
                             <span className={`min-w-0 truncate ${task.qcs.length === 0 ? "text-slate-500" : ""}`}>
@@ -3721,7 +4144,7 @@ export function TaskTable() {
                           <button
                             key={name}
                             type="button"
-                            className="assignee-selected-tag"
+                            className={assigneeTagClass(name)}
                             title={`${name} — planned hours`}
                             onClick={() => openAssigneeInsight(name, resources, setInsightResourceName)}
                           >
@@ -3730,8 +4153,8 @@ export function TaskTable() {
                         ))}
                       </div>
                     </div>
-                  </td>
-                  <td className="min-w-0 align-top">
+                  </EstimateCell>
+                  <EstimateCell inline={inline} className="details-group-cell details-group-end min-w-0 align-top">
                     <div className="phase-pm-stack flex min-w-0 flex-col gap-1">
                       <div className="phase-pm w-full min-w-0">
                         <div className="phase-box-header">
@@ -3746,6 +4169,7 @@ export function TaskTable() {
                                 assigneePickerOpen?.taskId === task.id && assigneePickerOpen?.kind === "pm"
                               }
                               aria-haspopup="listbox"
+                              title={assigneePickerHint("product managers", task.productManagers)}
                               onClick={(event) => toggleAssigneePicker(task.id, "pm", event.currentTarget)}
                             >
                               <span
@@ -3810,7 +4234,7 @@ export function TaskTable() {
                             <button
                               key={name}
                               type="button"
-                              className="assignee-selected-tag"
+                              className={assigneeTagClass(name)}
                               title={name}
                               onClick={() => openAssigneeInsight(name, resources, setInsightResourceName)}
                             >
@@ -3820,7 +4244,7 @@ export function TaskTable() {
                         </div>
                       </div>
                       <div className="phase-pm-buffer-row">
-                        <span className="phase-pm-buffer-label">Buffer</span>
+                        <span className="phase-pm-buffer-label">Buff</span>
                         <NumberStepper
                           value={task.bufferHours ?? 0}
                           min={0}
@@ -3837,13 +4261,255 @@ export function TaskTable() {
                         />
                       </div>
                     </div>
+                  </EstimateCell>
+                </>
+              );
+              return (
+                <Fragment key={task.id}>
+                <tr
+                  data-task-id={task.id}
+                  className={`task-row border-t border-slate-200 ${statusRowClass(task.status)}${needsMarkProgress ? " task-row-pending-mark-progress" : ""}${pendingJiraChanges ? " task-row-needs-push" : ""}${focusTaskId === task.id ? " task-row-focus" : ""}`}
+                >
+                  <td className="story-select-col" title={needsPushHint || undefined}>
+                      <div className="story-select-cell-stack">
+                        <span
+                          className="story-select-task-tag"
+                          title={`Row ${taskNumber} of ${orderedTasks.length} in this view`}
+                          aria-label={`Row ${taskNumber}`}
+                        >
+                          <svg className="story-select-task-tag-svg" viewBox="0 0 32 32" aria-hidden>
+                            <defs>
+                              <linearGradient id={`fold-face-${task.id}`} x1="0" y1="0" x2="1" y2="1">
+                                <stop offset="0%" stopColor="#edf2f7" />
+                                <stop offset="55%" stopColor="#c5d0de" />
+                                <stop offset="100%" stopColor="#9aa8ba" />
+                              </linearGradient>
+                            </defs>
+                            <path
+                              className="story-select-task-tag-face"
+                              d="M0 0 H32 L0 32 Z"
+                              fill={`url(#fold-face-${task.id})`}
+                            />
+                          </svg>
+                          <span className="story-select-task-tag-num">{taskNumber}</span>
+                        </span>
+                        <label
+                          className={`story-select-check-wrap${isEditor ? "" : " pointer-events-none opacity-50"}`}
+                          title={isEditor ? `Select ${storyLabel}` : "View only"}
+                        >
+                          <input
+                            type="checkbox"
+                            className="story-select-checkbox"
+                            checked={isEditor && selectedTaskIdSet.has(task.id)}
+                            disabled={!isEditor}
+                            onChange={() => {
+                              if (!isEditor) return;
+                              toggleTaskSelected(task.id);
+                            }}
+                            aria-label={`Select ${storyLabel}`}
+                          />
+                        </label>
+                        <OrderInput
+                          value={task.poPriority}
+                          disabled={!isEditor}
+                          onChange={(value) => {
+                            if (!isEditor) return;
+                            updateTask(task.id, { poPriority: value });
+                          }}
+                        />
+                        <ReleaseGroupInput
+                          taskId={task.id}
+                          value={task.releaseGroup ?? null}
+                          storyLabel={storyLabel}
+                          colorMap={releaseGroupColorMap}
+                          help={RELEASE_GROUP_HELP}
+                          disabled={!isEditor}
+                          onCommit={(next) => {
+                            if (!isEditor) return;
+                            updateTask(task.id, { releaseGroup: next });
+                          }}
+                        />
+                      </div>
+                    </td>
+                  <td className="story-name-cell">
+                    <div className="story-cell-group min-w-0">
+                      <div className="story-name-row">
+                        <div className="story-title-wrap">
+                          {(() => {
+                            const href = storyHref(task.storyLink);
+                            return href ? (
+                            <StoryLinkWithPreview
+                              href={href}
+                              label={storyLabel}
+                              storyLink={task.storyLink}
+                              squadId={activeSquadId}
+                              className="story-title-link"
+                            />
+                            ) : (
+                            <span className="story-title-text" title={storyLabel}>
+                              {storyLabel}
+                            </span>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                      <div className="story-fields-menu story-fields-menu-below">
+                          {pendingJiraChanges ? (
+                            <button
+                              type="button"
+                              className="task-flag-chip task-story-type-chip task-flag-chip-needs-push"
+                              aria-disabled={!isEditor || jiraSyncInProgress}
+                              aria-label={`${storyLabel} needs push to Jira: ${pendingJiraChanges.length} changed fields`}
+                              title={needsPushHint}
+                              onClick={() => {
+                                if (!isEditor || jiraSyncInProgress) return;
+                                pushTasksToJira([task.id]);
+                              }}
+                            >
+                              <span className="needs-push-dot" aria-hidden />
+                              <span className="task-flag-chip-label">↑ Needs push · {pendingJiraChanges.length}</span>
+                            </button>
+                          ) : null}
+                          {pendingJiraChanges && isEditor ? (
+                            <button
+                              type="button"
+                              className="task-flag-chip task-story-type-chip task-flag-chip-revert-push"
+                              aria-disabled={jiraSyncInProgress}
+                              aria-label={`Undo planner edits on ${storyLabel} and put back the Jira values`}
+                              title={formatRevertToJiraHint(pendingJiraChanges)}
+                              onClick={() => revertTaskToJira(task, pendingJiraChanges)}
+                            >
+                              <span className="task-flag-chip-label">↺</span>
+                            </button>
+                          ) : null}
+                          {task.issueType ? (
+                            <span
+                              className={`task-flag-chip task-story-type-chip ${issueTypeChipClass(task.issueType)}`}
+                              title={`Issue type: ${task.issueType}${task.jiraAssigneeName ? `\nJira assignee: ${task.jiraAssigneeName}` : ""}`}
+                            >
+                              <span className="task-flag-chip-label">{task.issueType}</span>
+                            </span>
+                          ) : null}
+                          {task.jiraAssigneeName && isOwnerPeopleMatch(task.jiraAssigneeName, ownerPeopleMatchSet) ? (
+                            <span
+                              className="task-flag-chip task-story-type-chip task-flag-chip-jira-assignee"
+                              title={`Jira assignee of this ${task.issueType || "story"}: ${task.jiraAssigneeName}`}
+                            >
+                              <span className="task-flag-chip-label">Assignee · {task.jiraAssigneeName}</span>
+                            </span>
+                          ) : null}
+                          {task.isEmStory ? (
+                            <span
+                              className="task-flag-chip task-story-type-chip task-flag-chip-type-em"
+                              title="Jira assignee matches this squad’s Engineering Manager (User Management email)"
+                            >
+                              <span className="task-flag-chip-label">EM</span>
+                            </span>
+                          ) : null}
+                          {isOwnerPmStory(task, squadPmNames, resources) ? (
+                            <span
+                              className="task-flag-chip task-story-type-chip task-flag-chip-type-pm"
+                              title="Jira assignee is a squad PM, or this Story lists that PM in Product Managers"
+                            >
+                              <span className="task-flag-chip-label">PM</span>
+                            </span>
+                          ) : null}
+                          {(task.tags ?? []).filter((tag) => tag !== JIRA_NEEDS_PUSH_TAG).map((tag) =>
+                            isEditor ? (
+                              <span
+                                key={tag}
+                                className="task-flag-chip task-story-type-chip task-flag-chip-tag group inline-flex items-start gap-1"
+                                title={tag}
+                              >
+                                <span className="task-flag-chip-label">{formatTagLabel(tag)}</span>
+                                <button
+                                  type="button"
+                                  className="shrink-0 text-slate-500 opacity-0 transition group-hover:opacity-100 hover:text-rose-700 focus-visible:opacity-100 focus-visible:outline-none"
+                                  aria-label={`Remove tag ${tag}`}
+                                  title={`Remove the "${formatTagLabel(tag)}" tag`}
+                                  onClick={() => {
+                                    setAssigneePickerOpen(null);
+                                    updateTask(task.id, {
+                                      tags: (task.tags ?? []).filter((item) => item !== tag),
+                                    });
+                                  }}
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ) : (
+                              <span
+                                key={tag}
+                                className="task-flag-chip task-story-type-chip task-flag-chip-tag"
+                                title={tag}
+                              >
+                                <span className="task-flag-chip-label">{formatTagLabel(tag)}</span>
+                              </span>
+                            ),
+                          )}
+                          {todoLineCount > 0 ? (
+                            <button
+                              type="button"
+                              className="task-flag-chip task-story-type-chip task-flag-chip-todo"
+                              title="Open this story's todo list"
+                              onClick={() => {
+                                setAssigneePickerOpen(null);
+                                setTodoModalDraft(task.taskNotes ?? "");
+                                setTaskTodoModalId(task.id);
+                              }}
+                            >
+                              <span className="task-flag-chip-label">Todo ({todoLineCount})</span>
+                            </button>
+                          ) : null}
+                          {isEditor ? (
+                            <div className="story-est-edit-group">
+                              <button
+                                type="button"
+                                className={`story-fields-menu-btn${storyFieldsOpen?.taskId === task.id ? " story-fields-menu-btn-open" : ""}`}
+                                aria-expanded={storyFieldsOpen?.taskId === task.id}
+                                aria-haspopup="true"
+                                aria-label={`Edit name and link for ${storyLabel}`}
+                                title="Edit name & link"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  const trigger = event.currentTarget;
+                                  setIsBulkStoryMenuOpen(false);
+                                  setAssigneePickerOpen(null);
+                                  setStoryFieldsDraft({
+                                    storyName: task.storyName ?? "",
+                                    storyLink: task.storyLink ?? "",
+                                  });
+                                  setStoryFieldsOpen((open) =>
+                                    open?.taskId === task.id ? null : { taskId: task.id, trigger },
+                                  );
+                                }}
+                              >
+                                Edit link
+                                <span aria-hidden>{storyFieldsOpen?.taskId === task.id ? "▴" : "▾"}</span>
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
                   </td>
-                  </>
+                  {showEstimateColumns ? (
+                  renderEstimateCells(false)
                   ) : (
                   <td
-                    className="task-details-col align-top"
-                    colSpan={detailsColumnsVisible ? 6 : 1}
+                    className={`task-details-col align-top${
+                      detailsColumnsVisible
+                        ? " details-group-cell details-group-start details-group-end"
+                        : " details-corner-host"
+                    }`}
+                    colSpan={detailsColumnsVisible ? DETAILS_ESTIMATE_COLUMNS.length : 1}
                   >
+                    {standaloneRow ? null : (
+                      <DetailsCornerToggle
+                        expanded={detailsExpanded}
+                        storyLabel={storyLabel}
+                        onToggle={() => toggleDetailsExpanded(task.id)}
+                      />
+                    )}
                     <div className="task-details-cell">
                       <div className="task-details-summary">
                         <div
@@ -3943,14 +4609,67 @@ export function TaskTable() {
                         )}
                       </div>
                     </div>
+                    {!subtaskStatusesVisible && subtaskCount > 0 && !rowSubtasksExpanded ? (
+                      <button
+                        type="button"
+                        className="subtask-row-toggle"
+                        aria-expanded={false}
+                        aria-label={`Show Jira subtask statuses for ${storyLabel}`}
+                        title="Show subtask statuses for this story"
+                        onClick={() => toggleSubtaskStatusesExpanded(task.id)}
+                      >
+                        <span>{`${subtaskCount} ${subtaskCount === 1 ? "subtask" : "subtasks"}`}</span>
+                        <span className="subtask-row-toggle-chevron" aria-hidden>
+                          ▾
+                        </span>
+                      </button>
+                    ) : null}
+                    {subtaskStatusChips.length > 0 ? (
+                      <div
+                        className={`subtask-status-chips${rowSubtaskChipsClosable ? " subtask-status-chips-closable" : ""}`}
+                        aria-label="Jira subtask statuses"
+                      >
+                        {rowSubtaskChipsClosable ? (
+                          <button
+                            type="button"
+                            className="subtask-chips-close"
+                            aria-label={`Hide Jira subtask statuses for ${storyLabel}`}
+                            title="Hide subtask statuses for this story"
+                            onClick={() => toggleSubtaskStatusesExpanded(task.id)}
+                          >
+                            ×
+                          </button>
+                        ) : null}
+                        {subtaskStatusChips.map((chip) => {
+                          const href = buildJiraIssueBrowseUrl(task.storyLink, chip.key);
+                          const chipClass = `subtask-status-chip ${chip.status ? statusChipClass(chip.status) : "status-chip-default"}`;
+                          return href ? (
+                            <a
+                              key={chip.key}
+                              href={href}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className={chipClass}
+                              title={chip.title}
+                            >
+                              {chip.label}
+                            </a>
+                          ) : (
+                            <span key={chip.key} className={chipClass} title={chip.title}>
+                              {chip.label}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    ) : null}
                   </td>
                   <td className="release-col align-top text-center text-[13px] font-bold text-slate-900">
                     <div className="release-date-stack">
                       <div className="release-date-card">
                         <div className="release-date-label">UAT</div>
-                        {releaseHandoffLabel ? (
-                          <span className="release-date-empty" title={releaseHandoffLabel}>
-                            {releaseHandoffLabel}
+                        {noReleaseLabel ? (
+                          <span className="release-date-empty" title={noReleaseLabel}>
+                            {noReleaseLabel}
                           </span>
                         ) : computed?.releaseDate ? (
                           <div className="release-date-value">
@@ -3968,12 +4687,12 @@ export function TaskTable() {
                       </div>
                       <div className="release-date-card release-date-card-production">
                         <div className="release-date-label release-date-label-production">Production</div>
-                        {releaseHandoffLabel ? (
+                        {noReleaseLabel ? (
                           <span
                             className="release-date-empty release-date-line-production"
-                            title={releaseHandoffLabel}
+                            title={noReleaseLabel}
                           >
-                            {releaseHandoffLabel}
+                            {noReleaseLabel}
                           </span>
                         ) : productionReleaseDate ? (
                           <div className="release-date-value">
@@ -4003,8 +4722,12 @@ export function TaskTable() {
                       ) : null}
                       {needsMarkProgress ? (
                         <span
-                          className="task-flag-chip task-flag-chip-pending-sync"
-                          title="Hours or schedule edited since last Mark Progress Now — click Mark Progress Now to refresh Cur dates."
+                          className="task-flag-chip task-flag-chip-need-remark"
+                          title={
+                            "Need remark — hours or schedule changed since the last Mark Progress Now, so this story's Cur UAT / Production dates are out of date (violet stripe).\n" +
+                            "Fix: click Mark Progress Now in the toolbar.\n" +
+                            "This is about planner dates only — it is not related to Jira (Jira changes show as the orange \"Needs push\" badge)."
+                          }
                         >
                           <span className="task-flag-chip-label">Need remark</span>
                         </span>
@@ -4044,6 +4767,7 @@ export function TaskTable() {
                       <button
                         type="button"
                         className="row-action-btn row-action-primary w-full"
+                        title="Open this story's day-by-day timeline"
                         onClick={() => setSelectedTimelineTaskId(task.id)}
                       >
                         📅 Timeline
@@ -4056,35 +4780,17 @@ export function TaskTable() {
                               expandedJiraTaskIdSet.has(task.id) ? "row-action-emerald-on" : "row-action-emerald"
                             }`}
                             aria-expanded={expandedJiraTaskIdSet.has(task.id)}
+                            title={
+                              expandedJiraTaskIdSet.has(task.id)
+                                ? "Collapse the Jira updates panel"
+                                : "Show when this story was last pushed to and pulled from Jira"
+                            }
                             onClick={() => toggleJiraExpanded(task.id)}
                           >
                             {expandedJiraTaskIdSet.has(task.id) ? "Hide Jira ▴" : "Jira updates ▾"}
                           </button>
                           {expandedJiraTaskIdSet.has(task.id) ? (
                             <div className="tools-jira-dropdown" role="region" aria-label="Jira updates">
-                              {task.jira?.parentIssueKey ? (
-                                <div className="font-semibold text-slate-800">
-                                  Parent{" "}
-                                  {(() => {
-                                    const href = buildJiraIssueBrowseUrl(
-                                      task.storyLink,
-                                      task.jira.parentIssueKey,
-                                    );
-                                    return href ? (
-                                  <a
-                                    href={href}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-blue-700 underline"
-                                  >
-                                    {task.jira.parentIssueKey}
-                                  </a>
-                                    ) : (
-                                      <span>{task.jira.parentIssueKey}</span>
-                                    );
-                                  })()}
-                                </div>
-                              ) : null}
                               <div>
                                 Last push:{" "}
                                 {task.jira?.lastPushedAt
@@ -4097,58 +4803,26 @@ export function TaskTable() {
                                   ? format(new Date(task.jira.lastPulledAt), "dd MMM HH:mm")
                                   : "—"}
                               </div>
-                              {(task.jira?.subtasks ?? []).length > 0 ? (
-                                <div className="mt-0.5 space-y-0.5 border-t border-emerald-100/80 pt-0.5">
-                                  {task.jira!.subtasks.map((subtask) => {
-                                    const href = buildJiraIssueBrowseUrl(task.storyLink, subtask.key);
-                                    const roleLabel = subtask.role.toUpperCase();
-                                    const detailLabel = `${roleLabel} ${subtask.assigneeName || "—"} · ${subtask.hours}h`;
-                                    const fullTitle = `${subtask.key} · ${detailLabel}`;
-                                    return href ? (
-                                      <a
-                                        key={subtask.key}
-                                        href={href}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="block truncate text-blue-700 underline"
-                                        title={fullTitle}
-                                      >
-                                        {detailLabel}
-                                      </a>
-                                    ) : (
-                                      <div
-                                        key={subtask.key}
-                                        className="block truncate text-slate-700"
-                                        title={fullTitle}
-                                      >
-                                        {detailLabel}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              ) : task.feHours > 0 || task.qcHours > 0 ? (
-                                <div className="mt-0.5 space-y-0.5 border-t border-emerald-100/80 pt-0.5 text-slate-700">
-                                  {task.feHours > 0 ? (
-                                    <div className="truncate" title={`Dev · ${task.feHours}h`}>
-                                      Dev · {task.feHours}h
-                                    </div>
-                                  ) : null}
-                                  {task.qcHours > 0 ? (
-                                    <div className="truncate" title={`Testing · ${task.qcHours}h`}>
-                                      Testing · {task.qcHours}h
-                                    </div>
-                                  ) : null}
-                                </div>
-                              ) : (
-                                <div className="text-slate-500">No synced subtasks yet</div>
-                              )}
                             </div>
                           ) : null}
                         </div>
                       ) : null}
                     </div>
                   </td>
-                </tr>
+                  </tr>
+                {showEstimatePanel ? (
+                  <tr className={`task-details-panel-row ${statusRowClass(task.status)}`}>
+                    <td colSpan={tableColSpan}>
+                      <div
+                        className="task-details-panel"
+                        style={{ width: `${DETAILS_ESTIMATE_TOTAL_PERCENT}%`, gridTemplateColumns: DETAILS_ESTIMATE_GRID_TEMPLATE }}
+                      >
+                        {renderEstimateCells(true)}
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               );
             })}
           </tbody>
@@ -4191,14 +4865,14 @@ export function TaskTable() {
                   Status: {selectedTimelineTask.status}
                   {" · "}
                   UAT release:{" "}
-                  {selectedTimelineHandoffLabel ??
+                  {selectedTimelineNoReleaseLabel ??
                     (selectedTimelineComputed.releaseDate
                       ? fmt(selectedTimelineComputed.releaseDate)
                       : "Pending schedule")}
-                  {selectedTimelineHandoffLabel ? (
+                  {selectedTimelineNoReleaseLabel ? (
                     <>
                       {" · "}
-                      Production: {selectedTimelineHandoffLabel}
+                      Production: {selectedTimelineNoReleaseLabel}
                     </>
                   ) : selectedTimelineComputed.productionReleaseDate ? (
                     <>
@@ -4220,8 +4894,8 @@ export function TaskTable() {
                   </p>
                 ) : null}
                 {pendingMarkProgressIds.has(selectedTimelineTask.id) ? (
-                  <p className="mt-1 text-[12px] font-medium text-amber-800">
-                    This story needs Mark Progress Now to refresh Cur dates after hours/schedule edits.
+                  <p className="mt-1 text-[12px] font-medium text-violet-800">
+                    Need remark: this story needs Mark Progress Now to refresh Cur dates after hours/schedule edits.
                   </p>
                 ) : null}
                 {isEditor ? (
@@ -4252,7 +4926,11 @@ export function TaskTable() {
                       )?.hint}
                 </p>
               </div>
-              <button className="btn-secondary px-2 py-1 text-[13px]" onClick={() => setSelectedTimelineTaskId(null)}>
+              <button
+                className="btn-secondary px-2 py-1 text-[13px]"
+                title="Close the timeline"
+                onClick={() => setSelectedTimelineTaskId(null)}
+              >
                 Close
               </button>
             </div>
@@ -4326,6 +5004,7 @@ export function TaskTable() {
                     type="button"
                     className="shrink-0 text-slate-600 hover:text-red-700"
                     aria-label={`Remove ${tag}`}
+                    title={`Remove the "${tag}" tag`}
                     onClick={() =>
                       updateTask(tagModalTask.id, {
                         tags: (tagModalTask.tags ?? []).filter((item) => item !== tag),
@@ -4359,6 +5038,7 @@ export function TaskTable() {
               <button
                 type="button"
                 className="btn-primary shrink-0 px-3 py-2 text-sm"
+                title="Add the typed tag to this story"
                 onClick={() => {
                   const next = tagInputDraft.trim();
                   if (!next) return;
@@ -4375,6 +5055,7 @@ export function TaskTable() {
               <button
                 type="button"
                 className="btn-secondary px-3 py-1.5 text-sm"
+                title="Close the tags window"
                 onClick={() => {
                   setTaskTagModalId(null);
                   setTagInputDraft("");
@@ -4428,13 +5109,19 @@ export function TaskTable() {
               </label>
             ) : null}
             <div className="mt-4 flex justify-end gap-2">
-              <button type="button" className="btn-secondary px-3 py-1.5 text-sm" onClick={() => setTaskTodoModalId(null)}>
+              <button
+                type="button"
+                className="btn-secondary px-3 py-1.5 text-sm"
+                title={isEditor ? "Close without saving todo changes" : "Close the todo list"}
+                onClick={() => setTaskTodoModalId(null)}
+              >
                 {isEditor ? "Cancel" : "Close"}
               </button>
               {isEditor ? (
                 <button
                   type="button"
                   className="btn-primary px-3 py-1.5 text-sm"
+                  title="Save the todo list"
                   onClick={() => {
                     updateTask(todoModalTask.id, { taskNotes: todoModalDraft });
                     setTaskTodoModalId(null);
@@ -4473,12 +5160,18 @@ export function TaskTable() {
               })()}
             </p>
             <div className="mt-4 flex justify-end gap-2">
-              <button type="button" className="btn-secondary px-3 py-1.5 text-sm" onClick={() => setTaskPendingDelete(null)}>
+              <button
+                type="button"
+                className="btn-secondary px-3 py-1.5 text-sm"
+                title="Keep the task"
+                onClick={() => setTaskPendingDelete(null)}
+              >
                 Cancel
               </button>
               <button
                 type="button"
                 className="btn-danger px-3 py-1.5 text-sm"
+                title="Remove this task from the planner (cannot be undone)"
                 onClick={() => {
                   const id = taskPendingDelete;
                   removeTask(id);
@@ -4511,6 +5204,59 @@ export function TaskTable() {
             if (newIds.length > 0) {
               setFocusTaskId(newIds[newIds.length - 1] ?? null);
             }
+            openBulkAssigneesForNewTasks(newIds, "added");
+          }}
+        />
+      ) : null}
+      {groupStoriesTasks.length > 0 ? (
+        <GroupStoriesModal
+          storyCount={groupStoriesTasks.length}
+          currentGroups={groupStoriesCurrentGroups}
+          existingGroups={boardReleaseGroups}
+          colorMap={releaseGroupColorMap}
+          onClose={() => setGroupStoriesIds(null)}
+          onSave={(group) => {
+            const ids = groupStoriesTasks.map((task) => task.id);
+            updateTasks(ids, { releaseGroup: group });
+            setGroupStoriesIds(null);
+            const storyText = ids.length === 1 ? "1 story" : `${ids.length} stories`;
+            setActionFeedback(group ? `Grouped ${storyText} in "${group}".` : `Removed ${storyText} from their group.`);
+          }}
+        />
+      ) : null}
+      {bulkStatusTasks.length > 0 ? (
+        <BulkStatusModal
+          storyCount={bulkStatusTasks.length}
+          currentStatuses={bulkStatusCurrent}
+          statuses={taskStatuses}
+          jiraLinkedCount={bulkStatusTasks.filter((task) => isTaskEligibleForJiraSync(task)).length}
+          onClose={() => setBulkStatusIds(null)}
+          onSave={(status) => {
+            const changedIds = bulkStatusTasks.filter((task) => task.status !== status).map((task) => task.id);
+            updateTasks(changedIds, { status });
+            setBulkStatusIds(null);
+            setActionFeedback(
+              changedIds.length === 0
+                ? `All selected stories are already "${status}".`
+                : `Set "${status}" on ${changedIds.length} ${changedIds.length === 1 ? "story" : "stories"}.`,
+            );
+          }}
+        />
+      ) : null}
+      {bulkAssignees && bulkAssigneesTasks.length > 0 ? (
+        <BulkAssigneesModal
+          key={bulkAssignees.openedAt}
+          tasks={bulkAssigneesTasks}
+          resources={resources}
+          reason={bulkAssignees.reason}
+          canEditBuffer={canManageSprintLifecycle}
+          onClose={() => setBulkAssignees(null)}
+          onSave={(patches) => {
+            applyTaskPatches(patches);
+            setBulkAssignees(null);
+            setActionFeedback(
+              `Updated ${patches.length} ${patches.length === 1 ? "story" : "stories"}.`,
+            );
           }}
         />
       ) : null}
@@ -4567,11 +5313,12 @@ export function TaskTable() {
                   <button
                     type="button"
                     className="rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+                    title="Close without changing the story name or link"
                     onClick={() => setStoryFieldsOpen(null)}
                   >
                     Cancel
                   </button>
-                  <button type="submit" className="btn-primary px-2.5 py-1 text-[11px]">
+                  <button type="submit" className="btn-primary px-2.5 py-1 text-[11px]" title="Save the story name and link">
                     Save
                   </button>
                 </div>

@@ -19,6 +19,7 @@ import {
   hoursFromJiraTimetracking,
 } from "./hours";
 import { isJiraStoryLink, parseJiraIssueKey } from "./issueKey";
+import { buildJiraSyncedFields } from "./syncedFields";
 import type { JiraSubtaskRole, JiraTaskSubtaskRef, SquadJiraConfig, TaskJiraMeta } from "./types";
 import {
   JIRA_BULK_PULL_SKIP_REASON,
@@ -289,7 +290,14 @@ export const syncTaskFromJira = async (
     patch.issueType = issueTypeName;
   }
 
-  const assigneeAccountId = (parentFields.assignee as { accountId?: string } | null | undefined)?.accountId?.trim();
+  const parentAssignee = extractJiraUserField(parentFields.assignee);
+  // Roster name when mapped so the people filter matches; Jira's display name otherwise, null when unassigned.
+  patch.jiraAssigneeName = parentAssignee
+    ? (resolvePlannerNameFromJiraUser(parentAssignee, squadConfig.assigneeMap, people)?.name ??
+      parentAssignee.displayName ??
+      null)
+    : null;
+  const assigneeAccountId = parentAssignee?.accountId;
   // Only update ownership flags when identity is resolved — empty ids would wrongly clear them.
   if (emAccountId?.trim()) {
     patch.isEmStory = resolveIsEmStory(emAccountId, assigneeAccountId, null);
@@ -303,16 +311,22 @@ export const syncTaskFromJira = async (
     patch.qcHours = qcHours;
   }
 
+  // Names Jira holds (planner name, or Jira label when off-roster) for the Needs push baseline.
+  let jiraQcName = "";
+  let jiraPmName = "";
+
   const qcUser = extractJiraUserField(parentFields[fieldIds.qcEngineer.trim()]);
   if (qcUser) {
     const resolved = resolvePlannerNameFromJiraUser(qcUser, squadConfig.assigneeMap, people);
     if (resolved) {
       patch.qcs = [resolved.name];
+      jiraQcName = resolved.name;
       if (resolved.warning) {
         warnings.push(resolved.warning);
       }
     } else {
       const label = qcUser.displayName?.trim() || qcUser.accountId?.trim() || "unknown";
+      jiraQcName = label;
       warnings.push(
         `QC Engineer "${label}" from Jira is not on the Resources roster (or assignee map) — QC assignee was not updated`,
       );
@@ -324,11 +338,13 @@ export const syncTaskFromJira = async (
     const resolved = resolvePlannerNameFromJiraUser(pmUser, squadConfig.assigneeMap, people);
     if (resolved) {
       patch.productManagers = [resolved.name];
+      jiraPmName = resolved.name;
       if (resolved.warning) {
         warnings.push(resolved.warning);
       }
     } else {
       const label = pmUser.displayName?.trim() || pmUser.accountId?.trim() || "unknown";
+      jiraPmName = label;
       warnings.push(
         `Product Manager "${label}" from Jira is not on the Resources roster (or assignee map) — PM assignee was not updated`,
       );
@@ -339,12 +355,14 @@ export const syncTaskFromJira = async (
     typeof parentFields[fieldIds.productManager.trim()] === "string"
   ) {
     const pmText = (parentFields[fieldIds.productManager.trim()] as string).trim();
+    jiraPmName = pmText;
     if (pmText) {
       const matched = people.find(
         (person) => person.name.trim().toLowerCase() === pmText.toLowerCase(),
       );
       if (matched) {
         patch.productManagers = [matched.name];
+        jiraPmName = matched.name;
       } else {
         warnings.push(
           `Product Manager "${pmText}" from Jira is not on the Resources roster — PM assignee was not updated`,
@@ -372,6 +390,7 @@ export const syncTaskFromJira = async (
 
   const developmentEstimateFieldId = fieldIds.developmentEstimateHours;
   const roleKeys = matchAllRoleSubtasksFromSummaries(children);
+  const childStatusByKey = new Map(children.map((child) => [child.key, child.status]));
 
   const readRole = async (
     role: JiraSubtaskRole,
@@ -395,11 +414,13 @@ export const syncTaskFromJira = async (
           `${role.toUpperCase()} subtask ${key}: Jira assignee "${label}" is not on the Resources roster (or assignee map)`,
         );
       }
+      const status = childStatusByKey.get(key);
       return {
         key,
         role,
         assigneeName: resolved?.name ?? "",
         hours: details.hours,
+        ...(status ? { status } : {}),
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : `Failed to load Jira subtask ${key}`;
@@ -536,11 +557,29 @@ export const syncTaskFromJira = async (
   }
 
   const subtasks = [...feRefs, ...beRefs, ...androidRefs, ...iosRefs];
+  // Baseline = what Jira holds: roles / fields the pull did not fill are empty in Jira, and the status is
+  // Jira's own parent status, so planner-only values and child-driven moves still show "Needs push".
+  const jiraHeldTask: Task = {
+    ...task,
+    ...patch,
+    feHours: patch.feHours ?? 0,
+    beHours: patch.beHours ?? 0,
+    androidHours: patch.androidHours ?? 0,
+    iosHours: patch.iosHours ?? 0,
+    feDevs: patch.feDevs ?? [],
+    beDevs: patch.beDevs ?? [],
+    androidDevs: patch.androidDevs ?? [],
+    iosDevs: patch.iosDevs ?? [],
+    qcHours: patch.qcHours ?? 0,
+    qcs: jiraQcName ? [jiraQcName] : [],
+    productManagers: jiraPmName ? [jiraPmName] : [],
+  };
   const jira: TaskJiraMeta = {
     parentIssueKey,
     lastPushedAt: task.jira?.lastPushedAt ?? null,
     lastPulledAt: new Date().toISOString(),
     subtasks,
+    syncedFields: buildJiraSyncedFields(jiraHeldTask, status ?? jiraHeldTask.status),
   };
   patch.jira = jira;
 

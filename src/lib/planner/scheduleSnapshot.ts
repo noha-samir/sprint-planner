@@ -1,5 +1,5 @@
 import { clampReleaseDatesToWorkEnd, clearHandoffReleaseDates } from "@/lib/scheduler/releaseGroups";
-import { isReleaseDateHandoffStatus } from "@/lib/scheduler/taskStatus";
+import { hasNoComputedReleaseDates } from "@/lib/scheduler/taskStatus";
 import type { Config, ScheduleResult, ScheduledBlock, ScheduledTask } from "@/lib/scheduler/types";
 
 export type CurScheduleSnapshot = {
@@ -171,7 +171,7 @@ export const mergeFrozenScheduleWithFresh = (
   const merged: ScheduledTask[] = [];
 
   const finalize = (task: ScheduledTask): ScheduledTask => {
-    if (isReleaseDateHandoffStatus(task.status)) {
+    if (hasNoComputedReleaseDates(task.status)) {
       return clearHandoffReleaseDates(task);
     }
     return config ? clampReleaseDatesToWorkEnd(task, config) : task;

@@ -1,8 +1,30 @@
 import { describe, expect, it } from "vitest";
 import {
   jiraDescriptionToPlainText,
+  jiraStatusFromField,
   truncateDescriptionPreview,
 } from "./issuePreview";
+
+describe("jiraStatusFromField", () => {
+  it("reads the status name and its colour category", () => {
+    expect(jiraStatusFromField({ name: " Testing ", statusCategory: { key: "indeterminate" } })).toEqual({
+      status: "Testing",
+      statusCategory: "indeterminate",
+    });
+    expect(jiraStatusFromField({ name: "Production", statusCategory: { key: "done" } })).toEqual({
+      status: "Production",
+      statusCategory: "done",
+    });
+  });
+
+  it("returns empty values for a missing status or an unknown category", () => {
+    expect(jiraStatusFromField(undefined)).toEqual({ status: "", statusCategory: "" });
+    expect(jiraStatusFromField({ name: "Custom", statusCategory: { key: "odd" } })).toEqual({
+      status: "Custom",
+      statusCategory: "",
+    });
+  });
+});
 
 describe("jiraDescriptionToPlainText", () => {
   it("walks ADF docs into plain text with paragraph breaks", () => {
