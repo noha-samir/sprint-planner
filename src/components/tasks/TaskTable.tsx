@@ -66,6 +66,8 @@ import {
   peopleFromResources,
   resourceDisplayName,
   isBlockedEngineeringAssignee,
+  formatSubtaskAssigneesOutsideRole,
+  subtaskAssigneesOutsideRole,
 } from "@/lib/planner/resourceIdentity";
 import { schedule } from "@/lib/scheduler/engine";
 import {
@@ -2264,10 +2266,15 @@ export function TaskTable() {
   const revertTaskToJira = (task: Task, changes: JiraPendingChange[]) => {
     if (jiraSyncInProgress) return;
     const storyLabel = task.storyName.trim() || task.storyLink.trim() || "this story";
-    if (!window.confirm(`${storyLabel}\n\n${formatRevertToJiraHint(changes)}`)) return;
+    const skippedLines = formatSubtaskAssigneesOutsideRole(subtaskAssigneesOutsideRole(task, resources));
+    const skippedNote = skippedLines.length > 0 ? `\n\n⚠ Not put back:\n${skippedLines.map((line) => `• ${line}`).join("\n")}` : "";
+    if (!window.confirm(`${storyLabel}\n\n${formatRevertToJiraHint(changes)}${skippedNote}`)) return;
     updateTask(task.id, buildRevertToJiraPatch(task));
     setActionFeedback(
-      `Reverted ${changes.length} ${changes.length === 1 ? "field" : "fields"} on "${storyLabel}" to the Jira values.`,
+      [
+        `Reverted ${changes.length} ${changes.length === 1 ? "field" : "fields"} on "${storyLabel}" to the Jira values.`,
+        ...skippedLines.map((line) => `⚠ ${line}.`),
+      ].join(" "),
     );
   };
 

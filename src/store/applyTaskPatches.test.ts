@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Task } from "@/lib/scheduler/types";
+import type { Resource, Task } from "@/lib/scheduler/types";
+import { buildJiraSyncedFields, listJiraPendingChanges } from "@/lib/integrations/jira/syncedFields";
 import { usePlannerStore } from "./usePlannerStore";
 
 const makeTask = (id: string): Task => ({
@@ -65,5 +66,50 @@ describe("applyTaskPatches", () => {
     unsubscribe();
 
     expect(updates).toBe(0);
+  });
+
+  describe("Jira baseline follows the roster role rules", () => {
+    const resources: Resource[] = [
+      { name: "Mohamed Elkholaey", type: "BE" },
+      { name: "Silvia Hassan", type: "OtherSquad" },
+    ];
+    const linkedTask = (): Task => {
+      const task = { ...makeTask("a"), storyLink: "https://example.atlassian.net/browse/BR-1", beHours: 11 };
+      task.beDevs = ["Mohamed Elkholaey"];
+      return task;
+    };
+    const jiraWithOtherSquadDev = (task: Task): Task["jira"] => ({
+      parentIssueKey: "BR-1",
+      lastPushedAt: null,
+      lastPulledAt: null,
+      subtasks: [],
+      syncedFields: {
+        ...buildJiraSyncedFields(task),
+        beDevs: ["Mohamed Elkholaey", "Silvia Hassan"],
+      },
+    });
+
+    it("drops an Other squad dev from the baseline on a Jira-only patch, so nothing is pending", () => {
+      const task = linkedTask();
+      usePlannerStore.setState({ tasks: [task], resources });
+      usePlannerStore.getState().applyTaskPatches([{ id: "a", patch: { jira: jiraWithOtherSquadDev(task) } }]);
+
+      const saved = usePlannerStore.getState().tasks[0]!;
+      expect(saved.jira?.syncedFields?.beDevs).toEqual(["Mohamed Elkholaey"]);
+      expect(listJiraPendingChanges(saved)).toEqual([]);
+    });
+
+    it("clears the pending change when Revert puts the Jira names back", () => {
+      const task = linkedTask();
+      task.jira = jiraWithOtherSquadDev(task);
+      usePlannerStore.setState({ tasks: [task], resources });
+      usePlannerStore.getState().applyTaskPatches([
+        { id: "a", patch: { beDevs: ["Mohamed Elkholaey", "Silvia Hassan"] } },
+      ]);
+
+      const saved = usePlannerStore.getState().tasks[0]!;
+      expect(saved.beDevs).toEqual(["Mohamed Elkholaey"]);
+      expect(listJiraPendingChanges(saved)).toEqual([]);
+    });
   });
 });

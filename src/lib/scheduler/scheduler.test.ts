@@ -443,6 +443,57 @@ describe("scheduler behavior", () => {
     expect(byId.get("active")!.uatReleaseDate).not.toBeNull();
   });
 
+  describe("QC order: Testing before Ready for Testing for the same QC", () => {
+    const resources: Resource[] = [{ name: "QC-1", type: "QC", capacityHours: 40 }];
+    const qcStory = (id: string, status: string, poPriority: number | null = null): Task => ({
+      id,
+      storyName: id,
+      storyLink: "",
+      poPriority,
+      feDevs: [],
+      feHours: 0,
+      beDevs: [],
+      beHours: 0,
+      androidDevs: [],
+      androidHours: 0,
+      iosDevs: [],
+      iosHours: 0,
+      needsIos: false,
+      integrationHours: 0,
+      integrationFlags: {
+        needsDevOps: false,
+        needsCdc: false,
+        needsDbSync: false,
+        needsOtherSquad: false,
+        needsThirdParty: false,
+      },
+      qcs: ["QC-1"],
+      qcHours: 8,
+      bufferHours: 0,
+      status,
+    });
+
+    it("tests the story already in Testing first when Order numbers tie", () => {
+      const result = schedule(
+        [qcStory("story1", "Ready for Testing"), qcStory("story2", "Testing")],
+        resources,
+        config,
+      );
+      const byId = new Map(result.tasks.map((task) => [task.id, task]));
+      expect(byId.get("story2")!.qcEnd!.getTime()).toBeLessThanOrEqual(byId.get("story1")!.qcStart!.getTime());
+    });
+
+    it("keeps a better Order number first even when the other story is in Testing", () => {
+      const result = schedule(
+        [qcStory("story1", "Ready for Testing", 1), qcStory("story2", "Testing", 2)],
+        resources,
+        config,
+      );
+      const byId = new Map(result.tasks.map((task) => [task.id, task]));
+      expect(byId.get("story1")!.qcEnd!.getTime()).toBeLessThanOrEqual(byId.get("story2")!.qcStart!.getTime());
+    });
+  });
+
   it("does not create integration window when integration hours are zero", () => {
     const resources: Resource[] = [
       { name: "BE-1", type: "BE" },

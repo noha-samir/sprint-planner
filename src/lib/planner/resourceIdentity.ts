@@ -172,6 +172,62 @@ export const coerceAssigneesForRole = (
   });
 };
 
+type JiraSubtaskRoleKey = NonNullable<Task["jira"]>["subtasks"][number]["role"];
+
+const SUBTASK_ROLE_TYPES: Record<JiraSubtaskRoleKey, readonly ResourceType[]> = {
+  fe: ["FE"],
+  be: ["BE"],
+  android: ["MO"],
+  ios: ["MO"],
+};
+
+export type SubtaskAssigneeOutsideRole = { name: string; role: JiraSubtaskRoleKey; type: ResourceType };
+
+/**
+ * Jira subtask assignees the planner does not keep in that role (e.g. an Other squad dev on a [BE] subtask).
+ * Technical Tasks are skipped: they never keep FE/BE people by design.
+ * @param task - Story with its Jira subtasks.
+ * @param resources - Squad roster.
+ * @returns One entry per skipped person and role (deduplicated), with their roster type.
+ */
+export const subtaskAssigneesOutsideRole = (
+  task: Pick<Task, "issueType" | "jira">,
+  resources: Resource[],
+): SubtaskAssigneeOutsideRole[] => {
+  if (isTechnicalTaskIssueType(task.issueType)) return [];
+  const skipped = new Map<string, SubtaskAssigneeOutsideRole>();
+  for (const subtask of task.jira?.subtasks ?? []) {
+    const name = subtask.assigneeName.trim();
+    const allowedTypes = SUBTASK_ROLE_TYPES[subtask.role];
+    if (!name || !allowedTypes || coerceAssigneesForRole([name], resources, allowedTypes).length > 0) continue;
+    const resource = matchResourceByAssigneeLabel(name, resources);
+    if (!resource) continue;
+    skipped.set(`${subtask.role}:${resource.name}`, { name: resource.name, role: subtask.role, type: resource.type });
+  }
+  return [...skipped.values()];
+};
+
+const SUBTASK_ROLE_LABELS: Record<JiraSubtaskRoleKey, string> = { fe: "FE", be: "BE", android: "Android", ios: "iOS" };
+const RESOURCE_TYPE_LABELS: Record<ResourceType, string> = {
+  FE: "FE",
+  BE: "BE",
+  MO: "Mobile",
+  QC: "QC",
+  PM: "PM",
+  OtherSquad: "Other squad",
+};
+
+/**
+ * Warning lines for subtask assignees the planner skips.
+ * @param skipped - Output of subtaskAssigneesOutsideRole.
+ * @returns e.g. `Silvia Hassan (Other squad) has a BE subtask in Jira — not added to BE`.
+ */
+export const formatSubtaskAssigneesOutsideRole = (skipped: SubtaskAssigneeOutsideRole[]): string[] =>
+  skipped.map(({ name, role, type }) => {
+    const roleLabel = SUBTASK_ROLE_LABELS[role];
+    return `${name} (${RESOURCE_TYPE_LABELS[type] ?? type}) has a ${roleLabel} subtask in Jira — not added to ${roleLabel}`;
+  });
+
 export const peopleFromResources = (resources: Resource[]): PlannerPersonRef[] =>
   resources.map((resource) => ({
     name: resource.name,

@@ -116,7 +116,14 @@ export const matchFeBeSubtasksFromSummaries = (
   };
 };
 
-const listParentSubtasksFromIssue = async (
+/**
+ * List a parent's subtasks (key, summary, status) from the parent issue itself.
+ * Unlike JQL search, this reflects subtasks created moments ago (the search index can lag).
+ * @param credentials - Jira API credentials.
+ * @param parentIssueKey - Parent story key.
+ * @returns Subtask refs; throws JiraApiError when the parent cannot be read.
+ */
+export const listParentSubtasksFromIssue = async (
   credentials: JiraApiCredentials,
   parentIssueKey: string,
 ): Promise<JiraSubtaskRef[]> => {

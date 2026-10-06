@@ -8,12 +8,13 @@ import {
 import { requireJiraApiCredentials } from "@/lib/authz/sessionJiraCredentials";
 import {
   listParentSubtasks,
+  listParentSubtasksFromIssue,
   matchAllRoleSubtasksFromSummaries,
   mergeDiscoveredIntoJiraMeta,
 } from "./discoverSubtasks";
 import { isJiraStoryLink, parseJiraIssueKey, projectKeyFromIssueKey } from "./issueKey";
 import { taskHasJiraDevWork } from "./syncEligibility";
-import { buildJiraSyncedFields } from "./syncedFields";
+import { buildJiraSyncedFields, listJiraPendingChanges } from "./syncedFields";
 import { buildParentJiraFieldPayload } from "./parentFields";
 import { pushPlannerStatusToJira } from "./syncIssueStatus";
 import { resolveParentStatusFromChildren } from "./parentStatusFromChildren";
@@ -63,6 +64,7 @@ export { isTaskEligibleForJiraSync } from "./syncEligibility";
  * then update parent story custom fields and status.
  * Stories without dev work are parent-only: subtasks are not touched and a 0 Development estimate is not written
  * (Testing estimate, QC Engineer, PM, branch and status still push — including 0 Testing hours).
+ * Subtasks further along move the pushed status forward only when the planner status was not edited since the last sync.
  * @param task - Planner story to push.
  * @param squadConfig - Squad Jira config.
  * @returns Updated Jira meta plus warnings / errors for the summary.
@@ -187,6 +189,23 @@ export const syncTaskToJira = async (
     }
   }
 
+  // Subtasks created in this push were not in the first listing, so read their statuses once more.
+  const knownChildKeys = new Set(children.map((child) => child.key));
+  const createdKeys = subtasks.map((row) => row.key).filter((key) => !knownChildKeys.has(key));
+  const createdStatusByKey = new Map<string, string | undefined>();
+  if (createdKeys.length > 0) {
+    try {
+      const refreshed = await listParentSubtasksFromIssue(credentials, parentIssueKey);
+      for (const child of refreshed) createdStatusByKey.set(child.key, child.status);
+    } catch {
+      warnings.push(`Could not read the status of new subtasks on ${parentIssueKey} — pull from Jira to refresh.`);
+    }
+    for (const row of subtasks) {
+      const status = createdStatusByKey.get(row.key);
+      if (!row.status && status) row.status = status;
+    }
+  }
+
   const parentFields = buildParentJiraFieldPayload(squadConfig, parentPlan, { omitZeroDevelopmentEstimate: parentOnly });
   if (Object.keys(parentFields).length > 0) {
     try {
@@ -197,13 +216,16 @@ export const syncTaskToJira = async (
     }
   }
 
-  // Subtasks created in this push have no known status yet, so they block the subtask rule (conservative).
-  const knownChildKeys = new Set(children.map((child) => child.key));
+  // A new subtask whose status could not be read blocks the subtask rule (conservative).
   const childStatuses = [
     ...children.map((child) => child.status),
-    ...subtasks.filter((row) => !knownChildKeys.has(row.key)).map(() => undefined),
+    ...createdKeys.map((key) => createdStatusByKey.get(key)),
   ];
-  const childDrivenStatus = resolveParentStatusFromChildren(task.status, childStatuses).status;
+  // A status changed by hand in the planner wins; subtasks only move a status nobody edited since the last sync.
+  const statusEditedInPlanner = listJiraPendingChanges(task).some((change) => change.field === "status");
+  const childDrivenStatus = statusEditedInPlanner
+    ? undefined
+    : resolveParentStatusFromChildren(task.status, childStatuses).status;
   const statusToPush = childDrivenStatus ?? task.status;
 
   let statusSynced = false;

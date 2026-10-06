@@ -1,5 +1,5 @@
 import type { Task } from "@/lib/scheduler/types";
-import { isDiscopedTaskStatus, normalizeTaskStatus } from "@/lib/scheduler/taskStatus";
+import { isBlockedTaskStatus, isDiscopedTaskStatus, normalizeTaskStatus } from "@/lib/scheduler/taskStatus";
 import {
   matchPlannerPerson,
   isBlockedEngineeringAssignee,
@@ -237,6 +237,7 @@ const engineeringAssigneeNames = (
 
 /**
  * Pull parent status, QC/hours, and FE/BE/MO subtask assignees/hours into a planner patch.
+ * A planner story that is Blocked keeps its status (Jira's status and the subtasks do not change it).
  * emAccountId: resolved EM Jira account ID used to set isEmStory on the task.
  * pmAccountIds: resolved squad PM Jira account IDs used to set isPmStory on the task.
  */
@@ -280,8 +281,10 @@ export const syncTaskFromJira = async (
     warnings.push(`Jira status is "${statusName}" — planner status was updated; Discoped still blocks future sync.`);
   }
 
+  // A story Blocked on the dashboard stays Blocked until changed there; Jira's status only feeds the baseline.
+  const keepPlannerBlocked = isBlockedTaskStatus(task.status);
   const patch: Partial<Task> = {};
-  if (status) {
+  if (status && !keepPlannerBlocked) {
     patch.status = status;
   }
 
@@ -375,7 +378,7 @@ export const syncTaskFromJira = async (
 
   // Subtask statuses can move the parent forward (To Do → In Progress → Ready for Testing), never back.
   let statusFromChildren: SyncTaskFromJiraResult["statusFromChildren"];
-  if (status) {
+  if (status && !keepPlannerBlocked) {
     const childDriven = resolveParentStatusFromChildren(
       status,
       children.map((child) => child.status),

@@ -401,6 +401,32 @@ const pruneRemovedTaskIdsFromPlannerMeta = (meta: PlannerMeta, removedIds: strin
   return { ...next, dashboardTaskOrder };
 };
 
+/**
+ * Apply the planner's role rules to the Jira baseline (the values "Needs push" compares against), so a person the
+ * planner never keeps in a role — e.g. an Other squad dev on a Jira [BE] subtask — is not an unpushed change.
+ * @param jira - Normalized Jira meta of a task.
+ * @param resources - Squad roster.
+ * @param technical - Technical Task: FE/BE people are never kept.
+ * @returns Jira meta with baseline names coerced like the role columns; unchanged when there is no baseline.
+ */
+const coerceJiraBaselineToRoster = (
+  jira: Task["jira"],
+  resources: Resource[],
+  technical: boolean,
+): Task["jira"] => {
+  const synced = jira?.syncedFields;
+  if (!jira || !synced || resources.length === 0) return jira;
+  const coerced = normalizeJiraSyncedFields({
+    ...synced,
+    feDevs: technical ? [] : coerceAssigneesForRole(synced.feDevs, resources, ["FE"]),
+    beDevs: technical ? [] : coerceAssigneesForRole(synced.beDevs, resources, ["BE"]),
+    androidDevs: coerceAssigneesForRole(synced.androidDevs, resources, ["MO"]),
+    iosDevs: coerceAssigneesForRole(synced.iosDevs, resources, ["MO"]),
+    qcEngineer: coerceAssigneesForRole([synced.qcEngineer], resources, ["QC"])[0] ?? "",
+  });
+  return coerced ? { ...jira, syncedFields: coerced } : jira;
+};
+
 const buildState = (
   tasks: Task[],
   resources: Resource[],
@@ -410,12 +436,15 @@ const buildState = (
   const normalizedResources = normalizeResourceCapacities(resources);
   const normalizedTasks = tasks.map((task) => {
     const normalized = normalizeTask(task);
-    if (isTechnicalTaskIssueType(normalized.issueType)) {
+    const technical = isTechnicalTaskIssueType(normalized.issueType);
+    const jira = coerceJiraBaselineToRoster(normalized.jira, normalizedResources, technical);
+    if (technical) {
       // Technical Task: Dev hours only — strip FE/BE people; fold leftover BE hours into Dev.
       const feHours =
         normalized.feHours > 0 ? normalized.feHours : Math.max(0, normalized.beHours);
       return {
         ...normalized,
+        jira,
         feHours,
         feDevs: [],
         beDevs: [],
@@ -431,6 +460,7 @@ const buildState = (
     }
     return {
       ...normalized,
+      jira,
       feDevs: coerceAssigneesForRole(normalized.feDevs, normalizedResources, ["FE"]),
       beDevs: coerceAssigneesForRole(normalized.beDevs, normalizedResources, ["BE"]),
       androidDevs: coerceAssigneesForRole(normalized.androidDevs, normalizedResources, ["MO"]),
@@ -763,7 +793,19 @@ export const usePlannerStore = create<PlannerState>()(
         const patchById = new Map(changes.map((change) => [change.id, change.patch]));
         const patched = tasks.map((task) => {
           const patch = patchById.get(task.id);
-          return patch ? normalizeTask({ ...task, ...patch }) : task;
+          if (!patch) return task;
+          const normalized = normalizeTask({ ...task, ...patch });
+          // Jira-only patches skip buildState, so the baseline gets the roster rules here.
+          return patch.jira
+            ? {
+                ...normalized,
+                jira: coerceJiraBaselineToRoster(
+                  normalized.jira,
+                  resources,
+                  isTechnicalTaskIssueType(normalized.issueType),
+                ),
+              }
+            : normalized;
         });
         const requiresReschedule = changes.some((change) => patchRequiresReschedule(change.patch));
 

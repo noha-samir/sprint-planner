@@ -128,6 +128,9 @@ export const isTestingTaskStatus = (status: string): boolean => {
   return value === "testing" || value === "ready for testing" || value === "pending bug fixes";
 };
 
+/** Testing — QC has already started on the story (Ready for Testing has not). */
+export const isQcInProgressStatus = (status: string): boolean => normalize(status) === "testing";
+
 /** Still in the open / backlog-ish bucket (was TODO) — used for reorder. */
 export const isTodoTaskStatus = (status: string): boolean => {
   const value = normalize(status);

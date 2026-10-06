@@ -675,6 +675,32 @@ describe("syncTaskFromJira parent status from subtasks", () => {
     expect(result.warnings.some((warning) => warning.includes("parent status left unchanged"))).toBe(true);
     vi.unstubAllGlobals();
   });
+
+  it("keeps a Jira-Blocked parent Blocked even when subtasks are in progress", async () => {
+    mockedListParentSubtasks.mockResolvedValueOnce([
+      { key: "BR-10", summary: "[FE] Pricing", status: "In Progress" },
+    ]);
+    stubParent("Blocked");
+
+    const result = await syncTaskFromJira(baseTask({ status: "Blocked" }), defaultSquadJiraConfig());
+    expect(result.patch.status).toBeUndefined();
+    expect(result.statusFromChildren).toBeUndefined();
+    expect(result.jira.syncedFields?.status).toBe("Blocked");
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps a dashboard-Blocked story Blocked when Jira still has another status, so it shows Needs push", async () => {
+    mockedListParentSubtasks.mockResolvedValueOnce([
+      { key: "BR-10", summary: "[FE] Pricing", status: "In Progress" },
+    ]);
+    stubParent("To Do");
+
+    const result = await syncTaskFromJira(baseTask({ status: "Blocked" }), defaultSquadJiraConfig());
+    expect(result.patch.status).toBeUndefined();
+    expect(result.statusFromChildren).toBeUndefined();
+    expect(result.jira.syncedFields?.status).toBe("To Do");
+    vi.unstubAllGlobals();
+  });
 });
 
 describe("formatBulkPullSummary status from subtasks", () => {

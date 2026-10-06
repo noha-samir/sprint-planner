@@ -10,7 +10,12 @@ import {
 import { resolveRemainingEffort, type RemainingEffort } from "./remainingEffort";
 import { effectiveIosHours } from "./mobilePlatform";
 import { alignReleaseGroups, normalizeReleaseGroup } from "./releaseGroups";
-import { isExcludedFromSchedule, hasNoComputedReleaseDates, isTodoTaskStatus } from "./taskStatus";
+import {
+  isExcludedFromSchedule,
+  hasNoComputedReleaseDates,
+  isQcInProgressStatus,
+  isTodoTaskStatus,
+} from "./taskStatus";
 import { effectiveReplanFromStep } from "./statusReplan";
 
 import type {
@@ -325,11 +330,11 @@ const byScheduleWeightAsc = (a: Task, b: Task) => weightTask(a) - weightTask(b);
 
 const buildPlannedOrder = (tasks: Task[], resources: Resource[], config: Config): Task[] => {
   const strategy = resolveReleaseStrategy(config);
-  const replannedFront = tasks.filter(
-    (task) =>
-      effectiveReplanFromStep(task) !== "Start" &&
-      !isExcludedFromSchedule(task.status),
-  );
+  // Testing stories lead the replanned front: their QC already started, so the QC finishes them first
+  // when Order numbers tie (a better Order number still wins in the QC queue).
+  const replannedFront = tasks
+    .filter((task) => effectiveReplanFromStep(task) !== "Start" && !isExcludedFromSchedule(task.status))
+    .sort((a, b) => Number(isQcInProgressStatus(b.status)) - Number(isQcInProgressStatus(a.status)));
   const replannedFrontIds = new Set(replannedFront.map((task) => task.id));
   const remainingTasks = tasks.filter((task) => !replannedFrontIds.has(task.id));
   const prioritized = tasks

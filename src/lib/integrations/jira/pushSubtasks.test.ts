@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Task } from "@/lib/scheduler/types";
-import { bulkSyncTasksToJira, formatBulkSyncConfirmMessage, formatBulkSyncSummary } from "./pushSubtasks";
+import {
+  bulkSyncTasksToJira,
+  formatBulkSyncConfirmMessage,
+  formatBulkSyncSummary,
+  syncTaskToJira,
+} from "./pushSubtasks";
+import { buildJiraSyncedFields } from "./syncedFields";
 import { defaultSquadJiraConfig } from "./types";
 
 vi.mock("@/lib/authz/sessionJiraCredentials", () => ({
@@ -22,6 +28,9 @@ vi.mock("./client", () => ({
 
 vi.mock("./discoverSubtasks", () => ({
   listParentSubtasks: vi.fn(async () => []),
+  listParentSubtasksFromIssue: vi.fn(async () => [
+    { key: "BR-NEW", summary: "[FE] Pricing Engine", status: "Ready for Development" },
+  ]),
   matchAllRoleSubtasksFromSummaries: vi.fn(() => ({ fe: [], be: [], android: [], ios: [] })),
   mergeDiscoveredIntoJiraMeta: vi.fn((_parent: string, _task: unknown, jiraMeta: unknown) => ({
     parentIssueKey: "BR-1",
@@ -170,6 +179,74 @@ describe("bulkSyncTasksToJira", () => {
     expect(result.failed).toBe(0);
     expect(result.results[0]?.errors ?? []).toEqual([]);
     expect(vi.mocked(updateJiraParentIssue).mock.calls[0]?.[2]).toMatchObject({ customfield_dev: 6 });
+  });
+
+  it("reads the status of subtasks created in this push instead of leaving it unknown", async () => {
+    const config = defaultSquadJiraConfig();
+    config.assigneeMap = { Karim: "acc-1" };
+    const { listParentSubtasksFromIssue } = await import("./discoverSubtasks");
+    vi.mocked(listParentSubtasksFromIssue).mockClear();
+    const result = await syncTaskToJira(baseTask(), config);
+    expect(listParentSubtasksFromIssue).toHaveBeenCalledTimes(1);
+    expect(result.jira.subtasks).toEqual([
+      expect.objectContaining({ key: "BR-NEW", role: "fe", status: "Ready for Development" }),
+    ]);
+  });
+
+  it("does not re-read subtasks when nothing was created", async () => {
+    const config = defaultSquadJiraConfig();
+    const { listParentSubtasksFromIssue } = await import("./discoverSubtasks");
+    vi.mocked(listParentSubtasksFromIssue).mockClear();
+    await syncTaskToJira(baseTask({ feDevs: [], feHours: 0 }), config);
+    expect(listParentSubtasksFromIssue).not.toHaveBeenCalled();
+  });
+
+  it("warns and keeps the status unknown when the new subtasks cannot be read", async () => {
+    const config = defaultSquadJiraConfig();
+    config.assigneeMap = { Karim: "acc-1" };
+    const { listParentSubtasksFromIssue } = await import("./discoverSubtasks");
+    vi.mocked(listParentSubtasksFromIssue).mockRejectedValueOnce(new Error("boom"));
+    const result = await syncTaskToJira(baseTask(), config);
+    expect(result.jira.subtasks[0]?.status).toBeUndefined();
+    expect(result.warnings).toContain("Could not read the status of new subtasks on BR-1 — pull from Jira to refresh.");
+    expect(result.errors).toEqual([]);
+  });
+
+  it("pushes a status edited in the planner even when the subtasks are further along", async () => {
+    const config = defaultSquadJiraConfig();
+    config.assigneeMap = { Karim: "acc-1" };
+    const { listParentSubtasks } = await import("./discoverSubtasks");
+    const { pushPlannerStatusToJira } = await import("./syncIssueStatus");
+    vi.mocked(listParentSubtasks).mockResolvedValueOnce([
+      { key: "BR-2", summary: "[BE] Pricing Engine", status: "In Progress" },
+    ]);
+    vi.mocked(pushPlannerStatusToJira).mockClear();
+    const task = baseTask({ status: "Ready for Development" });
+    task.jira = {
+      parentIssueKey: "BR-1",
+      lastPushedAt: null,
+      subtasks: [],
+      syncedFields: { ...buildJiraSyncedFields(task), status: "In Progress" },
+    };
+    const result = await syncTaskToJira(task, config);
+    expect(result.statusFromChildren).toBeUndefined();
+    expect(vi.mocked(pushPlannerStatusToJira).mock.calls[0]?.[2]).toBe("Ready for Development");
+  });
+
+  it("still moves an unedited status forward from the subtasks", async () => {
+    const config = defaultSquadJiraConfig();
+    config.assigneeMap = { Karim: "acc-1" };
+    const { listParentSubtasks } = await import("./discoverSubtasks");
+    const { pushPlannerStatusToJira } = await import("./syncIssueStatus");
+    vi.mocked(listParentSubtasks).mockResolvedValueOnce([
+      { key: "BR-2", summary: "[BE] Pricing Engine", status: "In Progress" },
+    ]);
+    vi.mocked(pushPlannerStatusToJira).mockClear();
+    const task = baseTask({ status: "To Do" });
+    task.jira = { parentIssueKey: "BR-1", lastPushedAt: null, subtasks: [], syncedFields: buildJiraSyncedFields(task) };
+    const result = await syncTaskToJira(task, config);
+    expect(result.statusFromChildren).toEqual({ from: "To Do", to: "In Progress" });
+    expect(vi.mocked(pushPlannerStatusToJira).mock.calls[0]?.[2]).toBe("In Progress");
   });
 
   it("formatBulkSyncSummary uses plain language for not synced vs failed", () => {
