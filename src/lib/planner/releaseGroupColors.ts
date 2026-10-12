@@ -68,6 +68,10 @@ export const buildReleaseGroupColorMap = (
   return map;
 };
 
+/**
+ * Group identity is carried as variables. Light mode paints the nude swatch;
+ * dark mode keeps the shared input background and only changes the text color.
+ */
 export const releaseGroupInputStyle = (
   group: string | null | undefined,
   colorMap: Map<string, NudeReleaseGroupColor>,
@@ -81,8 +85,8 @@ export const releaseGroupInputStyle = (
     return undefined;
   }
   return {
-    backgroundColor: swatch.backgroundColor,
-    borderColor: swatch.borderColor,
-    color: swatch.color,
-  };
+    "--release-group-bg": swatch.backgroundColor,
+    "--release-group-border": swatch.borderColor,
+    "--release-group-ink": swatch.color,
+  } as CSSProperties;
 };

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { JIRA_COMMENT_MAX_CHARS, JIRA_COMMENT_MAX_MENTIONS } from "@/lib/integrations/jira/commentText";
 
 const maxTasks = 500;
 const maxResources = 200;
@@ -112,3 +113,21 @@ export const autoMapNamesSchema = z.object({
 });
 
 export const parseAutoMapNamesBody = (body: unknown) => autoMapNamesSchema.parse(body);
+
+export const jiraCommentWriteSchema = z.object({
+  text: z.string().trim().min(1).max(JIRA_COMMENT_MAX_CHARS),
+  mentions: z
+    .array(
+      z.object({
+        accountId: z.string().trim().min(1).max(128),
+        displayName: z.string().trim().min(1).max(200),
+      }),
+    )
+    .max(JIRA_COMMENT_MAX_MENTIONS)
+    .default([]),
+});
+
+export const parseJiraCommentWriteBody = (body: unknown) => jiraCommentWriteSchema.parse(body);
+
+/** Jira comment ids are numeric strings. */
+export const jiraCommentIdSchema = z.string().regex(/^\d{1,20}$/);

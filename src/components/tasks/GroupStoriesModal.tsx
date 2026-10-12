@@ -65,7 +65,7 @@ export function GroupStoriesModal({ storyCount, currentGroups, existingGroups, c
           Group name
           <input
             autoFocus
-            className="field-input mt-1 w-full"
+            className="field-input release-group-swatch mt-1 w-full"
             maxLength={96}
             placeholder="e.g. Checkout revamp"
             value={draft}
@@ -84,7 +84,7 @@ export function GroupStoriesModal({ storyCount, currentGroups, existingGroups, c
                 <button
                   key={name}
                   type="button"
-                  className={`group-stories-chip${groupName === name ? " group-stories-chip-on" : ""}`}
+                  className={`group-stories-chip release-group-swatch${groupName === name ? " group-stories-chip-on" : ""}`}
                   style={releaseGroupInputStyle(name, colorMap)}
                   title={`Use the group "${name}"`}
                   onClick={() => setDraft(name)}

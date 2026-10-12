@@ -20,7 +20,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const credentials = await requireJiraApiCredentials(authResult.squadId);
+    const credentials = await requireJiraApiCredentials(authResult.squadId, authResult.access.email);
     const preview = await fetchJiraIssuePreview(credentials, issueKey);
     return NextResponse.json(preview);
   } catch (error) {

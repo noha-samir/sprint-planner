@@ -12,6 +12,8 @@ export interface SessionAccess {
   globalAdmin: boolean;
   allowedSquads: string[];
   squadRoles: Record<string, SquadMembershipRole>;
+  /** Signed-in user's Jira account id (verified with Jira at sign-in), when known. */
+  jiraAccountId?: string | null;
 }
 
 export const forbidden = () => NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -75,6 +77,7 @@ export const getSessionAccess = (session: Session | null): SessionAccess | null 
     globalAdmin,
     allowedSquads,
     squadRoles,
+    jiraAccountId: session?.user?.jiraAccountId?.trim() || null,
   };
 };
 

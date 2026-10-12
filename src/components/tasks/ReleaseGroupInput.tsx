@@ -44,7 +44,7 @@ export function ReleaseGroupInput({
           Grp
         </span>
         <textarea
-          className="story-select-release-input field-input"
+          className="story-select-release-input field-input release-group-swatch"
           placeholder="Name"
           maxLength={96}
           rows={2}

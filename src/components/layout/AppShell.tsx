@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { signOutAndClearJiraToken } from "@/lib/authz/signOutClient";
 import { useSession } from "next-auth/react";
 import { sessionCapabilities } from "@/lib/access/control";
+import { AppearanceToggle } from "@/components/config/AppearanceToggle";
 import { getSquadIcon } from "@/lib/ui/squadIcon";
 import { reloadPlannerFromServer } from "@/lib/planner/flushPlannerState";
 import { usePlannerSaveStore } from "@/store/usePlannerSaveStore";
@@ -217,13 +218,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           ) : null}
         </nav>
-        <div className="sidebar-user-panel mt-auto shrink-0">
+        <AppearanceToggle />
+        <div className="sidebar-user-panel mt-2 shrink-0">
           <div className="flex w-full min-w-0 flex-col items-center gap-2.5 text-center">
             <div
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-sm font-bold text-white shadow-md ring-2 ring-white/25"
-              style={{
-                background: `linear-gradient(145deg, color-mix(in srgb, var(--primary) 92%, white), color-mix(in srgb, var(--primary) 55%, #1e3a8a))`,
-              }}
+              className="sidebar-avatar flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-sm font-bold text-white shadow-md ring-2 ring-white/25"
               aria-hidden
             >
               {initial}

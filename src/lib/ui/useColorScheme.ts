@@ -1,30 +1,37 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import {
-  applyColorScheme,
-  persistColorScheme,
-  resolveColorScheme,
-  type ColorScheme,
+  bindSystemColorScheme,
+  commitColorSchemePreference,
+  persistColorSchemePreference,
+  readStoredColorSchemePreference,
+  subscribeColorSchemePreference,
+  type ColorSchemePreference,
 } from "@/lib/ui/colorScheme";
 
+const useIsoLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+export function ColorSchemeBoot() {
+  useIsoLayoutEffect(() => bindSystemColorScheme(), []);
+  return null;
+}
+
 export function useColorScheme(): {
-  scheme: ColorScheme;
-  setScheme: (scheme: ColorScheme) => void;
+  preference: ColorSchemePreference;
+  setPreference: (preference: ColorSchemePreference) => void;
 } {
-  const [scheme, setSchemeState] = useState<ColorScheme>("light");
+  const [preference, setPreferenceState] = useState<ColorSchemePreference>("system");
 
-  useEffect(() => {
-    const next = resolveColorScheme();
-    setSchemeState(next);
-    applyColorScheme(next);
+  useIsoLayoutEffect(() => {
+    setPreferenceState(readStoredColorSchemePreference());
+    return subscribeColorSchemePreference(setPreferenceState);
   }, []);
 
-  const setScheme = useCallback((next: ColorScheme) => {
-    persistColorScheme(next);
-    applyColorScheme(next);
-    setSchemeState(next);
+  const setPreference = useCallback((next: ColorSchemePreference) => {
+    persistColorSchemePreference(next);
+    commitColorSchemePreference(next);
   }, []);
 
-  return { scheme, setScheme };
+  return { preference, setPreference };
 }

@@ -34,7 +34,7 @@ export default function ConfigPage() {
       <div className="shrink-0">
         <h1 className="section-title">Sprint Settings</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Sprint calendar, working hours, holidays, capacity rules, and appearance for this device.
+          Sprint calendar, working hours, holidays, and capacity rules.
           {!caps?.canEditOpsTabs ? " Calendar fields are view only — only super admins can edit them." : ""}
         </p>
       </div>

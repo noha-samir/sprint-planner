@@ -7,6 +7,7 @@ import {
   resolveRequestedSquadId,
 } from "@/lib/access/server";
 import { NextResponse } from "next/server";
+import { JiraApiError } from "./jiraErrors";
 
 type SquadAuthSuccess = { access: SessionAccess; squadId: string };
 type SquadAuthError = { error: NextResponse };
@@ -61,6 +62,17 @@ export const requireSuperAdminAccess = async (
     return { error: forbidden() };
   }
   return { access: result.access, squadId };
+};
+
+/**
+ * JSON error response for a failed Jira route: Jira errors keep their public message and status,
+ * anything else becomes a 500 with the fallback message.
+ */
+export const jiraRouteErrorResponse = (error: unknown, fallback: string): NextResponse => {
+  if (error instanceof JiraApiError) {
+    return NextResponse.json({ error: error.message }, { status: error.status });
+  }
+  return NextResponse.json({ error: fallback }, { status: 500 });
 };
 
 export const requireReadAccess = async (request: Request): Promise<SquadAuthSuccess | SquadAuthError> => {

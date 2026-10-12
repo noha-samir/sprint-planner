@@ -84,6 +84,8 @@ import { BulkAddTasksModal } from "@/components/tasks/BulkAddTasksModal";
 import { BulkAssigneesModal, type BulkAssigneesReason } from "@/components/tasks/BulkAssigneesModal";
 import { GroupStoriesModal } from "@/components/tasks/GroupStoriesModal";
 import { BulkStatusModal } from "@/components/tasks/BulkStatusModal";
+import { StoryCommentsModal } from "@/components/tasks/StoryCommentsModal";
+import { prefetchStoryComments } from "@/components/tasks/storyCommentsCache";
 import { normalizeReleaseGroup } from "@/lib/scheduler/releaseGroups";
 import { hasMissingAssignees } from "@/lib/planner/bulkAssignees";
 import { StoryLinkWithPreview } from "@/components/tasks/StoryLinkWithPreview";
@@ -356,6 +358,7 @@ const DETAILS_ESTIMATE_COLUMNS = [
 const DETAILS_ESTIMATE_GRID_TEMPLATE = DETAILS_ESTIMATE_COLUMNS.map((column) => `${column.widthPercent}fr`).join(" ");
 const DETAILS_ESTIMATE_TOTAL_PERCENT = DETAILS_ESTIMATE_COLUMNS.reduce((sum, column) => sum + column.widthPercent, 0);
 const JIRA_RETRY_DELAY_MS = 1500;
+const COMMENTS_PREFETCH_DELAY_MS = 200;
 
 /**
  * Send a request and retry it once after a short delay on a network error or 5xx
@@ -397,6 +400,40 @@ const jiraRequestFailureMessage = (action: "Pull" | "Push", status?: number): st
   return `${action} failed (HTTP ${status})`;
 };
 
+type BulkStorySubmenu = "move" | "board";
+
+function BulkMenuItem({
+  className,
+  disabled,
+  title,
+  onClick,
+  glyph,
+  children,
+}: {
+  className: string;
+  disabled?: boolean;
+  title: string;
+  onClick: () => void;
+  glyph: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold disabled:opacity-45 ${className}`}
+      disabled={disabled}
+      title={title}
+      onClick={onClick}
+    >
+      <span className="w-4 shrink-0 text-center text-[12px] leading-none" aria-hidden>
+        {glyph}
+      </span>
+      <span className="min-w-0">{children}</span>
+    </button>
+  );
+}
+
 export function TaskTable() {
   const { data: session } = useSession();
   const activeSquadId = usePlannerStore((state) => state.activeSquadId);
@@ -422,6 +459,7 @@ export function TaskTable() {
   const [taskTagModalId, setTaskTagModalId] = useState<string | null>(null);
   const [groupStoriesIds, setGroupStoriesIds] = useState<string[] | null>(null);
   const [bulkStatusIds, setBulkStatusIds] = useState<string[] | null>(null);
+  const [commentsTaskId, setCommentsTaskId] = useState<string | null>(null);
   const [taskTodoModalId, setTaskTodoModalId] = useState<string | null>(null);
   const [moStartDateModalId, setMoStartDateModalId] = useState<string | null>(null);
   const [isBulkAddOpen, setIsBulkAddOpen] = useState(false);
@@ -476,6 +514,7 @@ export function TaskTable() {
   const storyFieldsMenuRef = useRef<HTMLFormElement | null>(null);
   const [storyFieldsMenuPos, setStoryFieldsMenuPos] = useState({ top: 0, left: 0, width: 248 });
   const [isBulkStoryMenuOpen, setIsBulkStoryMenuOpen] = useState(false);
+  const [bulkStorySubmenu, setBulkStorySubmenu] = useState<BulkStorySubmenu | null>(null);
   const bulkStoryMenuRef = useRef<HTMLDivElement | null>(null);
   const bulkStoryMenuPanelRef = useRef<HTMLDivElement | null>(null);
   const bulkStoryButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -990,6 +1029,10 @@ export function TaskTable() {
   }, [assigneePickerOpen]);
 
   useEffect(() => {
+    if (!isBulkStoryMenuOpen) setBulkStorySubmenu(null);
+  }, [isBulkStoryMenuOpen]);
+
+  useEffect(() => {
     if (!isBulkStoryMenuOpen) return;
     const onPointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
@@ -997,6 +1040,7 @@ export function TaskTable() {
         return;
       }
       setIsBulkStoryMenuOpen(false);
+      setBulkStorySubmenu(null);
     };
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
@@ -1095,7 +1139,7 @@ export function TaskTable() {
         return;
       }
       const menuWidth = 248;
-      const menuHeight = 340;
+      const menuHeight = 280;
       const left = Math.min(Math.max(8, rect.left), window.innerWidth - menuWidth - 8);
       const spaceBelow = window.innerHeight - rect.bottom - 8;
       const top =
@@ -1214,6 +1258,11 @@ export function TaskTable() {
 
   const closeBulkStoryMenu = () => {
     setIsBulkStoryMenuOpen(false);
+    setBulkStorySubmenu(null);
+  };
+
+  const toggleBulkStorySubmenu = (submenu: BulkStorySubmenu) => {
+    setBulkStorySubmenu((current) => (current === submenu ? null : submenu));
   };
 
   /** Close the Actions menu first so the UI unlocks before confirms / long work. */
@@ -1887,6 +1936,27 @@ export function TaskTable() {
     const idSet = new Set(bulkStatusIds);
     return tasks.filter((task) => idSet.has(task.id));
   }, [bulkStatusIds, tasks]);
+  const commentsTask = useMemo(
+    () => (commentsTaskId ? tasks.find((task) => task.id === commentsTaskId) ?? null : null),
+    [commentsTaskId, tasks],
+  );
+  const commentsIssueKey = commentsTask ? parseJiraIssueKey(commentsTask.storyLink) : null;
+  const closeComments = useCallback(() => setCommentsTaskId(null), []);
+  const commentsPrefetchTimerRef = useRef<number | null>(null);
+  const cancelCommentsPrefetch = () => {
+    if (commentsPrefetchTimerRef.current != null) window.clearTimeout(commentsPrefetchTimerRef.current);
+    commentsPrefetchTimerRef.current = null;
+  };
+  /** Start loading a story's comments when the pointer rests on its Comments chip (not on every pass-over). */
+  const scheduleCommentsPrefetch = (storyLink: string) => {
+    const issueKey = parseJiraIssueKey(storyLink);
+    if (!issueKey || !activeSquadId) return;
+    cancelCommentsPrefetch();
+    commentsPrefetchTimerRef.current = window.setTimeout(() => {
+      commentsPrefetchTimerRef.current = null;
+      prefetchStoryComments(issueKey, activeSquadId);
+    }, COMMENTS_PREFETCH_DELAY_MS);
+  };
   const bulkStatusCurrent = useMemo(() => {
     const countByStatus = new Map<string, number>();
     for (const task of bulkStatusTasks) {
@@ -3155,7 +3225,7 @@ export function TaskTable() {
                       ? createPortal(
                           <div
                             ref={bulkStoryMenuPanelRef}
-                            className="toolbar-dropdown-shell w-[15.5rem] text-left normal-case tracking-normal shadow-xl"
+                            className="toolbar-dropdown-shell story-actions-menu w-[15.5rem] text-left normal-case tracking-normal shadow-xl"
                             role="menu"
                             style={{
                               position: "fixed",
@@ -3197,160 +3267,6 @@ export function TaskTable() {
                                 </span>
                                 Pull from Jira
                               </button>
-                              {canManageSprintLifecycle ? (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-teal-900 hover:bg-teal-50 disabled:opacity-45"
-                                disabled={visibleSelectedCount === 0 || !selectedAnyOnCurrentSprint}
-                                title={
-                                  !selectedAnyOnCurrentSprint
-                                    ? "All selected stories are already on Next sprint"
-                                    : "Move selected current-sprint stories to Next sprint"
-                                }
-                                onClick={moveSelectedToNextSprint}
-                              >
-                                <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
-                                  →
-                                </span>
-                                Move to next sprint
-                              </button>
-                              ) : null}
-                              {canManageSprintLifecycle ? (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-sky-900 hover:bg-sky-50 disabled:opacity-45"
-                                disabled={visibleSelectedCount === 0 || !selectedAnyOnNextSprint}
-                                title={
-                                  !selectedAnyOnNextSprint
-                                    ? "All selected stories are already on Current sprint"
-                                    : "Move selected next-sprint stories back to Current sprint"
-                                }
-                                onClick={moveSelectedToCurrentSprint}
-                              >
-                                <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
-                                  ↩
-                                </span>
-                                Move to current sprint
-                              </button>
-                              ) : null}
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-45"
-                                disabled={visibleSelectedCount === 0}
-                                title={
-                                  visibleSelectedCount === 0
-                                    ? "Select stories first"
-                                    : "Copy selected story names as clickable links"
-                                }
-                                onClick={copyStoryLinksForSelected}
-                              >
-                                <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
-                                  ⎘
-                                </span>
-                                Copy story links
-                              </button>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-orange-900 hover:bg-orange-50 disabled:opacity-45"
-                                disabled={visibleSelectedCount === 0}
-                                title={visibleSelectedCount === 0 ? "Select stories first" : "Add a tag to the selected stories"}
-                                onClick={addTagForSelected}
-                              >
-                                <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
-                                  #
-                                </span>
-                                Add Tag
-                              </button>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-violet-900 hover:bg-violet-50 disabled:opacity-45"
-                                disabled={visibleSelectedCount === 0}
-                                title={
-                                  visibleSelectedCount === 0
-                                    ? "Select stories first"
-                                    : "Put the selected stories in one release group so they ship together (shared UAT / production dates)"
-                                }
-                                onClick={openGroupStoriesForSelected}
-                              >
-                                <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
-                                  ⧉
-                                </span>
-                                Group stories
-                              </button>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-indigo-900 hover:bg-indigo-50 disabled:opacity-45"
-                                disabled={visibleSelectedCount === 0}
-                                title={visibleSelectedCount === 0 ? "Select stories first" : "Add a todo item to the selected stories"}
-                                onClick={addTodoForSelected}
-                              >
-                                <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
-                                  ✓
-                                </span>
-                                Add Todo
-                              </button>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-blue-900 hover:bg-blue-50 disabled:opacity-45"
-                                disabled={visibleSelectedCount === 0}
-                                title={
-                                  visibleSelectedCount === 0
-                                    ? "Select stories first"
-                                    : "Edit status, people and hours (BE / FE / Mobile / QC / PM / buffer) for the selected stories in a spreadsheet"
-                                }
-                                onClick={() =>
-                                  runAfterBulkMenuClose(() =>
-                                    openBulkAssignees(
-                                      selectedTasks.map((task) => task.id),
-                                      "manual",
-                                    ),
-                                  )
-                                }
-                              >
-                                <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
-                                  ☷
-                                </span>
-                                Bulk edit details…
-                              </button>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-cyan-900 hover:bg-cyan-50 disabled:opacity-45"
-                                disabled={visibleSelectedCount === 0}
-                                title={
-                                  visibleSelectedCount === 0
-                                    ? "Select stories first"
-                                    : "Set one status on the selected stories (planner only — push to update Jira)"
-                                }
-                                onClick={openBulkStatusForSelected}
-                              >
-                                <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
-                                  ◉
-                                </span>
-                                Set status…
-                              </button>
-                              {canManageSprintLifecycle ? (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-violet-900 hover:bg-violet-50 disabled:opacity-45"
-                                disabled={visibleSelectedCount === 0}
-                                title={visibleSelectedCount === 0 ? "Select stories first" : "Set PM buffer hours for the selected stories"}
-                                onClick={setBufferHoursForSelected}
-                              >
-                                <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
-                                  ◷
-                                </span>
-                                Set buffer hours…
-                              </button>
-                              ) : null}
                               <button
                                 type="button"
                                 role="menuitem"
@@ -3370,19 +3286,191 @@ export function TaskTable() {
                                 </span>
                                 {selectedJiraUpdatesVisible ? "Hide Jira updates" : "Show Jira updates"}
                               </button>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="flex w-full items-center gap-2 rounded-lg border-t border-slate-100 px-2.5 py-2 text-left text-[12px] font-semibold text-rose-800 hover:bg-rose-50 disabled:opacity-45"
+                              {canManageSprintLifecycle ? (
+                                <div className="story-actions-branch">
+                                  <button
+                                    type="button"
+                                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-slate-800 hover:bg-slate-50${bulkStorySubmenu === "move" ? " bg-slate-100" : ""}`}
+                                    aria-expanded={bulkStorySubmenu === "move"}
+                                    aria-haspopup="menu"
+                                    title="Move selected stories between Current and Next sprint"
+                                    onClick={() => toggleBulkStorySubmenu("move")}
+                                  >
+                                    <span className="w-4 shrink-0 text-center text-[12px] leading-none" aria-hidden>
+                                      ↔
+                                    </span>
+                                    <span className="min-w-0 flex-1">Move stories</span>
+                                    <span className="story-actions-branch-chevron" aria-hidden>
+                                      ›
+                                    </span>
+                                  </button>
+                                  {bulkStorySubmenu === "move" ? (
+                                    <div
+                                      className={`toolbar-dropdown-shell story-actions-submenu${
+                                        bulkStoryMenuPos.left + 504 > window.innerWidth ? " story-actions-submenu-left" : ""
+                                      }${bulkStoryMenuPos.top + 280 > window.innerHeight ? " story-actions-submenu-up" : ""}`}
+                                      role="menu"
+                                      aria-label="Move stories"
+                                    >
+                                      <div className="space-y-0.5 p-1.5">
+                                        <BulkMenuItem
+                                          className="text-teal-900 hover:bg-teal-50"
+                                          disabled={visibleSelectedCount === 0 || !selectedAnyOnCurrentSprint}
+                                          title={
+                                            !selectedAnyOnCurrentSprint
+                                              ? "All selected stories are already on Next sprint"
+                                              : "Move selected current-sprint stories to Next sprint"
+                                          }
+                                          glyph="→"
+                                          onClick={moveSelectedToNextSprint}
+                                        >
+                                          Next sprint
+                                        </BulkMenuItem>
+                                        <BulkMenuItem
+                                          className="text-sky-900 hover:bg-sky-50"
+                                          disabled={visibleSelectedCount === 0 || !selectedAnyOnNextSprint}
+                                          title={
+                                            !selectedAnyOnNextSprint
+                                              ? "All selected stories are already on Current sprint"
+                                              : "Move selected next-sprint stories back to Current sprint"
+                                          }
+                                          glyph="↩"
+                                          onClick={moveSelectedToCurrentSprint}
+                                        >
+                                          Current sprint
+                                        </BulkMenuItem>
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                              <div className="story-actions-branch">
+                                <button
+                                  type="button"
+                                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-slate-800 hover:bg-slate-50${bulkStorySubmenu === "board" ? " bg-slate-100" : ""}`}
+                                  aria-expanded={bulkStorySubmenu === "board"}
+                                  aria-haspopup="menu"
+                                  title="Changes saved on this board. They do not call Jira until you push."
+                                  onClick={() => toggleBulkStorySubmenu("board")}
+                                >
+                                  <span className="w-4 shrink-0 text-center text-[12px] leading-none" aria-hidden>
+                                    ✎
+                                  </span>
+                                  <span className="min-w-0 flex-1">Board actions</span>
+                                  <span className="story-actions-branch-chevron" aria-hidden>
+                                    ›
+                                  </span>
+                                </button>
+                                {bulkStorySubmenu === "board" ? (
+                                  <div
+                                    className={`toolbar-dropdown-shell story-actions-submenu${
+                                      bulkStoryMenuPos.left + 504 > window.innerWidth ? " story-actions-submenu-left" : ""
+                                    }${bulkStoryMenuPos.top + 280 > window.innerHeight ? " story-actions-submenu-up" : ""}`}
+                                    role="menu"
+                                    aria-label="Board actions"
+                                  >
+                                    <div className="space-y-0.5 p-1.5">
+                                      <BulkMenuItem
+                                        className="text-indigo-900 hover:bg-indigo-50"
+                                        disabled={visibleSelectedCount === 0}
+                                        title={visibleSelectedCount === 0 ? "Select stories first" : "Add a todo item to the selected stories"}
+                                        glyph="✓"
+                                        onClick={addTodoForSelected}
+                                      >
+                                        Add Todo
+                                      </BulkMenuItem>
+                                      <BulkMenuItem
+                                        className="text-orange-900 hover:bg-orange-50"
+                                        disabled={visibleSelectedCount === 0}
+                                        title={visibleSelectedCount === 0 ? "Select stories first" : "Add a tag to the selected stories"}
+                                        glyph="#"
+                                        onClick={addTagForSelected}
+                                      >
+                                        Add Tag
+                                      </BulkMenuItem>
+                                      {canManageSprintLifecycle ? (
+                                        <BulkMenuItem
+                                          className="text-violet-900 hover:bg-violet-50"
+                                          disabled={visibleSelectedCount === 0}
+                                          title={visibleSelectedCount === 0 ? "Select stories first" : "Set PM buffer hours for the selected stories"}
+                                          glyph="◷"
+                                          onClick={setBufferHoursForSelected}
+                                        >
+                                          Set buffer hours…
+                                        </BulkMenuItem>
+                                      ) : null}
+                                      <BulkMenuItem
+                                        className="text-slate-800 hover:bg-slate-50"
+                                        disabled={visibleSelectedCount === 0}
+                                        title={
+                                          visibleSelectedCount === 0
+                                            ? "Select stories first"
+                                            : "Copy selected story names as clickable links"
+                                        }
+                                        glyph="⎘"
+                                        onClick={copyStoryLinksForSelected}
+                                      >
+                                        Copy story links
+                                      </BulkMenuItem>
+                                      <BulkMenuItem
+                                        className="text-violet-900 hover:bg-violet-50"
+                                        disabled={visibleSelectedCount === 0}
+                                        title={
+                                          visibleSelectedCount === 0
+                                            ? "Select stories first"
+                                            : "Put the selected stories in one release group so they ship together (shared UAT / production dates)"
+                                        }
+                                        glyph="⧉"
+                                        onClick={openGroupStoriesForSelected}
+                                      >
+                                        Group stories
+                                      </BulkMenuItem>
+                                      <BulkMenuItem
+                                        className="text-blue-900 hover:bg-blue-50"
+                                        disabled={visibleSelectedCount === 0}
+                                        title={
+                                          visibleSelectedCount === 0
+                                            ? "Select stories first"
+                                            : "Edit status, people and hours (BE / FE / Mobile / QC / PM / buffer) for the selected stories in a spreadsheet"
+                                        }
+                                        glyph="☷"
+                                        onClick={() =>
+                                          runAfterBulkMenuClose(() =>
+                                            openBulkAssignees(
+                                              selectedTasks.map((task) => task.id),
+                                              "manual",
+                                            ),
+                                          )
+                                        }
+                                      >
+                                        Bulk edit details…
+                                      </BulkMenuItem>
+                                      <BulkMenuItem
+                                        className="text-cyan-900 hover:bg-cyan-50"
+                                        disabled={visibleSelectedCount === 0}
+                                        title={
+                                          visibleSelectedCount === 0
+                                            ? "Select stories first"
+                                            : "Set one status on the selected stories (planner only — push to update Jira)"
+                                        }
+                                        glyph="◉"
+                                        onClick={openBulkStatusForSelected}
+                                      >
+                                        Set status…
+                                      </BulkMenuItem>
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </div>
+                              <BulkMenuItem
+                                className="border-t border-slate-100 text-rose-800 hover:bg-rose-50"
                                 disabled={visibleSelectedCount === 0}
                                 title={visibleSelectedCount === 0 ? "Select stories first" : "Remove the selected stories from the planner"}
+                                glyph="×"
                                 onClick={removeSelectedTasks}
                               >
-                                <span className="w-4 text-center text-[12px] leading-none" aria-hidden>
-                                  ×
-                                </span>
                                 Remove {visibleSelectedCount === 1 ? "Task" : "Tasks"}
-                              </button>
+                              </BulkMenuItem>
                             </div>
                           </div>,
                           document.body,
@@ -4389,6 +4477,21 @@ export function TaskTable() {
                               <span className="task-flag-chip-label">↺</span>
                             </button>
                           ) : null}
+                          {isJiraStoryLink(task.storyLink) ? (
+                            <button
+                              type="button"
+                              className="task-flag-chip task-story-type-chip task-flag-chip-comments"
+                              aria-label={`Jira comments on ${storyLabel}`}
+                              title={isEditor ? "Read and add Jira comments" : "Read Jira comments"}
+                              onPointerEnter={() => scheduleCommentsPrefetch(task.storyLink)}
+                              onPointerLeave={cancelCommentsPrefetch}
+                              onFocus={() => scheduleCommentsPrefetch(task.storyLink)}
+                              onBlur={cancelCommentsPrefetch}
+                              onClick={() => setCommentsTaskId(task.id)}
+                            >
+                              <span className="task-flag-chip-label">💬 Comments</span>
+                            </button>
+                          ) : null}
                           {task.issueType ? (
                             <span
                               className={`task-flag-chip task-story-type-chip ${issueTypeChipClass(task.issueType)}`}
@@ -5229,6 +5332,16 @@ export function TaskTable() {
             const storyText = ids.length === 1 ? "1 story" : `${ids.length} stories`;
             setActionFeedback(group ? `Grouped ${storyText} in "${group}".` : `Removed ${storyText} from their group.`);
           }}
+        />
+      ) : null}
+      {commentsTask && commentsIssueKey ? (
+        <StoryCommentsModal
+          issueKey={commentsIssueKey}
+          storyLink={commentsTask.storyLink}
+          storyName={storyLabelForSync(commentsTask)}
+          squadId={activeSquadId}
+          canEdit={isEditor}
+          onClose={closeComments}
         />
       ) : null}
       {bulkStatusTasks.length > 0 ? (

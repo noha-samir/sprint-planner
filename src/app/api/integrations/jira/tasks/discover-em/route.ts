@@ -52,7 +52,7 @@ export async function POST(request: Request) {
   ]);
 
   try {
-    const credentials = await requireJiraApiCredentials(authResult.squadId);
+    const credentials = await requireJiraApiCredentials(authResult.squadId, authResult.access.email);
     const [emAccountId, pmAccountIds] = await Promise.all([
       resolveSquadEmAccountId(authResult.squadId),
       resolveSquadPmAccountIds(authResult.squadId),

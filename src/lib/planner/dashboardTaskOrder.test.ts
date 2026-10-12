@@ -7,7 +7,7 @@ import {
   floatNearReleaseStatusesToTop,
   sortTasksForDashboard,
 } from "./dashboardTaskOrder";
-import { buildReleaseGroupColorMap } from "./releaseGroupColors";
+import { buildReleaseGroupColorMap, releaseGroupInputStyle } from "./releaseGroupColors";
 
 const task = (
   id: string,
@@ -170,5 +170,17 @@ describe("releaseGroupColors", () => {
     expect(map.size).toBe(2);
     expect(map.get("Wave 1")).not.toEqual(map.get("Wave 2"));
     expect(map.get("Wave 1")?.backgroundColor).toMatch(/^#|hsl/);
+  });
+
+  it("keeps group identity in variables so a filled name does not force a light fill", () => {
+    const map = buildReleaseGroupColorMap(["MMT", "Inventory"]);
+    const mmt = releaseGroupInputStyle("MMT", map);
+    const inventory = releaseGroupInputStyle("Inventory", map);
+    expect(mmt).toMatchObject({
+      "--release-group-bg": map.get("MMT")?.backgroundColor,
+      "--release-group-ink": map.get("MMT")?.color,
+    });
+    expect(mmt).not.toHaveProperty("backgroundColor");
+    expect(inventory?.["--release-group-ink"]).not.toBe(mmt?.["--release-group-ink"]);
   });
 });

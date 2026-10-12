@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const credentials = await requireJiraApiCredentials(authResult.squadId);
+    const credentials = await requireJiraApiCredentials(authResult.squadId, authResult.access.email);
     const changed = await findRemoteJiraChanges(credentials, body.tasks);
     if (!changed) {
       return NextResponse.json({ error: "Could not check Jira for newer changes" }, { status: 502 });

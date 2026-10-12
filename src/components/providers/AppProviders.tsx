@@ -3,8 +3,8 @@
 import { useEffect } from "react";
 import { SessionProvider, useSession } from "next-auth/react";
 import { HoverHintLayer } from "@/components/common/HoverHintLayer";
-import { applyColorScheme, resolveColorScheme } from "@/lib/ui/colorScheme";
 import { signOutAndClearJiraToken } from "@/lib/authz/signOutClient";
+import { ColorSchemeBoot } from "@/lib/ui/useColorScheme";
 import { safeCallbackUrl } from "@/lib/ui/safeCallbackUrl";
 
 /**
@@ -52,13 +52,6 @@ function SessionRevocationWatcher() {
     }
   }, [session?.error, session?.user?.email, session?.user?.role, status]);
 
-  return null;
-}
-
-function ColorSchemeBoot() {
-  useEffect(() => {
-    applyColorScheme(resolveColorScheme());
-  }, []);
   return null;
 }
 

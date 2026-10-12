@@ -10,7 +10,8 @@ export { JiraApiError } from "./jiraErrors";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const jiraFetch = async (
+/** Jira REST v3 fetch with JSON headers and retry on 429 / 502 / 503 (up to 3 attempts). */
+export const jiraFetch = async (
   credentials: JiraApiCredentials,
   path: string,
   init?: RequestInit,

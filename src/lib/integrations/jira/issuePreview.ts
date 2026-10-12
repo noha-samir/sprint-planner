@@ -1,5 +1,6 @@
 import type { JiraApiCredentials } from "./credentials";
 import { jiraFetchIssuePreviewFields } from "./client";
+import type { JiraUserRef } from "./userSearch";
 
 export const ISSUE_DESCRIPTION_PREVIEW_MAX_CHARS = 320;
 export const ISSUE_DESCRIPTION_PREVIEW_MAX_LINES = 4;
@@ -17,9 +18,10 @@ export type JiraIssuePreview = {
   descriptionPreview: string;
 };
 
-type AdfNode = {
+export type AdfNode = {
   type?: string;
   text?: string;
+  attrs?: { id?: string; text?: string };
   content?: AdfNode[];
 };
 
@@ -37,8 +39,31 @@ const BLOCK_TYPES = new Set([
   "tableRow",
 ]);
 
-const walkAdf = (node: AdfNode | null | undefined, parts: string[]): void => {
+/** "@Name" label of an ADF mention node (Jira stores it with or without the @). */
+const adfMentionLabel = (node: AdfNode): string => {
+  const raw = node.attrs?.text?.trim() ?? "";
+  return raw.startsWith("@") ? raw : `@${raw || "unknown"}`;
+};
+
+/**
+ * Collect the plain text of an ADF tree (mentions as "@Name", hard breaks as new lines).
+ * @param node - ADF node.
+ * @param parts - Output text chunks.
+ * @param mentions - When given, receives every mention (Jira account id + display name).
+ */
+export const walkAdf = (node: AdfNode | null | undefined, parts: string[], mentions?: JiraUserRef[]): void => {
   if (!node || typeof node !== "object") {
+    return;
+  }
+  if (node.type === "mention") {
+    const label = adfMentionLabel(node);
+    parts.push(label);
+    const accountId = node.attrs?.id?.trim();
+    if (mentions && accountId) mentions.push({ accountId, displayName: label.slice(1) });
+    return;
+  }
+  if (node.type === "hardBreak") {
+    parts.push("\n");
     return;
   }
   if (typeof node.text === "string" && node.text) {
@@ -46,7 +71,7 @@ const walkAdf = (node: AdfNode | null | undefined, parts: string[]): void => {
   }
   if (Array.isArray(node.content)) {
     for (const child of node.content) {
-      walkAdf(child, parts);
+      walkAdf(child, parts, mentions);
       if (child?.type && BLOCK_TYPES.has(child.type)) {
         parts.push("\n");
       }

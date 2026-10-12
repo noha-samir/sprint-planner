@@ -33,7 +33,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const credentials = await requireJiraApiCredentials(authResult.squadId);
+    const credentials = await requireJiraApiCredentials(authResult.squadId, authResult.access.email);
     const users = await searchJiraUsers(credentials, query.q);
     return NextResponse.json({ users });
   } catch (error) {
