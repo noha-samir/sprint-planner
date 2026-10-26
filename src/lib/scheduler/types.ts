@@ -68,6 +68,15 @@ export interface Task {
   isPmStory?: boolean;
   /** Assignee of the Jira issue itself (roster name when mapped, else Jira display name); set on Pull. */
   jiraAssigneeName?: string | null;
+  /** Jira sprint id from the last pull. Null when unread or when the issue has no sprint. */
+  jiraSprintId?: number | null;
+  /** Jira sprint name from the last pull. */
+  jiraSprintName?: string | null;
+  /**
+   * Jira sprint membership from the last pull.
+   * Null means unread. `none` means Jira confirmed the issue is in the backlog.
+   */
+  jiraSprintState?: "active" | "future" | "closed" | "none" | null;
   /** Sync metadata after pushing subtasks to Jira. */
   jira?: {
     parentIssueKey: string;

@@ -13,6 +13,7 @@ import { requireJiraApiCredentials } from "@/lib/authz/sessionJiraCredentials";
 import { buildJiraBasicAuthHeader, jiraRestApiBase, type JiraApiCredentials } from "./credentials";
 import { listParentSubtasks, matchAllRoleSubtasksFromSummaries } from "./discoverSubtasks";
 import { resolveParentStatusFromChildren } from "./parentStatusFromChildren";
+import { readJiraIssueSprint } from "./jiraSprintRemote";
 import { mapWithConcurrency } from "@/lib/async/mapWithConcurrency";
 import {
   hoursFromJiraNumberField,
@@ -284,6 +285,14 @@ export const syncTaskFromJira = async (
   // A story Blocked on the dashboard stays Blocked until changed there; Jira's status only feeds the baseline.
   const keepPlannerBlocked = isBlockedTaskStatus(task.status);
   const patch: Partial<Task> = {};
+  try {
+    const sprint = await readJiraIssueSprint(credentials, parentIssueKey);
+    patch.jiraSprintId = sprint.jiraSprintId;
+    patch.jiraSprintName = sprint.jiraSprintName;
+    patch.jiraSprintState = sprint.jiraSprintState;
+  } catch {
+    warnings.push(`Could not read the Jira sprint for ${parentIssueKey}`);
+  }
   if (status && !keepPlannerBlocked) {
     patch.status = status;
   }

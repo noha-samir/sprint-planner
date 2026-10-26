@@ -124,7 +124,7 @@ flowchart LR
 | **Editor** | Yes (own squad) | No | See only |
 | **Reviewer** | No | No | See only |
 
-\*Lifecycle = move to next/current sprint, set buffer hours, Mark Progress Now, New Sprint
+\*Lifecycle = set buffer hours, Mark Progress Now, New Sprint. Adding or removing a Jira sprint is a separate story action.
 
 Editors have no squad switcher; they stay on their assigned squad.
 
@@ -183,11 +183,12 @@ sequenceDiagram
 
 ### Editor
 - Plan stories on **your squad** (hours, assignees, status, tags, todos, Jira push/pull if eligible)  
-- **Cannot**: New Sprint, Mark Progress, buffer hours, move next/current sprint  
+- **Can** add a story to the open Jira sprint, or remove it from that sprint  
+- **Cannot**: New Sprint, Mark Progress, buffer hours  
 - **Can view** People / Settings / User Management  
 
 ### EM
-- Full planning on your squad **including** Mark Progress, buffer, sprint moves, New Sprint  
+- Full planning on your squad **including** Mark Progress, buffer, New Sprint, and Jira sprint add/remove  
 - View People / Settings / User Management (no edit)  
 
 ### Super Admin

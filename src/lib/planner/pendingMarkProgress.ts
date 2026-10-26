@@ -11,6 +11,9 @@ export const TASK_PATCH_KEYS_IGNORED_FOR_REMARK: (keyof Task)[] = [
   "taskNotes",
   "tags",
   "jira",
+  "jiraSprintId",
+  "jiraSprintName",
+  "jiraSprintState",
 ];
 
 const isSameTaskField = (task: Task, key: keyof Task, next: unknown): boolean => {

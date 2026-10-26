@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import type { BulkNotificationSummary } from "@/lib/integrations/jira/bulkNotificationFormat";
 
-export type JiraSyncMode = "push" | "pull";
+export type JiraSyncMode = "push" | "pull" | "sprint";
 
 export type JiraSyncPhase = "idle" | "syncing" | "saving";
 

@@ -18,7 +18,7 @@ export interface AccessCapabilities {
   canWrite: boolean;
   /**
    * EM / super-admin sprint controls on the dashboard:
-   * move next/current sprint, buffer hours, mark progress, start new sprint.
+   * buffer hours, mark progress, start new sprint.
    * Editors with canWrite still cannot use these.
    */
   canManageSprintLifecycle: boolean;
@@ -58,7 +58,7 @@ export const normalizeUserRole = (role: string | undefined): UserRole | null => 
  * - super_admin: see + edit everything
  * - reviewer: see everything, edit nothing
  * - editor: see + edit Dashboard / Timeline / History for own squad only
- *           (except sprint lifecycle: move sprint, buffer, mark progress, new sprint);
+ *           (except sprint lifecycle: buffer, mark progress, new sprint);
  *           see People / Sprint Settings / User Management with no edit
  * - em: see + edit Dashboard / Timeline / History for own squad (full dashboard controls);
  *       see People / Sprint Settings / User Management with no edit

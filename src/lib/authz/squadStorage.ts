@@ -51,6 +51,11 @@ const toReleaseStrategy = (value: unknown): ReleaseStrategy => {
   return "earliestStoriesFirst";
 };
 
+const toJiraSprintState = (value: unknown): "active" | "future" | "closed" | "none" | null => {
+  if (value === "active" || value === "future" || value === "closed" || value === "none") return value;
+  return null;
+};
+
 const toReplanStep = (value: unknown): TaskReplanStep | null => {
   if (
     value === "Start" ||
@@ -228,6 +233,9 @@ export async function readSquadPlannerState(squadId: string): Promise<Record<str
         isEmStory: task.isEmStory,
         isPmStory: task.isPmStory,
         jiraAssigneeName: task.jiraAssigneeName ?? null,
+        jiraSprintId: task.jiraSprintId ?? null,
+        jiraSprintName: task.jiraSprintName ?? null,
+        jiraSprintState: task.jiraSprintState ?? null,
         jira: task.jiraLink
           ? {
               parentIssueKey: task.jiraLink.parentIssueKey,
@@ -461,6 +469,11 @@ export async function writeSquadPlannerState(
     const previousJiraAssigneeByTaskId = new Map(
       previousJiraAssigneeRows.map((row) => [row.id, row.jiraAssigneeName]),
     );
+    const previousJiraSprintRows = await tx.task.findMany({
+      where: { squadId: safe, jiraSprintState: { not: null } },
+      select: { id: true, jiraSprintId: true, jiraSprintName: true, jiraSprintState: true },
+    });
+    const previousJiraSprintByTaskId = new Map(previousJiraSprintRows.map((row) => [row.id, row]));
 
     await tx.task.deleteMany({ where: { squadId: safe } });
     await tx.resource.deleteMany({ where: { squadId: safe } });
@@ -602,6 +615,33 @@ export async function writeSquadPlannerState(
               : typeof task.jiraAssigneeName === "string" && task.jiraAssigneeName.trim()
                 ? task.jiraAssigneeName.trim()
                 : null,
+          ...(() => {
+            if (task.jiraSprintState === undefined) {
+              const previous = previousJiraSprintByTaskId.get(id);
+              return {
+                jiraSprintId: previous?.jiraSprintId ?? null,
+                jiraSprintName: previous?.jiraSprintName ?? null,
+                jiraSprintState: previous?.jiraSprintState ?? null,
+              };
+            }
+            const state = toJiraSprintState(task.jiraSprintState);
+            if (state === "active" || state === "future" || state === "closed") {
+              const idValue = Number(task.jiraSprintId);
+              return {
+                jiraSprintId: Number.isFinite(idValue) ? idValue : null,
+                jiraSprintName:
+                  typeof task.jiraSprintName === "string" && task.jiraSprintName.trim()
+                    ? task.jiraSprintName.trim()
+                    : null,
+                jiraSprintState: state,
+              };
+            }
+            return {
+              jiraSprintId: null,
+              jiraSprintName: null,
+              jiraSprintState: state,
+            };
+          })(),
         })),
       });
     }

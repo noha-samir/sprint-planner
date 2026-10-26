@@ -32,11 +32,12 @@ flowchart TB
 | Action | Super Admin | EM | Editor | Reviewer |
 | --- | --- | --- | --- | --- |
 | Edit stories / hours / assignees | Yes | Yes (squad) | Yes (squad) | No |
-| Mark Progress / New Sprint / buffer / move sprint | Yes | Yes | No | No |
+| Mark Progress / New Sprint / buffer | Yes | Yes | No | No |
+| Add or remove a Jira sprint | Yes | Yes | Yes | No |
 | Edit People & Jira / Sprint Settings / users | Yes | No (view) | No (view) | No (view) |
 | Switch any squad | Yes | Multi-squad if entitled | Locked to own | Multi-squad if entitled |
 
-**Sprint lifecycle** = Move to next/current sprint, set buffer hours, Mark Progress Now, New Sprint.
+**Sprint lifecycle** = set buffer hours, Mark Progress Now, New Sprint. Adding or removing a Jira sprint is a separate story action.
 
 ## Tabs
 
@@ -79,11 +80,11 @@ flowchart LR
 5. EM/Super Admin: **Mark Progress Now** when you want Cur UAT/Production tracking.
 6. Push/pull Jira for linked stories as needed.
 
-### Carry work to next sprint (EM / Super Admin only)
+### Jira sprint on a story (Editor / EM / Super Admin)
 
-1. Select stories on the Dashboard.
-2. Bulk menu → **Move to next sprint** (or back to current).
-3. Filter the table by Current / Next sprint views.
+1. Select stories on the Dashboard. Use **All** if their sprint has not been read yet.
+2. Actions → **Jira sprint** → **Add to sprint** or **Remove from sprint**.
+3. Filter the table by Open sprint / No sprint / All.
 
 ### Close / archive
 

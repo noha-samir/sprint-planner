@@ -52,7 +52,7 @@ export function JiraSyncLoadingScreen() {
     ? preparing.title
     : saving
       ? "Saving planner…"
-      : `${mode === "pull" ? "Pulling from Jira" : "Pushing to Jira"} — ${completed}/${total}`;
+      : `${mode === "pull" ? "Pulling from Jira" : mode === "sprint" ? "Updating Jira" : "Pushing to Jira"} — ${completed}/${total}`;
 
   return (
     <div className="jira-sync-loading-backdrop" role="presentation">

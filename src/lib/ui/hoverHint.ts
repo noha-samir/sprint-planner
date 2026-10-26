@@ -1,5 +1,16 @@
 export const HOVER_HINT_DELAY_MS = 400;
 
+/** Dropdown items are scanned and clicked quickly, so their hint waits longer than a resting hover. */
+export const HOVER_HINT_MENU_DELAY_MS = 1200;
+
+/**
+ * How long a pointer must rest before the hint appears.
+ * @param inMenu - True when the target sits inside a dropdown.
+ * @returns Delay in milliseconds.
+ */
+export const hoverHintDelayMs = (inMenu: boolean): number =>
+  inMenu ? HOVER_HINT_MENU_DELAY_MS : HOVER_HINT_DELAY_MS;
+
 const HINT_ATTR = "data-hover-hint";
 
 /** Dropdown containers whose item hints open beside the list instead of covering it. */

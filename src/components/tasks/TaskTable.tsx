@@ -10,6 +10,7 @@ import {
 } from "@/lib/scheduler/calendar";
 import { sessionCapabilities } from "@/lib/access/control";
 import { isJiraStoryLink, buildJiraIssueBrowseUrl, parseJiraIssueKey } from "@/lib/integrations/jira/issueKey";
+import { partitionJiraSprintAdd, partitionJiraSprintClear, taskMatchesJiraSprintFilter, type JiraSprintFilter } from "@/lib/integrations/jira/jiraSprint";
 import { buildSubtaskStatusChips } from "@/lib/integrations/jira/subtaskStatusChips";
 import { safeStoryHref } from "@/lib/ui/safeStoryHref";
 import { issueTypeChipClass } from "@/lib/ui/issueTypeChip";
@@ -84,6 +85,7 @@ import { BulkAddTasksModal } from "@/components/tasks/BulkAddTasksModal";
 import { BulkAssigneesModal, type BulkAssigneesReason } from "@/components/tasks/BulkAssigneesModal";
 import { GroupStoriesModal } from "@/components/tasks/GroupStoriesModal";
 import { BulkStatusModal } from "@/components/tasks/BulkStatusModal";
+import { JiraSprintChoiceModal, type JiraSprintChoice } from "@/components/tasks/JiraSprintChoiceModal";
 import { StoryCommentsModal } from "@/components/tasks/StoryCommentsModal";
 import { prefetchStoryComments } from "@/components/tasks/storyCommentsCache";
 import { normalizeReleaseGroup } from "@/lib/scheduler/releaseGroups";
@@ -400,7 +402,7 @@ const jiraRequestFailureMessage = (action: "Pull" | "Push", status?: number): st
   return `${action} failed (HTTP ${status})`;
 };
 
-type BulkStorySubmenu = "move" | "board";
+type BulkStorySubmenu = "sprint" | "board";
 
 function BulkMenuItem({
   className,
@@ -459,6 +461,10 @@ export function TaskTable() {
   const [taskTagModalId, setTaskTagModalId] = useState<string | null>(null);
   const [groupStoriesIds, setGroupStoriesIds] = useState<string[] | null>(null);
   const [bulkStatusIds, setBulkStatusIds] = useState<string[] | null>(null);
+  const [jiraSprintChoices, setJiraSprintChoices] = useState<JiraSprintChoice[] | null>(null);
+  const pendingJiraSprintAddTasks = useRef<
+    Array<{ id: string; storyName: string; storyLink: string; jiraSprintState: string | null }>
+  >([]);
   const [commentsTaskId, setCommentsTaskId] = useState<string | null>(null);
   const [taskTodoModalId, setTaskTodoModalId] = useState<string | null>(null);
   const [moStartDateModalId, setMoStartDateModalId] = useState<string | null>(null);
@@ -534,7 +540,7 @@ export function TaskTable() {
     maxHeight: 240,
   });
   const [visibleStatuses, setVisibleStatuses] = useState<string[]>(defaultVisibleStatuses);
-  const [sprintFilter, setSprintFilter] = useState<"all" | "currentSprint" | "nextSprint">("currentSprint");
+  const [jiraSprintFilter, setJiraSprintFilter] = useState<JiraSprintFilter>("open");
   const [emFilter, setEmFilter] = useState<"all" | "em" | "non-em" | "pm">("all");
   const [ownerPeople, setOwnerPeople] = useState<string[]>([]);
   const [squadPmNames, setSquadPmNames] = useState<string[]>([]);
@@ -555,20 +561,17 @@ export function TaskTable() {
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const lastHandledSprintBoardGeneration = useRef(0);
 
-  // Carry-overs become current-sprint rows; leave Next Sprint filter would look like an empty board.
   useEffect(() => {
     if (sprintBoardGeneration === 0 || sprintBoardGeneration === lastHandledSprintBoardGeneration.current) {
       return;
     }
     lastHandledSprintBoardGeneration.current = sprintBoardGeneration;
-    setSprintFilter("currentSprint");
+    setJiraSprintFilter("open");
     setVisibleStatuses((current) => {
       const hasToDo = current.some((status) => status.trim().toLowerCase() === "to do");
       return hasToDo ? current : [...current, DEFAULT_TASK_STATUS];
     });
-    setActionFeedback(
-      "New sprint started. All stories stayed on the board; showing Current Sprint.",
-    );
+    setActionFeedback("New sprint started. All stories stayed on the board.");
   }, [sprintBoardGeneration]);
 
   useEffect(() => {
@@ -801,13 +804,10 @@ export function TaskTable() {
     if (!visibleStatuses.includes(DEFAULT_TASK_STATUS)) {
       setVisibleStatuses((current) => [...current, DEFAULT_TASK_STATUS]);
     }
-    if (sprintFilter === "nextSprint") {
-      setSprintFilter("currentSprint");
-    }
     const id = addTask();
     setFocusTaskId(id);
     setTasksMenuOpen(false);
-  }, [addTask, isEditor, sprintFilter, visibleStatuses]);
+  }, [addTask, isEditor, visibleStatuses]);
 
   /**
    * Open the bulk assignee editor for the given stories (display order is kept).
@@ -923,8 +923,8 @@ export function TaskTable() {
     });
   }, [typeFilterOptions]);
 
-  const sprintFilterSummary =
-    sprintFilter === "currentSprint" ? "Current" : sprintFilter === "nextSprint" ? "Next" : "All";
+  const jiraSprintFilterSummary =
+    jiraSprintFilter === "open" ? "Open" : jiraSprintFilter === "none" ? "None" : "All";
 
   const isTypeFilterCustom = useMemo(() => {
     if (typeFilter.length !== typeFilterOptions.length) return true;
@@ -1781,9 +1781,6 @@ export function TaskTable() {
         if (!visibleStatuses.includes(DEFAULT_TASK_STATUS)) {
           setVisibleStatuses((current) => [...current, DEFAULT_TASK_STATUS]);
         }
-        if (sprintFilter === "nextSprint") {
-          setSprintFilter("currentSprint");
-        }
         const newIds = addTasks(
           missingStories.map((story) => ({
             storyName: story.summary,
@@ -1842,8 +1839,7 @@ export function TaskTable() {
         (status) => status.trim().toLowerCase() === task.status.trim().toLowerCase(),
       );
       if (!statusVisible) return false;
-      if (sprintFilter === "nextSprint") return !!task.carryToNextSprint;
-      if (sprintFilter === "currentSprint") return !task.carryToNextSprint;
+      if (!taskMatchesJiraSprintFilter(task, jiraSprintFilter)) return false;
       return true;
     }).filter((task) => {
       // Picked people show their whole workload, so EM / PM ownership no longer hides rows.
@@ -1870,7 +1866,7 @@ export function TaskTable() {
         ? plannerMeta.dashboardTaskOrder
         : null;
     return sortTasksForDashboard(filtered, releaseDateById, pinnedOrder);
-  }, [tasks, safeResult.tasks, visibleStatuses, sprintFilter, emFilter, ownerPeopleMatchSet, typeFilter, kindFilter, needsPushFilterActive, pendingJiraChangesById, isUatTrackingEnabled, plannerMeta.dashboardTaskOrder, squadPmNames, resources]);
+  }, [tasks, safeResult.tasks, visibleStatuses, jiraSprintFilter, emFilter, ownerPeopleMatchSet, typeFilter, kindFilter, needsPushFilterActive, pendingJiraChangesById, isUatTrackingEnabled, plannerMeta.dashboardTaskOrder, squadPmNames, resources]);
 
   useEffect(() => {
     if (!focusTaskId) return;
@@ -2165,45 +2161,187 @@ export function TaskTable() {
       .filter((task) => selectedTaskIdSet.has(task.id))
       .every((task) => expandedJiraTaskIdSet.has(task.id));
 
-  const selectedAnyOnNextSprint = selectedTasks.some((task) => !!task.carryToNextSprint);
-  const selectedAnyOnCurrentSprint = selectedTasks.some((task) => !task.carryToNextSprint);
-
-  const moveSelectedToNextSprint = () => {
-    if (!canManageSprintLifecycle) return;
-    closeBulkStoryMenu();
-    const targets = selectedTasks.filter((task) => !task.carryToNextSprint);
-    if (targets.length === 0) {
-      return;
+  const applyAddedJiraSprints = (
+    addedRows: Array<{ taskId: string; jiraSprintId: number; jiraSprintName: string }>,
+  ) => {
+    const bySprint = new Map<string, { ids: string[]; jiraSprintId: number; jiraSprintName: string }>();
+    for (const row of addedRows) {
+      const key = `${row.jiraSprintId}`;
+      const group = bySprint.get(key) ?? {
+        ids: [],
+        jiraSprintId: row.jiraSprintId,
+        jiraSprintName: row.jiraSprintName,
+      };
+      group.ids.push(row.taskId);
+      bySprint.set(key, group);
     }
-    updateTasks(
-      targets.map((task) => task.id),
-      { carryToNextSprint: true },
-    );
-    setSprintFilter("nextSprint");
-    setActionFeedback(
-      targets.length === 1
-        ? "1 story moved to Next sprint — switched to the Next sprint view."
-        : `${targets.length} stories moved to Next sprint — switched to the Next sprint view.`,
-    );
+    for (const group of bySprint.values()) {
+      updateTasks(group.ids, {
+        jiraSprintId: group.jiraSprintId,
+        jiraSprintName: group.jiraSprintName,
+        jiraSprintState: "active",
+      });
+    }
   };
 
-  const moveSelectedToCurrentSprint = () => {
-    if (!canManageSprintLifecycle) return;
+  const postAddJiraSprints = async (
+    tasks: Array<{ id: string; storyName: string; storyLink: string; jiraSprintState: string | null }>,
+    sprintIdByProject?: Record<string, number>,
+  ) => {
+    if (!activeSquadId) return;
+    setJiraSyncPreparing({
+      mode: "sprint",
+      title: sprintIdByProject ? "Updating Jira" : "Checking Jira",
+      detail: sprintIdByProject
+        ? "Adding the selected stories to the sprint you chose…"
+        : "Reading the open sprints, then updating the tickets…",
+    });
+    try {
+      const response = await fetch("/api/integrations/jira/sprints/add", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-squad-id": activeSquadId,
+        },
+        body: JSON.stringify({
+          tasks,
+          ...(sprintIdByProject ? { sprintIdByProject } : {}),
+        }),
+      });
+      const body = (await response.json()) as {
+        error?: string;
+        added?: Array<{ taskId: string; jiraSprintId: number; jiraSprintName: string }>;
+        skipped?: Array<{ storyName: string; reason: string }>;
+        choices?: JiraSprintChoice[];
+      };
+      if (!response.ok) {
+        setActionFeedback(body.error ?? "Could not add the Jira sprint.");
+        return;
+      }
+      const addedRows = body.added ?? [];
+      applyAddedJiraSprints(addedRows);
+      if ((body.choices?.length ?? 0) > 0) {
+        setJiraSprintChoices(body.choices ?? null);
+        return;
+      }
+      const skippedRows = body.skipped ?? [];
+      const sprintNames = [...new Set(addedRows.map((row) => row.jiraSprintName).filter(Boolean))];
+      const sprintLabel = sprintNames.length === 1 ? ` (${sprintNames[0]})` : "";
+      const addedLine =
+        addedRows.length === 1
+          ? `Added 1 story to the Jira sprint${sprintLabel}.`
+          : `Added ${addedRows.length} stories to the Jira sprint${sprintLabel}.`;
+      const skippedLine =
+        skippedRows.length > 0
+          ? ` Skipped: ${skippedRows.map((row) => `${row.storyName} (${row.reason})`).join(", ")}.`
+          : "";
+      setActionFeedback(`${addedLine}${skippedLine}`);
+    } catch {
+      setActionFeedback("Could not add the Jira sprint.");
+    } finally {
+      setJiraSyncPreparing(null);
+    }
+  };
+
+  const addSelectedJiraSprints = () => {
+    if (!isEditor || !activeSquadId) return;
+    const { eligible, skipped } = partitionJiraSprintAdd(selectedTasks);
     closeBulkStoryMenu();
-    const targets = selectedTasks.filter((task) => !!task.carryToNextSprint);
-    if (targets.length === 0) {
+    if (eligible.length === 0) {
+      setActionFeedback(
+        skipped.length === 0
+          ? "Select stories that are not already in the open Jira sprint."
+          : skipped.map((row) => `${row.storyName}: ${row.reason}`).join(" "),
+      );
       return;
     }
-    updateTasks(
-      targets.map((task) => task.id),
-      { carryToNextSprint: false },
-    );
-    setSprintFilter("currentSprint");
-    setActionFeedback(
-      targets.length === 1
-        ? "1 story moved to Current sprint — switched to the Current sprint view."
-        : `${targets.length} stories moved to Current sprint — switched to the Current sprint view.`,
-    );
+    const noun = eligible.length === 1 ? "story" : "stories";
+    if (
+      !window.confirm(`Add ${eligible.length} ${noun} to a Jira sprint? This updates the ticket in Jira.`)
+    ) {
+      return;
+    }
+    const tasks = selectedTasks.map((task) => ({
+      id: task.id,
+      storyName: task.storyName,
+      storyLink: task.storyLink ?? "",
+      jiraSprintState: task.jiraSprintState ?? null,
+    }));
+    pendingJiraSprintAddTasks.current = tasks;
+    void postAddJiraSprints(tasks);
+  };
+
+  const clearSelectedJiraSprints = () => {
+    if (!isEditor || !activeSquadId) return;
+    const { eligible, skipped } = partitionJiraSprintClear(selectedTasks);
+    closeBulkStoryMenu();
+    if (eligible.length === 0) {
+      setActionFeedback(
+        skipped.length === 0
+          ? "Select stories that are in an open Jira sprint."
+          : skipped.map((row) => `${row.storyName}: ${row.reason}`).join(" "),
+      );
+      return;
+    }
+    const noun = eligible.length === 1 ? "story" : "stories";
+    if (
+      !window.confirm(
+        `Remove ${eligible.length} ${noun} from the Jira sprint? They stay on this board with no Jira sprint.`,
+      )
+    ) {
+      return;
+    }
+    void (async () => {
+      setJiraSyncPreparing({
+        mode: "sprint",
+        title: "Updating Jira",
+        detail: "Removing the selected stories from their Jira sprint…",
+      });
+      try {
+        const response = await fetch("/api/integrations/jira/sprints/clear", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-squad-id": activeSquadId,
+          },
+          body: JSON.stringify({
+            tasks: selectedTasks.map((task) => ({
+              id: task.id,
+              storyName: task.storyName,
+              storyLink: task.storyLink,
+              jiraSprintState: task.jiraSprintState ?? null,
+            })),
+          }),
+        });
+        const body = (await response.json()) as {
+          error?: string;
+          cleared?: Array<{ taskId: string }>;
+          skipped?: Array<{ storyName: string; reason: string }>;
+        };
+        if (!response.ok) {
+          setActionFeedback(body.error ?? "Could not remove the Jira sprint.");
+          return;
+        }
+        const clearedIds = (body.cleared ?? []).map((row) => row.taskId);
+        if (clearedIds.length > 0) {
+          updateTasks(clearedIds, { jiraSprintId: null, jiraSprintName: null, jiraSprintState: "none" });
+        }
+        const skippedRows = body.skipped ?? skipped;
+        const clearedLine =
+          clearedIds.length === 1
+            ? "Removed 1 story from its Jira sprint."
+            : `Removed ${clearedIds.length} stories from their Jira sprint.`;
+        const skippedLine =
+          skippedRows.length > 0
+            ? ` Skipped: ${skippedRows.map((row) => `${row.storyName} (${row.reason})`).join(", ")}.`
+            : "";
+        setActionFeedback(`${clearedLine}${skippedLine}`);
+      } catch {
+        setActionFeedback("Could not remove the Jira sprint.");
+      } finally {
+        setJiraSyncPreparing(null);
+      }
+    })();
   };
 
   const toggleJiraUpdatesForSelected = () => {
@@ -2451,50 +2589,46 @@ export function TaskTable() {
             <div className="relative" ref={sprintFilterRef}>
               <button
                 type="button"
-                className={toolbarTriggerClass(isSprintFilterOpen || sprintFilter !== "currentSprint")}
+                className={toolbarTriggerClass(isSprintFilterOpen || jiraSprintFilter !== "open")}
                 aria-expanded={isSprintFilterOpen}
                 aria-haspopup="listbox"
-                title="Choose which sprint's stories to show"
+                title="Filter by the Jira sprint on the ticket. This is not the board's next-sprint flag."
                 onClick={() => {
                   if (!isSprintFilterOpen) closeOtherFilterMenus("sprint");
                   setIsSprintFilterOpen((current) => !current);
                 }}
               >
-                <span>Sprint</span>
+                <span>Jira sprint</span>
                 <ToolbarMenuChevron open={isSprintFilterOpen} />
-                <span className="toolbar-strip-btn-value w-[3.25rem] capitalize">{sprintFilterSummary}</span>
+                <span className="toolbar-strip-btn-value w-[3.25rem]">{jiraSprintFilterSummary}</span>
               </button>
               {isSprintFilterOpen ? (
-                <div className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,15rem)]">
+                <div className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,16rem)]">
                   <ToolbarDropdownHeader
-                    title="Sprint"
-                    subtitle="Choose which sprint window to show in the table."
+                    title="Jira sprint"
+                    subtitle="The sprint on the Jira ticket. Open is Jira's active sprint."
                   />
                   <div className="space-y-1 px-2 py-2">
-                    {(["currentSprint", "nextSprint", "all"] as const).map((option) => {
-                      const on = sprintFilter === option;
+                    {(
+                      [
+                        ["open", "Open sprint", "Stories in Jira's active sprint"],
+                        ["none", "No sprint", "No Jira link, or Jira says the issue is in the backlog"],
+                        ["all", "All", "Every story, including future, closed, and not-yet-read sprints"],
+                      ] as const
+                    ).map(([option, label, hint]) => {
+                      const on = jiraSprintFilter === option;
                       return (
                         <button
                           key={option}
                           type="button"
                           className={`toolbar-menu-item ${on ? "toolbar-menu-item-active" : ""}`}
-                          title={
-                            option === "currentSprint"
-                              ? "Show only stories in the current sprint"
-                              : option === "nextSprint"
-                                ? "Show only stories planned for the next sprint"
-                                : "Show stories from every sprint"
-                          }
+                          title={hint}
                           onClick={() => {
-                            setSprintFilter(option);
+                            setJiraSprintFilter(option);
                             setIsSprintFilterOpen(false);
                           }}
                         >
-                          {option === "currentSprint"
-                            ? "Current sprint"
-                            : option === "nextSprint"
-                              ? "Next sprint"
-                              : "All sprints"}
+                          {label}
                         </button>
                       );
                     })}
@@ -3267,6 +3401,64 @@ export function TaskTable() {
                                 </span>
                                 Pull from Jira
                               </button>
+                              {isEditor ? (
+                                <div className="story-actions-branch">
+                                  <button
+                                    type="button"
+                                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-slate-800 hover:bg-slate-50${bulkStorySubmenu === "sprint" ? " bg-slate-100" : ""}`}
+                                    aria-expanded={bulkStorySubmenu === "sprint"}
+                                    aria-haspopup="menu"
+                                    title="Add the selected stories to a Jira sprint, or remove them from it."
+                                    onClick={() => toggleBulkStorySubmenu("sprint")}
+                                  >
+                                    <span className="w-4 shrink-0 text-center text-[12px] leading-none" aria-hidden>
+                                      ↻
+                                    </span>
+                                    <span className="min-w-0 flex-1">Jira sprint</span>
+                                    <span className="story-actions-branch-chevron" aria-hidden>
+                                      ›
+                                    </span>
+                                  </button>
+                                  {bulkStorySubmenu === "sprint" ? (
+                                    <div
+                                      className={`toolbar-dropdown-shell story-actions-submenu${
+                                        bulkStoryMenuPos.left + 504 > window.innerWidth ? " story-actions-submenu-left" : ""
+                                      }${bulkStoryMenuPos.top + 140 > window.innerHeight ? " story-actions-submenu-up" : ""}`}
+                                      role="menu"
+                                      aria-label="Jira sprint"
+                                    >
+                                      <div className="space-y-0.5 p-1.5">
+                                        <BulkMenuItem
+                                          className="text-emerald-900 hover:bg-emerald-50"
+                                          disabled={visibleSelectedCount === 0 || jiraSyncInProgress}
+                                          title={
+                                            visibleSelectedCount === 0
+                                              ? "Select stories first"
+                                              : "Put the selected stories on a Jira sprint."
+                                          }
+                                          glyph="+"
+                                          onClick={addSelectedJiraSprints}
+                                        >
+                                          Add to sprint
+                                        </BulkMenuItem>
+                                        <BulkMenuItem
+                                          className="text-amber-900 hover:bg-amber-50"
+                                          disabled={visibleSelectedCount === 0 || jiraSyncInProgress}
+                                          title={
+                                            visibleSelectedCount === 0
+                                              ? "Select stories first"
+                                              : "Take the selected stories out of their Jira sprint. They stay on this board."
+                                          }
+                                          glyph="⌫"
+                                          onClick={clearSelectedJiraSprints}
+                                        >
+                                          Remove from sprint
+                                        </BulkMenuItem>
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
                               <button
                                 type="button"
                                 role="menuitem"
@@ -3286,64 +3478,6 @@ export function TaskTable() {
                                 </span>
                                 {selectedJiraUpdatesVisible ? "Hide Jira updates" : "Show Jira updates"}
                               </button>
-                              {canManageSprintLifecycle ? (
-                                <div className="story-actions-branch">
-                                  <button
-                                    type="button"
-                                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-slate-800 hover:bg-slate-50${bulkStorySubmenu === "move" ? " bg-slate-100" : ""}`}
-                                    aria-expanded={bulkStorySubmenu === "move"}
-                                    aria-haspopup="menu"
-                                    title="Move selected stories between Current and Next sprint"
-                                    onClick={() => toggleBulkStorySubmenu("move")}
-                                  >
-                                    <span className="w-4 shrink-0 text-center text-[12px] leading-none" aria-hidden>
-                                      ↔
-                                    </span>
-                                    <span className="min-w-0 flex-1">Move stories</span>
-                                    <span className="story-actions-branch-chevron" aria-hidden>
-                                      ›
-                                    </span>
-                                  </button>
-                                  {bulkStorySubmenu === "move" ? (
-                                    <div
-                                      className={`toolbar-dropdown-shell story-actions-submenu${
-                                        bulkStoryMenuPos.left + 504 > window.innerWidth ? " story-actions-submenu-left" : ""
-                                      }${bulkStoryMenuPos.top + 280 > window.innerHeight ? " story-actions-submenu-up" : ""}`}
-                                      role="menu"
-                                      aria-label="Move stories"
-                                    >
-                                      <div className="space-y-0.5 p-1.5">
-                                        <BulkMenuItem
-                                          className="text-teal-900 hover:bg-teal-50"
-                                          disabled={visibleSelectedCount === 0 || !selectedAnyOnCurrentSprint}
-                                          title={
-                                            !selectedAnyOnCurrentSprint
-                                              ? "All selected stories are already on Next sprint"
-                                              : "Move selected current-sprint stories to Next sprint"
-                                          }
-                                          glyph="→"
-                                          onClick={moveSelectedToNextSprint}
-                                        >
-                                          Next sprint
-                                        </BulkMenuItem>
-                                        <BulkMenuItem
-                                          className="text-sky-900 hover:bg-sky-50"
-                                          disabled={visibleSelectedCount === 0 || !selectedAnyOnNextSprint}
-                                          title={
-                                            !selectedAnyOnNextSprint
-                                              ? "All selected stories are already on Current sprint"
-                                              : "Move selected next-sprint stories back to Current sprint"
-                                          }
-                                          glyph="↩"
-                                          onClick={moveSelectedToCurrentSprint}
-                                        >
-                                          Current sprint
-                                        </BulkMenuItem>
-                                      </div>
-                                    </div>
-                                  ) : null}
-                                </div>
-                              ) : null}
                               <div className="story-actions-branch">
                                 <button
                                   type="button"
@@ -3541,7 +3675,7 @@ export function TaskTable() {
                       title="Clear every filter so all stories show again"
                       onClick={() => {
                         setVisibleStatuses(defaultVisibleStatusOptions);
-                        setSprintFilter("all");
+                        setJiraSprintFilter("all");
                         changeOwnerFilter("all");
                         setTypeFilter([...typeFilterOptions]);
                         setKindFilter("all");
@@ -5342,6 +5476,17 @@ export function TaskTable() {
           squadId={activeSquadId}
           canEdit={isEditor}
           onClose={closeComments}
+        />
+      ) : null}
+      {jiraSprintChoices && jiraSprintChoices.length > 0 ? (
+        <JiraSprintChoiceModal
+          choices={jiraSprintChoices}
+          onClose={() => setJiraSprintChoices(null)}
+          onConfirm={(sprintIdByProject) => {
+            const tasks = pendingJiraSprintAddTasks.current;
+            setJiraSprintChoices(null);
+            void postAddJiraSprints(tasks, sprintIdByProject);
+          }}
         />
       ) : null}
       {bulkStatusTasks.length > 0 ? (

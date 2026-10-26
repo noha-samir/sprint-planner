@@ -67,6 +67,14 @@ enum TaskReplanStep {
   Buffer
 }
 
+/** Jira Agile sprint membership. `none` means Jira confirmed the issue is in the backlog. */
+enum JiraSprintState {
+  active
+  future
+  closed
+  none
+}
+
 model AppConfig {
   id                 Int      @id @default(1)
   allowedEmailDomain String
@@ -261,6 +269,12 @@ model Task {
   isPmStory           Boolean         @default(false)
   /** Assignee of the Jira issue itself (roster name when mapped, else Jira display name); set on Pull. */
   jiraAssigneeName    String?
+  /** Jira sprint id from the last pull. Null when unread or when the issue has no sprint. */
+  jiraSprintId        Int?
+  /** Jira sprint name from the last pull. */
+  jiraSprintName      String?
+  /** Null until a pull reads the sprint. `none` is a confirmed backlog issue. */
+  jiraSprintState     JiraSprintState?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 

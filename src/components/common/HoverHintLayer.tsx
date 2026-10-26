@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   computeHoverHintPosition,
-  HOVER_HINT_DELAY_MS,
+  hoverHintDelayMs,
   HOVER_HINT_MENU_SELECTOR,
   readHoverHintTarget,
   restoreNativeTitle,
@@ -59,6 +59,7 @@ export function HoverHintLayer() {
       hide();
       activeRef.current = found.element;
       stashNativeTitle(found.element, found.text);
+      const inMenu = Boolean(found.element.closest(HOVER_HINT_MENU_SELECTOR));
       timerRef.current = window.setTimeout(() => {
         const menu = found.element.closest(HOVER_HINT_MENU_SELECTOR);
         const position = computeHoverHintPosition(
@@ -67,7 +68,7 @@ export function HoverHintLayer() {
           { width: window.innerWidth, height: window.innerHeight },
         );
         setHint({ text: found.text, ...position });
-      }, HOVER_HINT_DELAY_MS);
+      }, hoverHintDelayMs(inMenu));
     };
 
     const onPointerOut = (event: PointerEvent) => {
@@ -89,12 +90,14 @@ export function HoverHintLayer() {
 
     document.addEventListener("pointerover", onPointerOver, true);
     document.addEventListener("pointerout", onPointerOut, true);
+    document.addEventListener("pointerdown", hide, true);
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("keydown", onKeyDown);
     return () => {
       hide();
       document.removeEventListener("pointerover", onPointerOver, true);
       document.removeEventListener("pointerout", onPointerOut, true);
+      document.removeEventListener("pointerdown", hide, true);
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("keydown", onKeyDown);
     };

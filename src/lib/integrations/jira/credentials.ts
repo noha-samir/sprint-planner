@@ -30,3 +30,5 @@ export const buildJiraBasicAuthHeader = (credentials: JiraApiCredentials): strin
 };
 
 export const jiraRestApiBase = (siteUrl: string): string => `${normalizeJiraSiteUrl(siteUrl)}/rest/api/3`;
+
+export const jiraAgileApiBase = (siteUrl: string): string => `${normalizeJiraSiteUrl(siteUrl)}/rest/agile/1.0`;

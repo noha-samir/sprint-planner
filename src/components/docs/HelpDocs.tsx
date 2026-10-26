@@ -56,7 +56,7 @@ export function HelpDocs() {
           </table>
         </div>
         <p className="text-[12px] text-slate-500">
-          *Lifecycle = move next/current sprint, set buffer hours, Mark Progress Now, New Sprint.
+          *Lifecycle = set buffer hours, Mark Progress Now, New Sprint. Jira sprint membership is a separate filter.
         </p>
       </section>
 
@@ -123,8 +123,8 @@ export function HelpDocs() {
           </li>
         </ol>
         <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-[13px] text-blue-950">
-          <strong>Editors:</strong> you can plan the board on your squad, but you cannot run New Sprint,
-          Mark Progress, buffer edits, or move stories between current/next sprint.
+          <strong>Editors:</strong> you can plan the board on your squad, add a story to the open Jira sprint, and remove it from that sprint.
+          You cannot run New Sprint, Mark Progress, or buffer edits.
         </div>
       </section>
 

@@ -337,6 +337,17 @@ const normalizeTask = (task: Task): Task => {
     remainingBufferHours: normalizeOptionalHours(task.remainingBufferHours),
     releaseGroup:
       typeof task.releaseGroup === "string" && task.releaseGroup.trim() ? task.releaseGroup.trim() : null,
+    jiraSprintId:
+      typeof task.jiraSprintId === "number" && Number.isFinite(task.jiraSprintId) ? task.jiraSprintId : null,
+    jiraSprintName:
+      typeof task.jiraSprintName === "string" && task.jiraSprintName.trim() ? task.jiraSprintName.trim() : null,
+    jiraSprintState:
+      task.jiraSprintState === "active" ||
+      task.jiraSprintState === "future" ||
+      task.jiraSprintState === "closed" ||
+      task.jiraSprintState === "none"
+        ? task.jiraSprintState
+        : null,
     jira: task.jira
       ? {
           parentIssueKey: task.jira.parentIssueKey ?? "",

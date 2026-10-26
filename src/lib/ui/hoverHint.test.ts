@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { computeHoverHintPosition, readHoverHintTarget, restoreNativeTitle, stashNativeTitle } from "./hoverHint";
+import {
+  computeHoverHintPosition,
+  hoverHintDelayMs,
+  readHoverHintTarget,
+  restoreNativeTitle,
+  stashNativeTitle,
+} from "./hoverHint";
 
 const viewport = { width: 1400, height: 900 };
 const rect = (left: number, top: number, right: number, bottom: number) => ({ left, top, right, bottom });
@@ -31,6 +37,13 @@ describe("computeHoverHintPosition", () => {
   });
 });
 
+describe("hoverHintDelayMs", () => {
+  it("waits longer inside a dropdown than on a resting control", () => {
+    expect(hoverHintDelayMs(false)).toBe(400);
+    expect(hoverHintDelayMs(true)).toBeGreaterThan(hoverHintDelayMs(false));
+  });
+});
+
 describe("readHoverHintTarget", () => {
   it("returns null when there is no titled ancestor", () => {
     expect(readHoverHintTarget(null)).toBeNull();
@@ -42,13 +55,13 @@ describe("stashNativeTitle", () => {
     const element = {
       attrs: { title: "Pull from Jira" } as Record<string, string>,
       getAttribute(name: string) {
-        return this.attrs[name] ?? null;
+        return (this as any).attrs[name] ?? null;
       },
       setAttribute(name: string, value: string) {
-        this.attrs[name] = value;
+        (this as any).attrs[name] = value;
       },
       removeAttribute(name: string) {
-        delete this.attrs[name];
+        delete (this as any).attrs[name];
       },
     } as unknown as HTMLElement;
 

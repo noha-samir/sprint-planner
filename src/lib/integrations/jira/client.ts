@@ -1,5 +1,6 @@
 import {
   buildJiraBasicAuthHeader,
+  jiraAgileApiBase,
   jiraRestApiBase,
   type JiraApiCredentials,
 } from "./credentials";
@@ -10,8 +11,8 @@ export { JiraApiError } from "./jiraErrors";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Jira REST v3 fetch with JSON headers and retry on 429 / 502 / 503 (up to 3 attempts). */
-export const jiraFetch = async (
+const jiraFetchAt = async (
+  baseUrl: string,
   credentials: JiraApiCredentials,
   path: string,
   init?: RequestInit,
@@ -20,7 +21,7 @@ export const jiraFetch = async (
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const response = await fetch(`${jiraRestApiBase(credentials.siteUrl)}${path}`, {
+      const response = await fetch(`${baseUrl}${path}`, {
         ...init,
         headers: {
           Authorization: buildJiraBasicAuthHeader(credentials),
@@ -49,6 +50,20 @@ export const jiraFetch = async (
   }
   throw lastError instanceof Error ? lastError : new Error("Jira request failed");
 };
+
+/** Jira REST v3 fetch with JSON headers and retry on 429 / 502 / 503 (up to 3 attempts). */
+export const jiraFetch = (
+  credentials: JiraApiCredentials,
+  path: string,
+  init?: RequestInit,
+): Promise<Response> => jiraFetchAt(jiraRestApiBase(credentials.siteUrl), credentials, path, init);
+
+/** Jira Software Agile fetch (sprint and backlog), same retry as {@link jiraFetch}. */
+export const jiraAgileFetch = (
+  credentials: JiraApiCredentials,
+  path: string,
+  init?: RequestInit,
+): Promise<Response> => jiraFetchAt(jiraAgileApiBase(credentials.siteUrl), credentials, path, init);
 
 /**
  * Verify an API token by calling Jira /myself.
