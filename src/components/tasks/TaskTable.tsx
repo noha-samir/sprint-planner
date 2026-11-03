@@ -708,7 +708,7 @@ export function TaskTable() {
     }
     return byId;
   }, [tasks]);
-  const needsPushFilterActive = needsPushOnly && pendingJiraChangesById.size > 0;
+  const needsPushFilterActive = needsPushOnly;
   const anyEmStoryMarked = useMemo(() => tasks.some((task) => Boolean(task.isEmStory)), [tasks]);
   const anyPmStoryMarked = useMemo(
     () =>
@@ -1495,6 +1495,24 @@ export function TaskTable() {
   };
 
   /**
+   * Put the dashboard back on its usual filters: open sprint, default statuses, every type, all owners.
+   */
+  const restoreDefaultBoardFilters = () => {
+    setIsSprintFilterOpen(false);
+    setIsStatusFilterOpen(false);
+    setTypeFilterOpen(false);
+    setOwnerFilterOpen(false);
+    setKindFilterOpen(false);
+    setNeedsPushOnly(false);
+    setJiraSprintFilter("open");
+    setVisibleStatuses(defaultVisibleStatusOptions);
+    setTypeFilter([...typeFilterOptions]);
+    setEmFilter("all");
+    setOwnerPeople([]);
+    setKindFilter("all");
+  };
+
+  /**
    * Push stories to Jira: remote-change check → confirm / conflict dialog → push → save → summary banner.
    * Shared by Actions → Push to Jira and the row "Needs push" badge.
    * @param taskIds - Stories to push (non-eligible ones are reported as left out).
@@ -1936,6 +1954,13 @@ export function TaskTable() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusTaskId]);
 
+  useEffect(() => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    const max = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (el.scrollTop > max) el.scrollTop = max;
+  }, [orderedTasks]);
+
   const releaseGroupColorMap = useMemo(
     () => buildReleaseGroupColorMap(orderedTasks.map((task) => task.releaseGroup)),
     // eslint-disable-next-line react-hooks/preserve-manual-memoization -- orderedTasks is derived each render
@@ -2058,13 +2083,7 @@ export function TaskTable() {
     setOwnerFilterOpen(false);
     setKindFilterOpen(false);
     if (needsPushOnly) {
-      setNeedsPushOnly(false);
-      setJiraSprintFilter("open");
-      setVisibleStatuses(defaultVisibleStatusOptions);
-      setTypeFilter([...typeFilterOptions]);
-      setEmFilter("all");
-      setOwnerPeople([]);
-      setKindFilter("all");
+      restoreDefaultBoardFilters();
       return;
     }
     setNeedsPushOnly(true);
@@ -2599,6 +2618,17 @@ export function TaskTable() {
         return current.filter((item) => item !== status);
       }
       return [...current, status];
+    });
+  };
+
+  /** Keep a status the user just chose in the filter, so that story stays on the dashboard. */
+  const revealStatusInFilter = (status: string) => {
+    const key = status.trim().toLowerCase();
+    if (!key) return;
+    setVisibleStatuses((current) => {
+      if (current.some((item) => item.trim().toLowerCase() === key)) return current;
+      const known = statusFilterOptions.find((item) => item.trim().toLowerCase() === key) ?? status;
+      return [...current, known];
     });
   };
 
@@ -4892,6 +4922,7 @@ export function TaskTable() {
                                         : "hover:brightness-[0.98]"
                                     }`}
                                     onClick={() => {
+                                      revealStatusInFilter(status);
                                       updateTask(task.id, { status });
                                       setAssigneePickerOpen(null);
                                     }}
@@ -5565,6 +5596,7 @@ export function TaskTable() {
           onClose={() => setBulkStatusIds(null)}
           onSave={(status) => {
             const changedIds = bulkStatusTasks.filter((task) => task.status !== status).map((task) => task.id);
+            revealStatusInFilter(status);
             updateTasks(changedIds, { status });
             setBulkStatusIds(null);
             setActionFeedback(

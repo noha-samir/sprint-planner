@@ -1419,6 +1419,8 @@ body {
 
   .task-table-scroll {
     @apply min-h-0 flex-1 overflow-x-hidden overflow-y-auto;
+    /* Row reorders (UAT moves to the top) must not shove the viewport into blank space. */
+    overflow-anchor: none;
   }
 
   .task-table-fit {
