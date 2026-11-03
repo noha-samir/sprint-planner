@@ -7,16 +7,32 @@ import { StartNewSprintModal } from "@/components/tasks/StartNewSprintModal";
 import { TaskTable } from "@/components/tasks/TaskTable";
 import { sessionCapabilities } from "@/lib/access/control";
 import { daysPastSprintWindowEnd, getSprintWindowEnd, parseCalendarDate } from "@/lib/scheduler/calendar";
+import { listBoardOpenSprints } from "@/lib/integrations/jira/jiraSprint";
 import { usePlannerStore } from "@/store/usePlannerStore";
 
 function SprintWindowSummary() {
   const hasHydrated = usePlannerStore((state) => state.hasHydrated);
   const config = usePlannerStore((state) => state.config);
+  const tasks = usePlannerStore((state) => state.tasks);
   if (!hasHydrated) {
     return <span className="dashboard-sprint-window">Sprint window</span>;
   }
+  const openSprints = listBoardOpenSprints(tasks);
+  const sprintName = openSprints[0]?.jiraSprintName;
+  const alsoOpen = openSprints.slice(1).map((sprint) => sprint.jiraSprintName);
   return (
-    <span className="dashboard-sprint-window">
+    <span
+      className="dashboard-sprint-window"
+      title={alsoOpen.length > 0 ? `Also open: ${alsoOpen.join(", ")}` : undefined}
+    >
+      {sprintName ? (
+        <>
+          <span className="font-semibold">{sprintName}</span>
+          <span className="dashboard-sprint-window-sep" aria-hidden>
+            ·
+          </span>
+        </>
+      ) : null}
       Sprint start {format(parseCalendarDate(config.sprintStartDate), "EEE dd MMM, yyyy")}
       <span className="dashboard-sprint-window-sep" aria-hidden>
         ·

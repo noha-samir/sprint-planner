@@ -75,7 +75,7 @@ describe("pushPlannerStatusToJira", () => {
     expect(result).toEqual({ changed: true, fromStatus: "To Do", toStatus: "Ready for Testing" });
   });
 
-  it("takes the furthest allowed step and uses a direct transition as soon as it appears", async () => {
+  it("takes the next status on the path when Jira also offers a later one", async () => {
     vi.spyOn(client, "getJiraIssueStatusName").mockResolvedValue("To Do");
     vi.spyOn(client, "listJiraIssueTransitions")
       .mockResolvedValueOnce([
@@ -87,7 +87,7 @@ describe("pushPlannerStatusToJira", () => {
 
     const result = await pushPlannerStatusToJira(credentials, "BR-1", "Ready for Testing");
 
-    expect(transition.mock.calls.map((call) => call[2])).toEqual(["b", "c"]);
+    expect(transition.mock.calls.map((call) => call[2])).toEqual(["a", "c"]);
     expect(result.toStatus).toBe("Ready for Testing");
     expect(result.warning).toBeUndefined();
   });
@@ -153,6 +153,60 @@ describe("pushPlannerStatusToJira", () => {
 
     expect(transition).not.toHaveBeenCalled();
     expect(result.warning).toContain("Could not move BR-1");
+  });
+
+  it("steps Ready for Review toward Production through Ready for Testing, not Done", async () => {
+    vi.spyOn(client, "getJiraIssueStatusName").mockResolvedValue("Ready for Review");
+    vi.spyOn(client, "listJiraIssueTransitions")
+      .mockResolvedValueOnce([
+        { id: "c", name: "Cancel", toStatusName: "Cancelled" },
+        { id: "bl", name: "Block", toStatusName: "Blocked" },
+        { id: "td", name: "To Do", toStatusName: "To Do" },
+        { id: "dn", name: "Done", toStatusName: "Done" },
+        { id: "rt", name: "Ready", toStatusName: "Ready for Testing" },
+      ])
+      .mockResolvedValueOnce([{ id: "te", name: "Test", toStatusName: "Testing" }])
+      .mockResolvedValueOnce([{ id: "uat", name: "UAT", toStatusName: "UAT" }])
+      .mockResolvedValueOnce([{ id: "rfp", name: "Release", toStatusName: "Ready for Production" }])
+      .mockResolvedValueOnce([{ id: "pr", name: "Ship", toStatusName: "Production" }]);
+    const transition = vi.spyOn(client, "transitionJiraIssue").mockResolvedValue(undefined);
+
+    const result = await pushPlannerStatusToJira(credentials, "BR-80249", "Production");
+
+    expect(transition.mock.calls.map((call) => call[2])).toEqual(["rt", "te", "uat", "rfp", "pr"]);
+    expect(result).toEqual({ changed: true, fromStatus: "Ready for Review", toStatus: "Production" });
+  });
+
+  it("walks STAGING → UAT → Ready for Production → Production", async () => {
+    vi.spyOn(client, "getJiraIssueStatusName").mockResolvedValue("STAGING");
+    vi.spyOn(client, "listJiraIssueTransitions")
+      .mockResolvedValueOnce([
+        { id: "uat", name: "UAT", toStatusName: "UAT" },
+        { id: "rfp", name: "Release", toStatusName: "Ready for Production" },
+        { id: "td", name: "To Do", toStatusName: "To Do" },
+      ])
+      .mockResolvedValueOnce([{ id: "rfp2", name: "Release", toStatusName: "Ready for Production" }])
+      .mockResolvedValueOnce([{ id: "pr", name: "Ship", toStatusName: "Production" }]);
+    const transition = vi.spyOn(client, "transitionJiraIssue").mockResolvedValue(undefined);
+
+    const result = await pushPlannerStatusToJira(credentials, "BR-80249", "Production");
+
+    expect(transition.mock.calls.map((call) => call[2])).toEqual(["uat", "rfp2", "pr"]);
+    expect(result).toEqual({ changed: true, fromStatus: "STAGING", toStatus: "Production" });
+  });
+
+  it("does not bounce between STAGING and UAT", async () => {
+    vi.spyOn(client, "getJiraIssueStatusName").mockResolvedValue("STAGING");
+    vi.spyOn(client, "listJiraIssueTransitions")
+      .mockResolvedValueOnce([{ id: "uat", name: "UAT", toStatusName: "UAT" }])
+      .mockResolvedValue([{ id: "st", name: "Stage", toStatusName: "STAGING" }]);
+    const transition = vi.spyOn(client, "transitionJiraIssue").mockResolvedValue(undefined);
+
+    const result = await pushPlannerStatusToJira(credentials, "BR-80249", "Production");
+
+    expect(transition.mock.calls.map((call) => call[2])).toEqual(["uat"]);
+    expect(result.toStatus).toBe("UAT");
+    expect(result.warning).toContain("could not continue");
   });
 
   it("never steps backwards toward the target", async () => {

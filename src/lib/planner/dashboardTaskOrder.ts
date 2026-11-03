@@ -247,3 +247,21 @@ export const sortTasksForDashboard = (
 
   return floatNearReleaseStatusesToTop(clusterTasksByReleaseGroup(sorted));
 };
+
+/**
+ * Keep the rows in a captured order so an edit does not move the story the user is working through.
+ * Ids that were not in the capture stay at the end, in their current relative order.
+ * @param tasks - Rows to show.
+ * @param order - Ids in the order to keep.
+ */
+export const sortTasksByFrozenOrder = (tasks: Task[], order: readonly string[]): Task[] => {
+  const index = new Map(order.map((id, position) => [id, position]));
+  return [...tasks].sort((a, b) => {
+    const aIndex = index.get(a.id);
+    const bIndex = index.get(b.id);
+    if (aIndex === undefined && bIndex === undefined) return 0;
+    if (aIndex === undefined) return 1;
+    if (bIndex === undefined) return -1;
+    return aIndex - bIndex;
+  });
+};

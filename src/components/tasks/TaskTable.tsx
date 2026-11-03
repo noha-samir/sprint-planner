@@ -10,12 +10,13 @@ import {
 } from "@/lib/scheduler/calendar";
 import { sessionCapabilities } from "@/lib/access/control";
 import { isJiraStoryLink, buildJiraIssueBrowseUrl, parseJiraIssueKey } from "@/lib/integrations/jira/issueKey";
-import { partitionJiraSprintAdd, partitionJiraSprintClear, taskMatchesJiraSprintFilter, type JiraSprintFilter } from "@/lib/integrations/jira/jiraSprint";
+import { listBoardOpenSprints, partitionJiraSprintAdd, partitionJiraSprintClear, taskMatchesJiraSprintFilter, type JiraSprintFilter } from "@/lib/integrations/jira/jiraSprint";
 import { buildSubtaskStatusChips } from "@/lib/integrations/jira/subtaskStatusChips";
 import { safeStoryHref } from "@/lib/ui/safeStoryHref";
 import { issueTypeChipClass } from "@/lib/ui/issueTypeChip";
 import {
   buildIssueTypeFilterOptions,
+  effectiveIssueType,
   isParentlessPlannerTask,
   isStandaloneIssueType,
   taskMatchesIssueTypeFilter,
@@ -35,6 +36,7 @@ import {
 } from "@/lib/integrations/jira/syncedFields";
 import type { RemoteChangedTask } from "@/lib/integrations/jira/remoteChanges";
 import { formatBulkSyncConfirmMessage, formatBulkSyncSummaryModel, bulkSyncHasActionErrors, type BulkSyncTaskResult } from "@/lib/integrations/jira/bulkSyncMessages";
+import { formatJiraStatusJumpWarning, jiraStatusJump } from "@/lib/integrations/jira/statusWalk";
 import {
   formatBulkPullConfirmMessage,
   formatBulkPullSummaryModel,
@@ -48,7 +50,7 @@ import { effectiveMobileHours, mobileAppLabel } from "@/lib/scheduler/mobilePlat
 import { storyPhasePlanFromTask } from "@/lib/scheduler/storyTimelineEntries";
 import { getTasksNeedingRemark } from "@/lib/planner/pendingMarkProgress";
 import { copySelectedStoriesToClipboard } from "@/lib/planner/copySelectedStories";
-import { sortTasksForDashboard } from "@/lib/planner/dashboardTaskOrder";
+import { sortTasksByFrozenOrder, sortTasksForDashboard } from "@/lib/planner/dashboardTaskOrder";
 import { isOwnerPmStory } from "@/lib/planner/pmStoryFlag";
 import {
   buildOwnerPeopleMatchSet,
@@ -82,6 +84,7 @@ import { ResourceInsightModal } from "@/components/resources/ResourceInsightModa
 import { NumberStepper } from "@/components/common/NumberStepper";
 import { OrderInput } from "@/components/common/OrderInput";
 import { BulkAddTasksModal } from "@/components/tasks/BulkAddTasksModal";
+import { AddTaskModal } from "@/components/tasks/AddTaskModal";
 import { BulkAssigneesModal, type BulkAssigneesReason } from "@/components/tasks/BulkAssigneesModal";
 import { GroupStoriesModal } from "@/components/tasks/GroupStoriesModal";
 import { BulkStatusModal } from "@/components/tasks/BulkStatusModal";
@@ -469,6 +472,7 @@ export function TaskTable() {
   const [taskTodoModalId, setTaskTodoModalId] = useState<string | null>(null);
   const [moStartDateModalId, setMoStartDateModalId] = useState<string | null>(null);
   const [isBulkAddOpen, setIsBulkAddOpen] = useState(false);
+  const [isAddTaskOpen, setIsAddTaskOpen] = useState(false);
   const [bulkAssignees, setBulkAssignees] = useState<{
     taskIds: string[];
     reason: BulkAssigneesReason;
@@ -556,6 +560,8 @@ export function TaskTable() {
   const ownerFilterRef = useRef<HTMLDivElement | null>(null);
   const kindFilterRef = useRef<HTMLDivElement | null>(null);
   const tasksMenuRef = useRef<HTMLDivElement | null>(null);
+  /** Row order captured when Unpushed is turned on, so later edits do not jump the list. */
+  const unpushedOrderRef = useRef<string[] | null>(null);
   const [isSprintFilterOpen, setIsSprintFilterOpen] = useState(false);
   const [isStatusFilterOpen, setIsStatusFilterOpen] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
@@ -801,13 +807,38 @@ export function TaskTable() {
 
   const handleAddTask = useCallback(() => {
     if (!isEditor) return;
+    setTasksMenuOpen(false);
+    setIsAddTaskOpen(true);
+  }, [isEditor]);
+
+  const confirmAddTask = (choice: { issueType: string; sprint: { jiraSprintId: number; jiraSprintName: string } | null }) => {
     if (!visibleStatuses.includes(DEFAULT_TASK_STATUS)) {
       setVisibleStatuses((current) => [...current, DEFAULT_TASK_STATUS]);
     }
-    const id = addTask();
+    const sprintState = choice.sprint ? "active" : "none";
+    const id = addTask({
+      issueType: choice.issueType,
+      jiraSprintId: choice.sprint?.jiraSprintId ?? null,
+      jiraSprintName: choice.sprint?.jiraSprintName ?? null,
+      jiraSprintState: sprintState,
+    });
+    setJiraSprintFilter(sprintState === "active" ? "open" : "none");
+    const typeName = effectiveIssueType(choice.issueType);
+    setTypeFilter((current) =>
+      current.some((type) => type.trim().toLowerCase() === typeName.toLowerCase()) ? current : [...current, typeName],
+    );
+    if (kindFilter === "stories") setKindFilter("all");
+    if (needsPushOnly) setNeedsPushOnly(false);
+    if (emFilter === "em" || emFilter === "pm") setEmFilter("all");
+    if (ownerPeople.length > 0) setOwnerPeople([]);
     setFocusTaskId(id);
-    setTasksMenuOpen(false);
-  }, [addTask, isEditor, visibleStatuses]);
+    setIsAddTaskOpen(false);
+    setActionFeedback(
+      choice.sprint
+        ? `Added a ${typeName} in ${choice.sprint.jiraSprintName}.`
+        : `Added a ${typeName} with no Jira sprint. Showing stories that have no sprint.`,
+    );
+  };
 
   /**
    * Open the bulk assignee editor for the given stories (display order is kept).
@@ -925,6 +956,7 @@ export function TaskTable() {
 
   const jiraSprintFilterSummary =
     jiraSprintFilter === "open" ? "Open" : jiraSprintFilter === "none" ? "None" : "All";
+  const boardOpenSprints = useMemo(() => listBoardOpenSprints(tasks), [tasks]);
 
   const isTypeFilterCustom = useMemo(() => {
     if (typeFilter.length !== typeFilterOptions.length) return true;
@@ -1505,6 +1537,13 @@ export function TaskTable() {
       } finally {
         setJiraSyncPreparing(null);
       }
+      const statusJumpWarning = formatJiraStatusJumpWarning(
+        eligibleTasks.flatMap((task) => {
+          const fromStatus = task.jira?.syncedFields?.status ?? "";
+          const jump = jiraStatusJump(fromStatus, task.status);
+          return jump ? [{ storyName: storyLabelForSync(task), ...jump }] : [];
+        }),
+      );
       if (remoteChanges && remoteChanges.length > 0) {
         const taskById = new Map(eligibleTasks.map((task) => [task.id, task]));
         const changedStories: JiraPushConflictStory[] = remoteChanges.flatMap((change) => {
@@ -1541,6 +1580,8 @@ export function TaskTable() {
           return;
         }
       }
+
+      if (statusJumpWarning && !window.confirm(statusJumpWarning)) return;
 
       startJiraSync({
         mode: "push",
@@ -1865,8 +1906,22 @@ export function TaskTable() {
       isUatTrackingEnabled && plannerMeta.dashboardTaskOrder.length > 0
         ? plannerMeta.dashboardTaskOrder
         : null;
-    return sortTasksForDashboard(filtered, releaseDateById, pinnedOrder);
+    const sorted = sortTasksForDashboard(filtered, releaseDateById, pinnedOrder);
+    if (needsPushFilterActive && unpushedOrderRef.current && unpushedOrderRef.current.length > 0) {
+      return sortTasksByFrozenOrder(filtered, unpushedOrderRef.current);
+    }
+    return sorted;
   }, [tasks, safeResult.tasks, visibleStatuses, jiraSprintFilter, emFilter, ownerPeopleMatchSet, typeFilter, kindFilter, needsPushFilterActive, pendingJiraChangesById, isUatTrackingEnabled, plannerMeta.dashboardTaskOrder, squadPmNames, resources]);
+
+  useEffect(() => {
+    if (!needsPushFilterActive) {
+      unpushedOrderRef.current = null;
+      return;
+    }
+    if (!unpushedOrderRef.current) {
+      unpushedOrderRef.current = orderedTasks.map((task) => task.id);
+    }
+  }, [needsPushFilterActive, orderedTasks]);
 
   useEffect(() => {
     if (!focusTaskId) return;
@@ -1877,7 +1932,9 @@ export function TaskTable() {
     }
     const timer = window.setTimeout(() => setFocusTaskId(null), 1800);
     return () => window.clearTimeout(timer);
-  }, [focusTaskId, orderedTasks]);
+    // Scroll once when a row is focused. Later edits must not pull the list back to that row.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusTaskId]);
 
   const releaseGroupColorMap = useMemo(
     () => buildReleaseGroupColorMap(orderedTasks.map((task) => task.releaseGroup)),
@@ -1988,11 +2045,36 @@ export function TaskTable() {
       ...names,
       ...more,
       needsPushFilterActive
-        ? "Click to turn the filter off and show all stories again."
-        : "Click to show only these stories (orange stripe). This does not push anything.",
+        ? "Click again to turn this off and restore the default filters."
+        : "Click to show only these stories. Other filters open to All. This does not push anything.",
       "To push: select the stories, then Actions → Push to Jira.",
     ].join("\n");
   }, [needsPushCount, tasks, pendingJiraChangesById, needsPushFilterActive]);
+
+  const toggleUnpushedFilter = () => {
+    setIsSprintFilterOpen(false);
+    setIsStatusFilterOpen(false);
+    setTypeFilterOpen(false);
+    setOwnerFilterOpen(false);
+    setKindFilterOpen(false);
+    if (needsPushOnly) {
+      setNeedsPushOnly(false);
+      setJiraSprintFilter("open");
+      setVisibleStatuses(defaultVisibleStatusOptions);
+      setTypeFilter([...typeFilterOptions]);
+      setEmFilter("all");
+      setOwnerPeople([]);
+      setKindFilter("all");
+      return;
+    }
+    setNeedsPushOnly(true);
+    setJiraSprintFilter("all");
+    setVisibleStatuses([...statusFilterOptions]);
+    setTypeFilter([...typeFilterOptions]);
+    setEmFilter("all");
+    setOwnerPeople([]);
+    setKindFilter("all");
+  };
 
   // Pending changes per story the first time it was seen this session; leaving warns only about newer edits.
   const firstSeenPendingRef = useRef(new Map<string, string>());
@@ -3003,40 +3085,13 @@ export function TaskTable() {
                       );
                     })}
                   </div>
-                  <div className="border-t border-slate-100 px-2 py-2">
-                    <label
-                      className={`toolbar-menu-choice ${needsPushFilterActive ? "toolbar-menu-choice-on" : ""}${pendingJiraChangesById.size === 0 ? " opacity-60" : ""}`}
-                      title={
-                        pendingJiraChangesById.size === 0
-                          ? "Every linked story matches Jira — nothing to push"
-                          : "Show only stories edited in the planner since their last Jira sync (orange stripe)"
-                      }
-                    >
-                      <input
-                        type="checkbox"
-                        className="mt-0.5"
-                        checked={needsPushFilterActive}
-                        disabled={pendingJiraChangesById.size === 0}
-                        onChange={(event) => setNeedsPushOnly(event.target.checked)}
-                      />
-                      <span className="min-w-0">
-                        <span className="block font-semibold text-slate-900">
-                          Unpushed changes only ({pendingJiraChangesById.size})
-                        </span>
-                        <span className="mt-0.5 block text-[11px] font-normal leading-snug text-slate-500">
-                          Stories with planner edits Jira does not have yet
-                        </span>
-                      </span>
-                    </label>
-                  </div>
                   <div className="toolbar-dropdown-footer">
                     <button
                       type="button"
                       className="toolbar-dropdown-footer-btn"
-                      title="Show stories and standalone items, and turn off Unpushed changes only"
+                      title="Show stories and standalone items"
                       onClick={() => {
                         setKindFilter("all");
-                        setNeedsPushOnly(false);
                         setKindFilterOpen(false);
                       }}
                     >
@@ -3046,19 +3101,24 @@ export function TaskTable() {
                 </div>
               ) : null}
             </div>
-            {needsPushCount > 0 ? (
-              <button
-                type="button"
-                className={toolbarTriggerClass(needsPushFilterActive, "toolbar-strip-btn-needs-push")}
-                aria-pressed={needsPushFilterActive}
-                title={needsPushToolbarHint}
-                onClick={() => setNeedsPushOnly((value) => !value)}
-              >
-                <span className="needs-push-dot" aria-hidden />
-                <span>Unpushed ({needsPushCount})</span>
-              </button>
-            ) : null}
           </div>
+          {needsPushCount > 0 || needsPushOnly ? (
+            <>
+              <div className="task-table-toolbar-divider" aria-hidden />
+              <div className="flex shrink-0 items-center">
+                <button
+                  type="button"
+                  className={toolbarTriggerClass(needsPushFilterActive, "toolbar-strip-btn-needs-push")}
+                  aria-pressed={needsPushFilterActive}
+                  title={needsPushToolbarHint}
+                  onClick={toggleUnpushedFilter}
+                >
+                  <span className="needs-push-dot" aria-hidden />
+                  <span>Unpushed ({needsPushCount})</span>
+                </button>
+              </div>
+            </>
+          ) : null}
           <div className="task-table-toolbar-divider" aria-hidden />
           <div className="task-table-toolbar-actions">
             <span className="task-table-toolbar-group-label">Actions</span>
@@ -3145,7 +3205,7 @@ export function TaskTable() {
                         type="button"
                         role="menuitem"
                         className="toolbar-menu-item"
-                        title="Add one empty task row to the table"
+                        title="Add one task. Choose its story type and sprint first."
                         onClick={handleAddTask}
                       >
                         Add singular task
@@ -5437,6 +5497,13 @@ export function TaskTable() {
             </div>
           </div>
         </div>
+      ) : null}
+      {isAddTaskOpen ? (
+        <AddTaskModal
+          sprints={boardOpenSprints}
+          onCancel={() => setIsAddTaskOpen(false)}
+          onConfirm={confirmAddTask}
+        />
       ) : null}
       {isBulkAddOpen ? (
         <BulkAddTasksModal

@@ -6,7 +6,7 @@ import {
   type JiraIssueTransition,
 } from "./client";
 import { isSameJiraStatus, pickTransitionForTargetStatus } from "./statusMap";
-import { isTodoTaskStatus } from "@/lib/scheduler/taskStatus";
+import { jiraStatusForwardRank } from "./statusWalk";
 
 export type SyncIssueStatusResult = {
   changed: boolean;
@@ -15,51 +15,53 @@ export type SyncIssueStatusResult = {
   warning?: string;
 };
 
-/**
- * Forward workflow up to Ready for Testing:
- * (Ready for Development / Backlog / …) → To Do → In Progress → Ready for Review → Ready for Testing.
- */
-const FORWARD_STEP_RANK: Record<string, number> = {
-  "to do": 0,
-  todo: 0,
-  "in progress": 1,
-  "ready for review": 2,
-  "ready for testing": 3,
-};
+/** One transition per status on the release path, plus a detour when Jira's next step is an earlier release status. */
+const MAX_FORWARD_STEPS = 16;
 
-const PRE_DEVELOPMENT_RANK = -1;
-
-/** Pre-development → To Do → In Progress → Ready for Review → Ready for Testing. */
-const MAX_FORWARD_STEPS = 4;
+const statusKey = (status: string): string => status.trim().toLowerCase();
 
 /**
- * Position of a status on the forward workflow.
- * Pre-development statuses (Ready for Development, Backlog, design / discovery) sit one step before To Do,
- * since Jira usually only allows them to move to To Do first.
- * @returns Rank, or null when the status is not part of the stepped workflow (e.g. Blocked, Testing).
- */
-const forwardStepRank = (status: string): number | null => {
-  const value = status.trim().toLowerCase();
-  if (value in FORWARD_STEP_RANK) return FORWARD_STEP_RANK[value];
-  return isTodoTaskStatus(status) && !value.includes("review") ? PRE_DEVELOPMENT_RANK : null;
-};
-
-/**
- * Next forward transition toward the target when Jira has no direct one: the furthest available status
- * that is after the current status and before the target.
+ * Next forward transition toward the target when Jira has no direct one: the next status on the
+ * release path (STAGING → UAT → Ready for Production → Production), not a later status offered at the same time.
  */
 const pickForwardStepTransition = (
   transitions: JiraIssueTransition[],
   currentStatus: string,
   targetStatus: string,
+  visited: Set<string>,
 ): JiraIssueTransition | null => {
-  const currentRank = forwardStepRank(currentStatus);
-  const targetRank = forwardStepRank(targetStatus);
+  const currentRank = jiraStatusForwardRank(currentStatus);
+  const targetRank = jiraStatusForwardRank(targetStatus);
   if (currentRank == null || targetRank == null || targetRank <= currentRank) return null;
   let best: { transition: JiraIssueTransition; rank: number } | null = null;
   for (const transition of transitions) {
-    const rank = forwardStepRank(transition.toStatusName);
+    const rank = jiraStatusForwardRank(transition.toStatusName);
     if (rank == null || rank <= currentRank || rank >= targetRank) continue;
+    if (visited.has(statusKey(transition.toStatusName))) continue;
+    if (!best || rank < best.rank) best = { transition, rank };
+  }
+  return best?.transition ?? null;
+};
+
+/**
+ * When the forward step is missing, take the closest earlier release status that has not been used yet.
+ * To Do, Done, Blocked, and Cancelled are not detours.
+ * @param visited - Statuses already applied in this push, so the walk cannot bounce.
+ */
+const pickReleaseDetourTransition = (
+  transitions: JiraIssueTransition[],
+  currentStatus: string,
+  targetStatus: string,
+  visited: Set<string>,
+): JiraIssueTransition | null => {
+  const currentRank = jiraStatusForwardRank(currentStatus);
+  const targetRank = jiraStatusForwardRank(targetStatus);
+  if (currentRank == null || targetRank == null || targetRank <= currentRank) return null;
+  let best: { transition: JiraIssueTransition; rank: number } | null = null;
+  for (const transition of transitions) {
+    const rank = jiraStatusForwardRank(transition.toStatusName);
+    if (rank == null || rank <= 0 || rank >= currentRank || rank >= targetRank) continue;
+    if (visited.has(statusKey(transition.toStatusName))) continue;
     if (!best || rank > best.rank) best = { transition, rank };
   }
   return best?.transition ?? null;
@@ -68,7 +70,7 @@ const pickForwardStepTransition = (
 /**
  * Push planner status to Jira by transitioning the parent issue to that status name.
  * When the workflow has no direct transition, steps forward one status at a time
- * (Ready for Development → To Do → In Progress → Ready for Review → Ready for Testing) until the target is reached.
+ * through Ready for Testing, then STAGING → UAT → Ready for Production → Production.
  * @returns `warning` when the target could not be reached (possibly after some forward steps).
  */
 export const pushPlannerStatusToJira = async (
@@ -93,12 +95,17 @@ export const pushPlannerStatusToJira = async (
 
   let currentStatus = fromStatus;
   let transitions = await listJiraIssueTransitions(credentials, issueKey);
+  const visited = new Set([statusKey(fromStatus)]);
   for (let step = 0; step < MAX_FORWARD_STEPS; step += 1) {
     const direct = pickTransitionForTargetStatus(transitions, target);
-    const next = direct ?? pickForwardStepTransition(transitions, currentStatus, target);
+    const next =
+      direct ??
+      pickForwardStepTransition(transitions, currentStatus, target, visited) ??
+      pickReleaseDetourTransition(transitions, currentStatus, target, visited);
     if (!next) break;
     await transitionJiraIssue(credentials, issueKey, next.id);
     currentStatus = next.toStatusName;
+    visited.add(statusKey(currentStatus));
     if (direct || isSameJiraStatus(currentStatus, target)) {
       return { changed: true, fromStatus, toStatus: currentStatus };
     }

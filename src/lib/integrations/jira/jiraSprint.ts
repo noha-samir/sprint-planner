@@ -97,6 +97,32 @@ export type OpenJiraSprint = {
  * @param sprints - Sprint rows from one or more boards.
  * @returns Open sprints, sorted by name.
  */
+/**
+ * Open sprints already stored on the board, busiest first.
+ * @param tasks - Dashboard stories.
+ * @returns One entry per active sprint id.
+ */
+export const listBoardOpenSprints = (
+  tasks: Array<Pick<Task, "jiraSprintId" | "jiraSprintName" | "jiraSprintState">>,
+): OpenJiraSprint[] => {
+  const counts = new Map<number, { name: string; count: number }>();
+  for (const task of tasks) {
+    if (task.jiraSprintState !== "active") continue;
+    const id = task.jiraSprintId;
+    if (typeof id !== "number" || !Number.isFinite(id)) continue;
+    const name = task.jiraSprintName?.trim() || `Sprint ${id}`;
+    const existing = counts.get(id);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      counts.set(id, { name, count: 1 });
+    }
+  }
+  return [...counts.entries()]
+    .sort((left, right) => right[1].count - left[1].count || left[1].name.localeCompare(right[1].name))
+    .map(([jiraSprintId, value]) => ({ jiraSprintId, jiraSprintName: value.name }));
+};
+
 export const listActiveJiraSprints = (
   sprints: Array<{ id?: number; name?: string; state?: string }>,
 ): OpenJiraSprint[] => {

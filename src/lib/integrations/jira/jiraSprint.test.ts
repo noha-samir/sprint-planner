@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   jiraSprintFromAgileIssue,
   listActiveJiraSprints,
+  listBoardOpenSprints,
   partitionJiraSprintAdd,
   partitionJiraSprintClear,
   taskMatchesJiraSprintFilter,
@@ -94,6 +95,23 @@ describe("listActiveJiraSprints", () => {
 
   it("returns nothing when Jira has no open sprint", () => {
     expect(listActiveJiraSprints([])).toEqual([]);
+  });
+});
+
+describe("listBoardOpenSprints", () => {
+  it("returns active sprints, busiest first", () => {
+    expect(
+      listBoardOpenSprints([
+        { jiraSprintId: 1, jiraSprintName: "DS-26Q4S1", jiraSprintState: "active" },
+        { jiraSprintId: 2, jiraSprintName: "26Q4S4", jiraSprintState: "active" },
+        { jiraSprintId: 2, jiraSprintName: "26Q4S4", jiraSprintState: "active" },
+        { jiraSprintId: 3, jiraSprintName: "Old", jiraSprintState: "closed" },
+        { jiraSprintId: null, jiraSprintName: null, jiraSprintState: "none" },
+      ]),
+    ).toEqual([
+      { jiraSprintId: 2, jiraSprintName: "26Q4S4" },
+      { jiraSprintId: 1, jiraSprintName: "DS-26Q4S1" },
+    ]);
   });
 });
 

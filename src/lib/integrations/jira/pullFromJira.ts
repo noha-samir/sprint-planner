@@ -302,6 +302,11 @@ export const syncTaskFromJira = async (
     patch.issueType = issueTypeName;
   }
 
+  const summary = parentFields.summary?.trim() ?? "";
+  if (summary && summary !== task.storyName.trim()) {
+    patch.storyName = summary;
+  }
+
   const parentAssignee = extractJiraUserField(parentFields.assignee);
   // Roster name when mapped so the people filter matches; Jira's display name otherwise, null when unassigned.
   patch.jiraAssigneeName = parentAssignee

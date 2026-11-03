@@ -5,6 +5,7 @@ import {
   buildDashboardTaskOrder,
   clusterTasksByReleaseGroup,
   floatNearReleaseStatusesToTop,
+  sortTasksByFrozenOrder,
   sortTasksForDashboard,
 } from "./dashboardTaskOrder";
 import { buildReleaseGroupColorMap, releaseGroupInputStyle } from "./releaseGroupColors";
@@ -161,6 +162,16 @@ describe("dashboardTaskOrder", () => {
       task("d", 4, null, "UAT"),
     ];
     expect(floatNearReleaseStatusesToTop(tasks).map((row) => row.id)).toEqual(["b", "d", "c", "a"]);
+  });
+
+  it("keeps a captured order when a story's status would otherwise move it", () => {
+    const rows = [
+      task("a", 1, null, "In Progress"),
+      task("b", 2, null, "UAT"),
+      task("c", 3, null, "To Do"),
+    ];
+    expect(sortTasksByFrozenOrder(rows, ["c", "a", "b"]).map((row) => row.id)).toEqual(["c", "a", "b"]);
+    expect(sortTasksByFrozenOrder(rows, ["a"]).map((row) => row.id)).toEqual(["a", "b", "c"]);
   });
 });
 

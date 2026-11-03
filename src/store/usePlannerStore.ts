@@ -98,7 +98,12 @@ interface PlannerState {
   result: ScheduleResult;
   remainingUtilization: ResourceUtilization[];
   sprintUtilization: SprintTaskUtilization;
-  addTask: () => string;
+  addTask: (draft?: {
+    issueType?: string;
+    jiraSprintId?: number | null;
+    jiraSprintName?: string | null;
+    jiraSprintState?: "active" | "none" | null;
+  }) => string;
   addTasks: (drafts: BulkPasteRow[]) => string[];
   updateTask: (id: string, patch: Partial<Task>) => void;
   /** Apply the same patch to many tasks in one reschedule / save. */
@@ -713,9 +718,15 @@ export const usePlannerStore = create<PlannerState>()(
           ...touchMutation(),
         });
       },
-      addTask: () => {
+      addTask: (draft) => {
         const { tasks, resources, config, plannerMeta } = get();
-        const newTask = emptyTask();
+        const newTask = normalizeTask({
+          ...emptyTask(),
+          ...(draft?.issueType ? { issueType: draft.issueType } : {}),
+          jiraSprintId: draft?.jiraSprintId ?? null,
+          jiraSprintName: draft?.jiraSprintName ?? null,
+          jiraSprintState: draft?.jiraSprintState ?? "none",
+        });
         // Empty To Do rows do not need Mark Progress; hours/assignee edits will flag later.
         set({
           ...buildWithPlannerMeta([...tasks, newTask], resources, config, plannerMeta),

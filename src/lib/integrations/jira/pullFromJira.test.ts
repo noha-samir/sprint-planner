@@ -211,6 +211,25 @@ describe("syncTaskFromJira", () => {
     vi.unstubAllGlobals();
   });
 
+  it("replaces the dashboard story name with the Jira summary", async () => {
+    mockedListParentSubtasks.mockResolvedValueOnce([]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          fields: { summary: "  Live tracking data foundation  ", status: { name: "To Do" } },
+        }),
+      })),
+    );
+
+    const result = await syncTaskFromJira(baseTask({ storyName: "Old title" }), defaultSquadJiraConfig());
+
+    expect(result.patch.storyName).toBe("Live tracking data foundation");
+    expect(result.jira.syncedFields?.storyName).toBe("Live tracking data foundation");
+    vi.unstubAllGlobals();
+  });
+
   it("saves the Jira issue's own assignee: roster name when mapped, Jira display name otherwise", async () => {
     const pullWithParentAssignee = async (assignee: { accountId: string; displayName: string }) => {
       mockedListParentSubtasks.mockResolvedValueOnce([]);
