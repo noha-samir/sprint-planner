@@ -172,17 +172,17 @@ describe("dashboardTaskOrder", () => {
     expect(order).toEqual(["b", "c", "a", "d"]);
   });
 
-  it("keeps a release group together inside one status and leaves it split across statuses", () => {
+  it("keeps a release group together across statuses and places the block by its furthest story", () => {
     const tasks = [
-      task("login", 2, null, "In Progress"),
-      task("cart", 1, "Checkout", "In Progress"),
-      task("tax", 3, "Checkout", "In Progress"),
-      task("pay", 2, "Checkout", "Ready for Production"),
+      task("login", 1, null, "In Progress"),
+      task("cart", 4, "Checkout", "In Progress"),
+      task("review-other", 3, null, "Ready for Review"),
+      task("pay", 2, "Checkout", "Ready for Review"),
     ];
     expect(sortTasksForDashboard(tasks, new Map(), "default").map((row) => row.id)).toEqual([
       "pay",
       "cart",
-      "tax",
+      "review-other",
       "login",
     ]);
   });

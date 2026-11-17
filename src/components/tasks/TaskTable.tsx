@@ -3236,7 +3236,7 @@ export function TaskTable() {
               <div className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,18rem)]">
                 <ToolbarDropdownHeader
                   title="Sort"
-                  subtitle="Default is the latest status first, then Order, then the soonest release date. Stories in the same group stay together inside one status. Blocked is not sorted by date."
+                  subtitle="Default is the latest status first, then Order, then the soonest release date. A release group stays together and sits with its furthest story. Blocked is not sorted by date."
                 />
                 <div className="space-y-1 px-2 py-2">
                   {(

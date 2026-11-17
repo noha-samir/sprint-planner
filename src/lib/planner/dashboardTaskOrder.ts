@@ -92,33 +92,14 @@ const compareDashboardReleaseDate = (
 };
 
 /**
- * Order, then release date, for stories that already share a status.
- * Blocked stories are not ordered by release date.
- * @param a - First story.
- * @param b - Second story.
- * @param releaseDateById - UAT release date from the schedule, keyed by task id.
- * @returns Negative when a comes first.
- */
-const compareWithinStatus = (
-  a: Task,
-  b: Task,
-  releaseDateById: Map<string, Date | null | undefined>,
-): number => {
-  const orderDiff = compareDashboardOrder(a, b);
-  if (orderDiff !== 0) return orderDiff;
-  if (isBlockedDashboardStatus(a.status)) return 0;
-  return compareDashboardReleaseDate(a, b, releaseDateById);
-};
-
-/**
- * Inside one status, pull a release group into one block.
- * The block sits where its earliest Order (then soonest date) would sit.
+ * Default dashboard order: status, then Order, then release date, with a release group kept as one block.
+ * The block sits where its furthest story would sit. Stories inside it follow that same order.
  * Stories with no group stay single rows.
- * @param tasks - Stories that share a status.
+ * @param tasks - Rows to sort.
  * @param releaseDateById - UAT release date from the schedule, keyed by task id.
- * @returns Those stories with each group kept together.
+ * @returns A new array.
  */
-const keepGroupsTogetherWithinStatus = (
+const sortDefaultKeepingGroups = (
   tasks: Task[],
   releaseDateById: Map<string, Date | null | undefined>,
 ): Task[] => {
@@ -136,45 +117,19 @@ const keepGroupsTogetherWithinStatus = (
     else membersByGroup.set(group, [task]);
   }
 
+  const byDefault = (a: Task, b: Task) => compareTasksForDashboardSort(a, b, releaseDateById, "default");
   for (const members of membersByGroup.values()) {
-    blocks.push([...members].sort((a, b) => compareWithinStatus(a, b, releaseDateById)));
+    blocks.push([...members].sort(byDefault));
   }
-
-  blocks.sort((a, b) => compareWithinStatus(a[0], b[0], releaseDateById));
+  blocks.sort((a, b) => byDefault(a[0], b[0]));
   return blocks.flat();
-};
-
-/**
- * Default dashboard order: status first, then Order, then release date.
- * A release group stays together only inside one status.
- * @param tasks - Rows to sort.
- * @param releaseDateById - UAT release date from the schedule, keyed by task id.
- * @returns A new array.
- */
-const sortDefaultKeepingGroups = (
-  tasks: Task[],
-  releaseDateById: Map<string, Date | null | undefined>,
-): Task[] => {
-  const byStatus = new Map<number, Task[]>();
-  for (const task of tasks) {
-    const rank = dashboardStatusRank(task.status);
-    const bucket = byStatus.get(rank);
-    if (bucket) bucket.push(task);
-    else byStatus.set(rank, [task]);
-  }
-
-  const ordered: Task[] = [];
-  for (const rank of [...byStatus.keys()].sort((a, b) => a - b)) {
-    ordered.push(...keepGroupsTogetherWithinStatus(byStatus.get(rank) ?? [], releaseDateById));
-  }
-  return ordered;
 };
 
 /**
  * Compare two stories for the selected dashboard sort.
  * Default is status (latest step first), then Order, then release date.
  * Blocked stories are not ordered by release date.
- * Grouping inside a status is applied by `sortTasksForDashboard`, not by this pair compare.
+ * A release group is kept together by `sortTasksForDashboard`, placed by its furthest story.
  * @param a - First story.
  * @param b - Second story.
  * @param releaseDateById - UAT release date from the schedule, keyed by task id.
@@ -222,8 +177,8 @@ export const buildDashboardTaskOrder = (tasks: Task[], result: ScheduleResult): 
 
 /**
  * Sort the visible dashboard rows.
- * Default is status, then Order, then release date. Inside one status a release group stays together.
- * A group split across statuses stays split. Status, Release date, and Order do not regroup.
+ * Default is status, then Order, then release date. A release group stays together and sits where its furthest story would sit.
+ * Status, Release date, and Order do not regroup.
  * @param tasks - Rows that passed the filters.
  * @param releaseDateById - UAT release date from the schedule, keyed by task id.
  * @param mode - Default, status, release date, or Order.
