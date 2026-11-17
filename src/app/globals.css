@@ -448,9 +448,9 @@ body {
     @apply rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-rose-700 hover:shadow-md active:bg-rose-800;
   }
 
-  /* Groups never shrink below their buttons, so a too-narrow screen wraps a whole group instead of overlapping. */
+  /* One strip: Filters (including Unpushed), Sorting, and Actions. */
   .task-table-toolbar {
-    @apply flex flex-wrap items-center gap-x-2 gap-y-2 rounded-2xl border border-slate-200/70 px-2.5 py-2;
+    @apply flex flex-nowrap items-center gap-x-1.5 rounded-2xl border border-slate-200/70 px-2.5 py-2;
     background: linear-gradient(
       135deg,
       rgb(255 255 255 / 0.96) 0%,
@@ -464,20 +464,17 @@ body {
   }
 
   .task-table-toolbar-filters,
+  .task-table-toolbar-sort,
   .task-table-toolbar-actions {
-    @apply flex min-w-0 flex-wrap items-center gap-1 xl:min-w-max xl:flex-nowrap;
-  }
-
-  .task-table-toolbar-filters {
-    @apply flex-1;
+    @apply flex shrink-0 flex-nowrap items-center gap-1;
   }
 
   .task-table-toolbar-actions {
-    @apply ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1 xl:flex-nowrap;
+    @apply ml-auto justify-end;
   }
 
   .task-table-toolbar .toolbar-strip-btn {
-    @apply whitespace-nowrap px-2 py-1.5;
+    @apply whitespace-nowrap px-1.5 py-1 text-[13px];
   }
 
   /* Fixed height keeps header toggles aligned across columns regardless of the label below them. */
@@ -524,7 +521,7 @@ body {
   }
 
   .task-table-toolbar-divider {
-    @apply hidden h-7 w-px shrink-0 self-center lg:block;
+    @apply block h-7 w-px shrink-0 self-center;
     background: linear-gradient(
       180deg,
       rgb(148 163 184 / 0) 0%,

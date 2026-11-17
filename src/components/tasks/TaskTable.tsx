@@ -2735,9 +2735,9 @@ export function TaskTable() {
                   setIsSprintFilterOpen((current) => !current);
                 }}
               >
-                <span>Jira sprint</span>
+                <span>Sprint</span>
                 <ToolbarMenuChevron open={isSprintFilterOpen} />
-                <span className="toolbar-strip-btn-value w-[3.25rem]">{jiraSprintFilterSummary}</span>
+                <span className="toolbar-strip-btn-value">{jiraSprintFilterSummary}</span>
               </button>
               {isSprintFilterOpen ? (
                 <div className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,16rem)]">
@@ -2957,7 +2957,7 @@ export function TaskTable() {
               >
                 <span>Owner</span>
                 <ToolbarMenuChevron open={ownerFilterOpen} />
-                <span className="toolbar-strip-btn-value w-16">{ownerFilterSummary || "All"}</span>
+                <span className="toolbar-strip-btn-value">{ownerFilterSummary || "All"}</span>
               </button>
               {ownerFilterOpen ? (
                 <div
@@ -3133,7 +3133,7 @@ export function TaskTable() {
               >
                 <span>Kind</span>
                 <ToolbarMenuChevron open={kindFilterOpen} />
-                <span className="toolbar-strip-btn-value w-[4.75rem]">{kindFilterSummary || "All"}</span>
+                <span className="toolbar-strip-btn-value">{kindFilterSummary || "All"}</span>
               </button>
               {kindFilterOpen ? (
                 <div
@@ -3192,9 +3192,23 @@ export function TaskTable() {
                 </div>
               ) : null}
             </div>
+            {needsPushCount > 0 || needsPushOnly ? (
+              <button
+                type="button"
+                className={toolbarTriggerClass(needsPushFilterActive, "toolbar-strip-btn-needs-push")}
+                aria-pressed={needsPushFilterActive}
+                title={needsPushToolbarHint}
+                onClick={toggleUnpushedFilter}
+              >
+                <span className="needs-push-dot" aria-hidden />
+                <span>Unpushed ({needsPushCount})</span>
+              </button>
+            ) : null}
           </div>
           <div className="task-table-toolbar-divider" aria-hidden />
-          <div className="relative flex shrink-0 items-center" ref={sortMenuRef}>
+          <div className="task-table-toolbar-sort">
+            <span className="task-table-toolbar-group-label">Sorting</span>
+            <div className="relative flex shrink-0 items-center" ref={sortMenuRef}>
             <button
               type="button"
               className={toolbarTriggerClass(isSortMenuOpen || dashboardSort !== "default")}
@@ -3208,7 +3222,7 @@ export function TaskTable() {
             >
               <span>Sort</span>
               <ToolbarMenuChevron open={isSortMenuOpen} />
-              <span className="toolbar-strip-btn-value w-[4.5rem]">
+              <span className="toolbar-strip-btn-value">
                 {dashboardSort === "status"
                   ? "Status"
                   : dashboardSort === "release"
@@ -3253,24 +3267,8 @@ export function TaskTable() {
                 </div>
               </div>
             ) : null}
+            </div>
           </div>
-          {needsPushCount > 0 || needsPushOnly ? (
-            <>
-              <div className="task-table-toolbar-divider" aria-hidden />
-              <div className="flex shrink-0 items-center">
-                <button
-                  type="button"
-                  className={toolbarTriggerClass(needsPushFilterActive, "toolbar-strip-btn-needs-push")}
-                  aria-pressed={needsPushFilterActive}
-                  title={needsPushToolbarHint}
-                  onClick={toggleUnpushedFilter}
-                >
-                  <span className="needs-push-dot" aria-hidden />
-                  <span>Unpushed ({needsPushCount})</span>
-                </button>
-              </div>
-            </>
-          ) : null}
           <div className="task-table-toolbar-divider" aria-hidden />
           <div className="task-table-toolbar-actions">
             <span className="task-table-toolbar-group-label">Actions</span>
