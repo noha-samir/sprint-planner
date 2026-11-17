@@ -172,6 +172,21 @@ describe("dashboardTaskOrder", () => {
     expect(order).toEqual(["b", "c", "a", "d"]);
   });
 
+  it("keeps a release group together inside one status and leaves it split across statuses", () => {
+    const tasks = [
+      task("login", 2, null, "In Progress"),
+      task("cart", 1, "Checkout", "In Progress"),
+      task("tax", 3, "Checkout", "In Progress"),
+      task("pay", 2, "Checkout", "Ready for Production"),
+    ];
+    expect(sortTasksForDashboard(tasks, new Map(), "default").map((row) => row.id)).toEqual([
+      "pay",
+      "cart",
+      "tax",
+      "login",
+    ]);
+  });
+
   it("sorts by Order within the same status before release date", () => {
     const tasks = [
       task("uat-late", 4, "Zeta", "UAT"),

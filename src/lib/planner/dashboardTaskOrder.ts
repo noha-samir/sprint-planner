@@ -1,3 +1,4 @@
+import { normalizeReleaseGroup } from "@/lib/scheduler/releaseGroups";
 import type { ScheduleResult, Task } from "@/lib/scheduler/types";
 
 /** How the dashboard list is ordered. Default is status, then Order, then release date. */
@@ -91,9 +92,89 @@ const compareDashboardReleaseDate = (
 };
 
 /**
+ * Order, then release date, for stories that already share a status.
+ * Blocked stories are not ordered by release date.
+ * @param a - First story.
+ * @param b - Second story.
+ * @param releaseDateById - UAT release date from the schedule, keyed by task id.
+ * @returns Negative when a comes first.
+ */
+const compareWithinStatus = (
+  a: Task,
+  b: Task,
+  releaseDateById: Map<string, Date | null | undefined>,
+): number => {
+  const orderDiff = compareDashboardOrder(a, b);
+  if (orderDiff !== 0) return orderDiff;
+  if (isBlockedDashboardStatus(a.status)) return 0;
+  return compareDashboardReleaseDate(a, b, releaseDateById);
+};
+
+/**
+ * Inside one status, pull a release group into one block.
+ * The block sits where its earliest Order (then soonest date) would sit.
+ * Stories with no group stay single rows.
+ * @param tasks - Stories that share a status.
+ * @param releaseDateById - UAT release date from the schedule, keyed by task id.
+ * @returns Those stories with each group kept together.
+ */
+const keepGroupsTogetherWithinStatus = (
+  tasks: Task[],
+  releaseDateById: Map<string, Date | null | undefined>,
+): Task[] => {
+  const membersByGroup = new Map<string, Task[]>();
+  const blocks: Task[][] = [];
+
+  for (const task of tasks) {
+    const group = normalizeReleaseGroup(task.releaseGroup)?.toLowerCase();
+    if (!group) {
+      blocks.push([task]);
+      continue;
+    }
+    const members = membersByGroup.get(group);
+    if (members) members.push(task);
+    else membersByGroup.set(group, [task]);
+  }
+
+  for (const members of membersByGroup.values()) {
+    blocks.push([...members].sort((a, b) => compareWithinStatus(a, b, releaseDateById)));
+  }
+
+  blocks.sort((a, b) => compareWithinStatus(a[0], b[0], releaseDateById));
+  return blocks.flat();
+};
+
+/**
+ * Default dashboard order: status first, then Order, then release date.
+ * A release group stays together only inside one status.
+ * @param tasks - Rows to sort.
+ * @param releaseDateById - UAT release date from the schedule, keyed by task id.
+ * @returns A new array.
+ */
+const sortDefaultKeepingGroups = (
+  tasks: Task[],
+  releaseDateById: Map<string, Date | null | undefined>,
+): Task[] => {
+  const byStatus = new Map<number, Task[]>();
+  for (const task of tasks) {
+    const rank = dashboardStatusRank(task.status);
+    const bucket = byStatus.get(rank);
+    if (bucket) bucket.push(task);
+    else byStatus.set(rank, [task]);
+  }
+
+  const ordered: Task[] = [];
+  for (const rank of [...byStatus.keys()].sort((a, b) => a - b)) {
+    ordered.push(...keepGroupsTogetherWithinStatus(byStatus.get(rank) ?? [], releaseDateById));
+  }
+  return ordered;
+};
+
+/**
  * Compare two stories for the selected dashboard sort.
  * Default is status (latest step first), then Order, then release date.
  * Blocked stories are not ordered by release date.
+ * Grouping inside a status is applied by `sortTasksForDashboard`, not by this pair compare.
  * @param a - First story.
  * @param b - Second story.
  * @param releaseDateById - UAT release date from the schedule, keyed by task id.
@@ -136,13 +217,13 @@ export const compareTasksForDashboardSort = (
  */
 export const buildDashboardTaskOrder = (tasks: Task[], result: ScheduleResult): string[] => {
   const releaseDateById = new Map(result.tasks.map((task) => [task.id, task.releaseDate]));
-  return [...tasks]
-    .sort((a, b) => compareTasksForDashboardSort(a, b, releaseDateById, "default"))
-    .map((task) => task.id);
+  return sortTasksForDashboard(tasks, releaseDateById, "default").map((task) => task.id);
 };
 
 /**
  * Sort the visible dashboard rows.
+ * Default is status, then Order, then release date. Inside one status a release group stays together.
+ * A group split across statuses stays split. Status, Release date, and Order do not regroup.
  * @param tasks - Rows that passed the filters.
  * @param releaseDateById - UAT release date from the schedule, keyed by task id.
  * @param mode - Default, status, release date, or Order.
@@ -152,7 +233,10 @@ export const sortTasksForDashboard = (
   tasks: Task[],
   releaseDateById: Map<string, Date | null | undefined>,
   mode: DashboardSortMode = "default",
-): Task[] => [...tasks].sort((a, b) => compareTasksForDashboardSort(a, b, releaseDateById, mode));
+): Task[] =>
+  mode === "default"
+    ? sortDefaultKeepingGroups(tasks, releaseDateById)
+    : [...tasks].sort((a, b) => compareTasksForDashboardSort(a, b, releaseDateById, mode));
 
 /**
  * Keep saved dashboard order, then any active tasks missing from it (store order),
