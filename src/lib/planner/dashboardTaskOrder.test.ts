@@ -3,8 +3,6 @@ import type { Task } from "@/lib/scheduler/types";
 import {
   appendTaskIdsToDashboardOrder,
   buildDashboardTaskOrder,
-  clusterTasksByReleaseGroup,
-  floatNearReleaseStatusesToTop,
   sortTasksByFrozenOrder,
   sortTasksForDashboard,
 } from "./dashboardTaskOrder";
@@ -39,13 +37,81 @@ const task = (
 });
 
 describe("dashboardTaskOrder", () => {
-  it("keeps the same release group adjacent after pin clustering", () => {
-    const tasks = [task("a", 1, "Wave"), task("b", 2, null), task("c", 3, "Wave")];
-    const pinned = ["a", "b", "c"];
-    const releaseDates = new Map<string, Date>();
+  it("sorts the working flow from the latest status back to Blocked", () => {
+    const tasks = [
+      task("todo", 1, null, "To Do"),
+      task("blocked", 1, null, "Blocked"),
+      task("review", 1, null, "Ready for Review"),
+      task("testing", 1, null, "Testing"),
+      task("ready-test", 1, null, "Ready for Testing"),
+      task("progress", 1, null, "In Progress"),
+      task("staging", 1, null, "STAGING"),
+      task("uat", 1, null, "UAT"),
+      task("rfp", 1, null, "Ready for Production"),
+    ];
+    const ordered = sortTasksForDashboard(tasks, new Map(), "default");
+    expect(ordered.map((row) => row.id)).toEqual([
+      "rfp",
+      "uat",
+      "staging",
+      "testing",
+      "ready-test",
+      "review",
+      "progress",
+      "todo",
+      "blocked",
+    ]);
+  });
 
-    const ordered = sortTasksForDashboard(tasks, releaseDates, pinned);
-    expect(ordered.map((row) => row.id)).toEqual(["a", "c", "b"]);
+  it("uses Order then release date inside the same status, and skips dates for Blocked", () => {
+    const tasks = [
+      task("same-order-later", 1, null, "In Progress"),
+      task("same-order-sooner", 1, null, "In Progress"),
+      task("higher-order", 2, null, "In Progress"),
+      task("blocked-late", 2, null, "Blocked"),
+      task("blocked-early", 1, null, "Blocked"),
+    ];
+    const dates = new Map<string, Date>([
+      ["same-order-later", new Date("2026-07-01T12:00:00.000Z")],
+      ["same-order-sooner", new Date("2026-06-01T12:00:00.000Z")],
+      ["higher-order", new Date("2026-01-01T12:00:00.000Z")],
+      ["blocked-late", new Date("2026-01-01T12:00:00.000Z")],
+      ["blocked-early", new Date("2026-12-01T12:00:00.000Z")],
+    ]);
+    expect(sortTasksForDashboard(tasks, dates, "default").map((row) => row.id)).toEqual([
+      "same-order-sooner",
+      "same-order-later",
+      "higher-order",
+      "blocked-early",
+      "blocked-late",
+    ]);
+  });
+
+  it("sorts by release date, Order, or status when that mode is selected", () => {
+    const tasks = [
+      task("soon", 3, null, "To Do"),
+      task("later", 1, null, "In Progress"),
+      task("blocked", 2, null, "Blocked"),
+    ];
+    const dates = new Map<string, Date>([
+      ["soon", new Date("2026-06-01T12:00:00.000Z")],
+      ["later", new Date("2026-08-01T12:00:00.000Z")],
+    ]);
+    expect(sortTasksForDashboard(tasks, dates, "release").map((row) => row.id)).toEqual([
+      "soon",
+      "later",
+      "blocked",
+    ]);
+    expect(sortTasksForDashboard(tasks, dates, "order").map((row) => row.id)).toEqual([
+      "later",
+      "blocked",
+      "soon",
+    ]);
+    expect(sortTasksForDashboard(tasks, dates, "status").map((row) => row.id)).toEqual([
+      "later",
+      "soon",
+      "blocked",
+    ]);
   });
 
   it("appends bulk-added task ids to the end of dashboard order", () => {
@@ -59,7 +125,7 @@ describe("dashboardTaskOrder", () => {
     expect(appendTaskIdsToDashboardOrder(["b", "a"], ["a", "b", "c"], ["c"])).toEqual(["b", "a", "c"]);
   });
 
-  it("groups release stories together by default, ordered by group priority", () => {
+  it("orders saved dashboard ids by status, then Order, then release date", () => {
     const tasks = [
       task("a", 3, "Beta"),
       task("b", 1, "Alpha"),
@@ -106,62 +172,15 @@ describe("dashboardTaskOrder", () => {
     expect(order).toEqual(["b", "c", "a", "d"]);
   });
 
-  it("clusterTasksByReleaseGroup pulls matching names together", () => {
-    const tasks = [task("a", 1, "X"), task("b", 2, "Y"), task("c", 3, "X")];
-    expect(clusterTasksByReleaseGroup(tasks).map((row) => row.id)).toEqual(["a", "c", "b"]);
-  });
-
-  it("floats UAT then Ready for Production above other statuses", () => {
-    const tasks = [
-      task("todo", 1, null, "To Do"),
-      task("rfp", 2, null, "Ready for Production"),
-      task("progress", 3, null, "In Progress"),
-      task("uat", 4, null, "UAT"),
-    ];
-    const ordered = sortTasksForDashboard(tasks, new Map(), null);
-    expect(ordered.map((row) => row.id)).toEqual(["uat", "rfp", "todo", "progress"]);
-  });
-
-  it("keeps UAT / Ready for Production at the top after pinned clustering", () => {
-    const tasks = [
-      task("a", 1, "Wave", "To Do"),
-      task("b", 2, null, "UAT"),
-      task("c", 3, "Wave", "Ready for Production"),
-    ];
-    const ordered = sortTasksForDashboard(tasks, new Map(), ["a", "b", "c"]);
-    expect(ordered.map((row) => row.id)).toEqual(["b", "c", "a"]);
-  });
-
-  it("does not pull lower-status release-group siblings into the UAT block", () => {
-    const tasks = [
-      task("uat", 5, "Wave", "UAT"),
-      task("todo-same-group", 1, "Wave", "To Do"),
-      task("rfp", 2, null, "Ready for Production"),
-      task("other", 3, null, "In Progress"),
-    ];
-    const ordered = sortTasksForDashboard(tasks, new Map(), ["todo-same-group", "uat", "rfp", "other"]);
-    expect(ordered.map((row) => row.id)).toEqual(["uat", "rfp", "todo-same-group", "other"]);
-  });
-
-  it("sorts by Order within the same status tier before release group", () => {
+  it("sorts by Order within the same status before release date", () => {
     const tasks = [
       task("uat-late", 4, "Zeta", "UAT"),
       task("uat-early", 1, "Alpha", "UAT"),
       task("todo-early", 1, null, "To Do"),
       task("todo-late", 9, null, "To Do"),
     ];
-    const ordered = sortTasksForDashboard(tasks, new Map(), null);
+    const ordered = sortTasksForDashboard(tasks, new Map(), "default");
     expect(ordered.map((row) => row.id)).toEqual(["uat-early", "uat-late", "todo-early", "todo-late"]);
-  });
-
-  it("floatNearReleaseStatusesToTop preserves relative order within tiers", () => {
-    const tasks = [
-      task("a", 1, null, "To Do"),
-      task("b", 2, null, "UAT"),
-      task("c", 3, null, "Ready for Production"),
-      task("d", 4, null, "UAT"),
-    ];
-    expect(floatNearReleaseStatusesToTop(tasks).map((row) => row.id)).toEqual(["b", "d", "c", "a"]);
   });
 
   it("keeps a captured order when a story's status would otherwise move it", () => {

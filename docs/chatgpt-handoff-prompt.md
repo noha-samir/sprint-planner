@@ -23,21 +23,26 @@ Please explain the current project behavior and release flow using the structure
 - Retention policy per squad (latest 6) and when retention is applied.
 - How close squad differs from start new sprint in archive behavior.
 
-4. Release dates shown in task table
+4. Adding stories
+- Stories are added on the dashboard: one task, or Bulk insertion (paste).
+- There is no spreadsheet file import and no template download.
+- Pull from Jira can still add missing stories onto the board.
+
+5. Release dates shown in task table
 - Estimate Time (first snapshot).
 - UAT Release Date (current recalculated plan).
 - Production Release Date (next business day after UAT with Friday/Saturday, holidays, and planning Sunday rules).
 
-5. Account switching behavior
+6. Account switching behavior
 - How local persistence and server hydration interact.
 - How the app avoids showing another squad's stale board when switching accounts/squads.
 
-6. User Management tab
+7. User Management tab
 - What each field means in Squads and Users sections.
 - Role labels shown to users (Engineering Manager, Reviewer, Super Admin).
 - How squad IDs can be reused from dropdown or custom input.
 
-7. Validation checklist
+8. Validation checklist
 - What API endpoints to test.
 - What manual scenarios to test for role, squad isolation, release dates, and retention.
 

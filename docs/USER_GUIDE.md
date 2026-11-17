@@ -42,7 +42,7 @@ flowchart TB
 ## Tabs
 
 ### Dashboard (`/`)
-Plan the sprint table: story link, BE/FE/Mobile/Integration/QC, PM + buffer, status, release dates, flags, tools (timeline modal, Jira updates). **Owner** filter: All / EM / Team / PM — Team excludes EM and squad-PM stories; PM shows stories whose **Jira assignee** is a squad PM (User Management emails), or whose Product Managers column includes one.
+Plan the sprint table: story link, BE/FE/Mobile/Integration/QC, PM + buffer, status, release dates, flags, tools (timeline modal, Jira updates). **Owner** filter: tick any mix of EM, Team, and PM (All clears them). A story shows when it matches one ticked group. Team is everyone who is not EM or a squad PM. PM is a story whose **Jira assignee** is a squad PM (User Management emails), or whose Product Managers column includes one.
 
 ### Timeline (`/timeline`)
 Visual phase schedule for the active board.
@@ -68,13 +68,13 @@ This guide inside the app.
 
 ```mermaid
 flowchart LR
-  add[Add_or_import_stories] --> assign[Assign_people_and_hours]
+  add[Add_or_bulk_insert_stories] --> assign[Assign_people_and_hours]
   assign --> check[Check_Timeline]
   check --> sync[Optional_Jira_push]
 ```
 
 1. Confirm sprint window (super admin if it must change).
-2. Add tasks or bulk insert / import.
+2. Add a task, or use Bulk insertion to paste several. There is no spreadsheet file import or template download.
 3. Fill hours and assignees; set status.
 4. Use Timeline to spot overload.
 5. EM/Super Admin: **Mark Progress Now** when you want Cur UAT/Production tracking.

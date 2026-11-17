@@ -6,14 +6,16 @@ import {
 } from "./parentStatusFromChildren";
 
 describe("workflowStageForStatus", () => {
-  it("treats code-review states as in progress, not To Do", () => {
+  it("puts review after In Progress and before Ready for Testing", () => {
     expect(workflowStageForStatus("To Do")).toBe(0);
     expect(workflowStageForStatus("In Progress")).toBe(1);
-    expect(workflowStageForStatus("Initial Review")).toBe(1);
     expect(workflowStageForStatus("Blocked")).toBe(1);
-    expect(workflowStageForStatus("Ready for Testing")).toBe(2);
-    expect(workflowStageForStatus("UAT")).toBe(2);
-    expect(workflowStageForStatus("Closed")).toBe(2);
+    expect(workflowStageForStatus("Ready for Review")).toBe(2);
+    expect(workflowStageForStatus("Initial Review")).toBe(2);
+    expect(workflowStageForStatus("Final Review")).toBe(2);
+    expect(workflowStageForStatus("Ready for Testing")).toBe(3);
+    expect(workflowStageForStatus("UAT")).toBe(3);
+    expect(workflowStageForStatus("Closed")).toBe(3);
   });
 });
 
@@ -31,6 +33,13 @@ describe("deriveParentStatusFromChildren", () => {
     expect(deriveParentStatusFromChildren(["Ready for Testing", "Testing", "Closed"])).toBe("Ready for Testing");
   });
 
+  it("follows the slowest subtask into Ready for Review", () => {
+    expect(deriveParentStatusFromChildren(["Ready for Review", "Ready for Testing"])).toBe("Ready for Review");
+    expect(deriveParentStatusFromChildren(["Ready for Review", "Initial Review"])).toBe("Ready for Review");
+    expect(deriveParentStatusFromChildren(["Final Review", "Testing"])).toBe("Ready for Review");
+    expect(deriveParentStatusFromChildren(["In Progress", "Ready for Testing"])).toBe("In Progress");
+  });
+
   it("ignores Cancelled / Discoped subtasks", () => {
     expect(deriveParentStatusFromChildren(["Ready for Testing", "Cancelled"])).toBe("Ready for Testing");
     expect(deriveParentStatusFromChildren(["Cancelled", "Discoped"])).toBeNull();
@@ -46,6 +55,12 @@ describe("resolveParentStatusFromChildren", () => {
   it("moves the parent forward", () => {
     expect(resolveParentStatusFromChildren("To Do", ["In Progress", "To Do"])).toEqual({ status: "In Progress" });
     expect(resolveParentStatusFromChildren("In Progress", ["Ready for Testing"])).toEqual({
+      status: "Ready for Testing",
+    });
+    expect(resolveParentStatusFromChildren("In Progress", ["Ready for Review", "Ready for Testing"])).toEqual({
+      status: "Ready for Review",
+    });
+    expect(resolveParentStatusFromChildren("Ready for Review", ["Ready for Testing", "Testing"])).toEqual({
       status: "Ready for Testing",
     });
   });

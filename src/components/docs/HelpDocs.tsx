@@ -111,15 +111,16 @@ export function HelpDocs() {
         <h2 className="text-lg font-bold text-slate-900">Planning loop</h2>
         <ol className="list-decimal space-y-2 pl-5 text-sm text-slate-700">
           <li>Confirm sprint window and roster (super admin when changes are needed).</li>
-          <li>Add or import stories; set hours and assignees.</li>
+          <li>Add a story, or paste several with Bulk insertion. Then set hours and assignees.</li>
           <li>Check Timeline for overload.</li>
           <li>EM / Super Admin: Mark Progress Now when locking Cur dates.</li>
           <li>
             Push / pull Jira as needed. Pull auto-adds stories when People → Jira fields has Squad field +
             option set (must match this squad, e.g. Ventures not Ship). EM-story badges use User Management EM
-            email vs Jira assignee. Owner filter All / EM / Team / PM marks PM when the Jira assignee matches
-            a squad PM email from User Management (same idea as EM), or the story’s Product Managers column
-            matches. Leftover open work from closed sprints is included.
+            email vs Jira assignee. Owner filter: tick any mix of EM, Team, and PM (All clears them). A story
+            shows when it matches one ticked group. PM means the Jira assignee matches a squad PM email from
+            User Management (same idea as EM), or the story’s Product Managers column matches. Leftover open
+            work from closed sprints is included.
           </li>
         </ol>
         <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-[13px] text-blue-950">

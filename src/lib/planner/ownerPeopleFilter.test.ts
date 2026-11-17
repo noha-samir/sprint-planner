@@ -4,6 +4,7 @@ import {
   isOwnerPeopleMatch,
   listOwnerPeopleGroups,
   taskHasAssignedPerson,
+  taskMatchesOwnerBuckets,
 } from "./ownerPeopleFilter";
 
 const resources = [
@@ -98,6 +99,41 @@ describe("taskHasAssignedPerson", () => {
     expect(taskHasAssignedPerson(plannerOnly, buildOwnerPeopleMatchSet(["Mona Adel"], resources))).toBe(false);
     const unlinked = { ...emptyTask, beDevs: ["Omar Fathy"], jiraAssigneeName: null };
     expect(taskHasAssignedPerson(unlinked, buildOwnerPeopleMatchSet(["Omar Fathy"], resources))).toBe(false);
+  });
+});
+
+describe("taskMatchesOwnerBuckets", () => {
+  const row = (isEmStory: boolean, assignee = "") => ({
+    isEmStory,
+    jiraAssigneeName: assignee,
+  });
+  const none = new Set<string>();
+
+  it("shows every story when no group is ticked", () => {
+    expect(taskMatchesOwnerBuckets(row(true), new Set(), false, none, none)).toBe(true);
+    expect(taskMatchesOwnerBuckets(row(false), new Set(), true, none, none)).toBe(true);
+  });
+
+  it("unions ticked groups", () => {
+    const buckets = new Set<"em" | "team" | "pm">(["em", "pm"]);
+    expect(taskMatchesOwnerBuckets(row(true), buckets, false, none, none)).toBe(true);
+    expect(taskMatchesOwnerBuckets(row(false), buckets, true, none, none)).toBe(true);
+    expect(taskMatchesOwnerBuckets(row(false), buckets, false, none, none)).toBe(false);
+  });
+
+  it("keeps Team as the stories that are neither EM nor PM", () => {
+    const buckets = new Set<"em" | "team" | "pm">(["team"]);
+    expect(taskMatchesOwnerBuckets(row(false), buckets, false, none, none)).toBe(true);
+    expect(taskMatchesOwnerBuckets(row(true), buckets, false, none, none)).toBe(false);
+    expect(taskMatchesOwnerBuckets(row(false), buckets, true, none, none)).toBe(false);
+  });
+
+  it("narrows a group to the picked person's Jira workload", () => {
+    const teamPeople = buildOwnerPeopleMatchSet(["Sara Nabil"], resources);
+    const buckets = new Set<"em" | "team" | "pm">(["team", "em"]);
+    expect(taskMatchesOwnerBuckets(row(false, "Sara"), buckets, false, teamPeople, none)).toBe(true);
+    expect(taskMatchesOwnerBuckets(row(true, "Someone else"), buckets, false, teamPeople, none)).toBe(true);
+    expect(taskMatchesOwnerBuckets(row(false, "Omar Fathy"), buckets, false, teamPeople, none)).toBe(false);
   });
 });
 

@@ -4,7 +4,6 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import { createPortal } from "react-dom";
 import { format } from "date-fns";
 import { useSession } from "next-auth/react";
-import { downloadTasksImportTemplate, parseTasksImportFile } from "@/lib/export/tasksImport";
 import {
   getProductionReleaseDateFrom,
 } from "@/lib/scheduler/calendar";
@@ -50,14 +49,18 @@ import { effectiveMobileHours, mobileAppLabel } from "@/lib/scheduler/mobilePlat
 import { storyPhasePlanFromTask } from "@/lib/scheduler/storyTimelineEntries";
 import { getTasksNeedingRemark } from "@/lib/planner/pendingMarkProgress";
 import { copySelectedStoriesToClipboard } from "@/lib/planner/copySelectedStories";
-import { sortTasksByFrozenOrder, sortTasksForDashboard } from "@/lib/planner/dashboardTaskOrder";
+import {
+  sortTasksByFrozenOrder,
+  sortTasksForDashboard,
+  type DashboardSortMode,
+} from "@/lib/planner/dashboardTaskOrder";
 import { isOwnerPmStory } from "@/lib/planner/pmStoryFlag";
 import {
   buildOwnerPeopleMatchSet,
   isOwnerPeopleMatch,
   listOwnerPeopleGroups,
-  taskHasAssignedPerson,
-  type OwnerPeopleScope,
+  taskMatchesOwnerBuckets,
+  type OwnerBucket,
 } from "@/lib/planner/ownerPeopleFilter";
 import { buildTaskDetailsSummaryChips, buildTaskDetailsSummaryRows } from "@/lib/planner/taskDetailsSummary";
 import { buildReleaseGroupColorMap } from "@/lib/planner/releaseGroupColors";
@@ -480,10 +483,7 @@ export function TaskTable() {
   } | null>(null);
   const [tagInputDraft, setTagInputDraft] = useState("");
   const [todoModalDraft, setTodoModalDraft] = useState("");
-  const [isImportingTasks, setIsImportingTasks] = useState(false);
-  const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false);
   const linkInputsRef = useRef<Record<string, HTMLInputElement | null>>({});
-  const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const sprintFilterRef = useRef<HTMLDivElement | null>(null);
   const statusFilterRef = useRef<HTMLDivElement | null>(null);
@@ -545,12 +545,14 @@ export function TaskTable() {
   });
   const [visibleStatuses, setVisibleStatuses] = useState<string[]>(defaultVisibleStatuses);
   const [jiraSprintFilter, setJiraSprintFilter] = useState<JiraSprintFilter>("open");
-  const [emFilter, setEmFilter] = useState<"all" | "em" | "non-em" | "pm">("all");
+  const [ownerBuckets, setOwnerBuckets] = useState<OwnerBucket[]>([]);
   const [ownerPeople, setOwnerPeople] = useState<string[]>([]);
   const [squadPmNames, setSquadPmNames] = useState<string[]>([]);
   const [squadPmReady, setSquadPmReady] = useState(false);
   const [typeFilter, setTypeFilter] = useState<string[]>(() => buildIssueTypeFilterOptions([]));
   const [kindFilter, setKindFilter] = useState<"all" | "stories" | "standalone">("all");
+  const [dashboardSort, setDashboardSort] = useState<DashboardSortMode>("default");
+  const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [needsPushOnly, setNeedsPushOnly] = useState(false);
   const [typeFilterOpen, setTypeFilterOpen] = useState(false);
   const [ownerFilterOpen, setOwnerFilterOpen] = useState(false);
@@ -559,6 +561,7 @@ export function TaskTable() {
   const typeFilterRef = useRef<HTMLDivElement | null>(null);
   const ownerFilterRef = useRef<HTMLDivElement | null>(null);
   const kindFilterRef = useRef<HTMLDivElement | null>(null);
+  const sortMenuRef = useRef<HTMLDivElement | null>(null);
   const tasksMenuRef = useRef<HTMLDivElement | null>(null);
   /** Row order captured when Unpushed is turned on, so later edits do not jump the list. */
   const unpushedOrderRef = useRef<string[] | null>(null);
@@ -764,6 +767,7 @@ export function TaskTable() {
         setTypeFilterOpen(false);
         setOwnerFilterOpen(false);
         setKindFilterOpen(false);
+        setIsSortMenuOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -788,6 +792,9 @@ export function TaskTable() {
       if (kindFilterRef.current && !kindFilterRef.current.contains(target)) {
         setKindFilterOpen(false);
       }
+      if (sortMenuRef.current && !sortMenuRef.current.contains(target)) {
+        setIsSortMenuOpen(false);
+      }
       if (tasksMenuRef.current && !tasksMenuRef.current.contains(target)) {
         setTasksMenuOpen(false);
       }
@@ -796,12 +803,13 @@ export function TaskTable() {
     return () => document.removeEventListener("mousedown", onPointerDown);
   }, []);
 
-  const closeOtherFilterMenus = useCallback((keep: "sprint" | "status" | "type" | "owner" | "kind") => {
+  const closeOtherFilterMenus = useCallback((keep: "sprint" | "status" | "type" | "owner" | "kind" | "sort") => {
     if (keep !== "sprint") setIsSprintFilterOpen(false);
     if (keep !== "status") setIsStatusFilterOpen(false);
     if (keep !== "type") setTypeFilterOpen(false);
     if (keep !== "owner") setOwnerFilterOpen(false);
     if (keep !== "kind") setKindFilterOpen(false);
+    if (keep !== "sort") setIsSortMenuOpen(false);
     setTasksMenuOpen(false);
   }, []);
 
@@ -829,8 +837,14 @@ export function TaskTable() {
     );
     if (kindFilter === "stories") setKindFilter("all");
     if (needsPushOnly) setNeedsPushOnly(false);
-    if (emFilter === "em" || emFilter === "pm") setEmFilter("all");
-    if (ownerPeople.length > 0) setOwnerPeople([]);
+    const teamNames = new Set(listOwnerPeopleGroups("team", resources).flatMap((group) => group.names));
+    const newTaskHidden =
+      ownerBuckets.length > 0 &&
+      !(ownerBuckets.includes("team") && ownerPeople.every((name) => !teamNames.has(name)));
+    if (newTaskHidden) {
+      setOwnerBuckets([]);
+      setOwnerPeople([]);
+    }
     setFocusTaskId(id);
     setIsAddTaskOpen(false);
     setActionFeedback(
@@ -868,36 +882,81 @@ export function TaskTable() {
     }
   };
 
-  const ownerPeopleScope: OwnerPeopleScope | null =
-    emFilter === "non-em" ? "team" : emFilter === "pm" ? "pm" : null;
-  const ownerPeopleGroups = useMemo(
-    () => (ownerPeopleScope ? listOwnerPeopleGroups(ownerPeopleScope, resources) : []),
-    [ownerPeopleScope, resources],
+  const teamPeopleGroups = useMemo(() => listOwnerPeopleGroups("team", resources), [resources]);
+  const pmPeopleGroups = useMemo(() => listOwnerPeopleGroups("pm", resources), [resources]);
+  const teamRosterNames = useMemo(
+    () => new Set(teamPeopleGroups.flatMap((group) => group.names)),
+    [teamPeopleGroups],
+  );
+  const pmRosterNames = useMemo(
+    () => new Set(pmPeopleGroups.flatMap((group) => group.names)),
+    [pmPeopleGroups],
   );
   // Ignore picks that are no longer on this squad's roster (renamed, removed, or squad switched).
-  const pickedOwnerPeople = useMemo(() => {
-    const rosterNames = new Set(ownerPeopleGroups.flatMap((group) => group.names));
-    return ownerPeople.filter((name) => rosterNames.has(name));
-  }, [ownerPeople, ownerPeopleGroups]);
+  const pickedTeamPeople = useMemo(
+    () => (ownerBuckets.includes("team") ? ownerPeople.filter((name) => teamRosterNames.has(name)) : []),
+    [ownerBuckets, ownerPeople, teamRosterNames],
+  );
+  const pickedPmPeople = useMemo(
+    () => (ownerBuckets.includes("pm") ? ownerPeople.filter((name) => pmRosterNames.has(name)) : []),
+    [ownerBuckets, ownerPeople, pmRosterNames],
+  );
+  const pickedOwnerPeople = useMemo(
+    () => [...pickedTeamPeople, ...pickedPmPeople],
+    [pickedTeamPeople, pickedPmPeople],
+  );
+  const teamPeopleMatchSet = useMemo(
+    () => buildOwnerPeopleMatchSet(pickedTeamPeople, resources),
+    [pickedTeamPeople, resources],
+  );
+  const pmPeopleMatchSet = useMemo(
+    () => buildOwnerPeopleMatchSet(pickedPmPeople, resources),
+    [pickedPmPeople, resources],
+  );
   const ownerPeopleMatchSet = useMemo(
     () => buildOwnerPeopleMatchSet(pickedOwnerPeople, resources),
     [pickedOwnerPeople, resources],
   );
-  const ownerScopeLabel = emFilter === "em" ? "EM" : emFilter === "non-em" ? "Team" : emFilter === "pm" ? "PM" : "";
+  const ownerBucketSet = useMemo(() => new Set(ownerBuckets), [ownerBuckets]);
+  const ownerBucketLabel = (["em", "team", "pm"] as const)
+    .filter((bucket) => ownerBuckets.includes(bucket))
+    .map((bucket) => (bucket === "em" ? "EM" : bucket === "team" ? "Team" : "PM"))
+    .join("·");
   const ownerFilterSummary =
-    pickedOwnerPeople.length === 1
-      ? pickedOwnerPeople[0].split(/\s+/)[0]
-      : pickedOwnerPeople.length > 1
-        ? `${ownerScopeLabel}·${pickedOwnerPeople.length}`
-        : ownerScopeLabel;
-  const ownerFilterHint = !ownerScopeLabel
-    ? "Filter by EM, team, or PM — pick Team or PM to choose specific people"
-    : pickedOwnerPeople.length > 0
-      ? `Jira work assigned to:\n${pickedOwnerPeople.join("\n")}`
-      : `Owner: ${ownerScopeLabel}`;
-  const changeOwnerFilter = (value: typeof emFilter) => {
-    setEmFilter(value);
+    ownerBuckets.length === 0
+      ? ""
+      : pickedOwnerPeople.length === 1
+        ? pickedOwnerPeople[0].split(/\s+/)[0]
+        : pickedOwnerPeople.length > 1
+          ? `${ownerBucketLabel}·${pickedOwnerPeople.length}`
+          : ownerBucketLabel;
+  const ownerFilterHint =
+    ownerBuckets.length === 0
+      ? "Tick EM, Team, and PM together. All clears them."
+      : pickedOwnerPeople.length > 0
+        ? `Jira work assigned to:\n${pickedOwnerPeople.join("\n")}`
+        : `Owner: ${ownerBucketLabel}`;
+  const clearOwnerFilter = () => {
+    setOwnerBuckets([]);
     setOwnerPeople([]);
+  };
+  const toggleOwnerBucket = (bucket: OwnerBucket) => {
+    if (ownerBuckets.includes(bucket)) {
+      setOwnerBuckets(ownerBuckets.filter((item) => item !== bucket));
+      const roster = bucket === "team" ? teamRosterNames : bucket === "pm" ? pmRosterNames : null;
+      if (roster) setOwnerPeople((people) => people.filter((name) => !roster.has(name)));
+      return;
+    }
+    const next = [...ownerBuckets, bucket];
+    if (next.length === 3 && pickedOwnerPeople.length === 0) {
+      clearOwnerFilter();
+      return;
+    }
+    setOwnerBuckets(next);
+  };
+  const clearScopePeople = (bucket: "team" | "pm") => {
+    const roster = bucket === "team" ? teamRosterNames : pmRosterNames;
+    setOwnerPeople((people) => people.filter((name) => !roster.has(name)));
   };
   const toggleOwnerPerson = (name: string) =>
     setOwnerPeople((current) =>
@@ -1503,11 +1562,12 @@ export function TaskTable() {
     setTypeFilterOpen(false);
     setOwnerFilterOpen(false);
     setKindFilterOpen(false);
+    setIsSortMenuOpen(false);
     setNeedsPushOnly(false);
     setJiraSprintFilter("open");
     setVisibleStatuses(defaultVisibleStatusOptions);
     setTypeFilter([...typeFilterOptions]);
-    setEmFilter("all");
+    setOwnerBuckets([]);
     setOwnerPeople([]);
     setKindFilter("all");
   };
@@ -1901,15 +1961,9 @@ export function TaskTable() {
       if (!taskMatchesJiraSprintFilter(task, jiraSprintFilter)) return false;
       return true;
     }).filter((task) => {
-      // Picked people show their whole workload, so EM / PM ownership no longer hides rows.
-      if (ownerPeopleMatchSet.size > 0) {
-        if (!taskHasAssignedPerson(task, ownerPeopleMatchSet)) return false;
-      } else {
-        const pmStory = isOwnerPmStory(task, squadPmNames, resources);
-        if (emFilter === "em" && !task.isEmStory) return false;
-        // PM bucket: assignee is PM, or Story lists a squad PM; EM stays under Owner → EM.
-        if (emFilter === "pm" && (!pmStory || task.isEmStory)) return false;
-        if (emFilter === "non-em" && (task.isEmStory || pmStory)) return false;
+      const pmStory = isOwnerPmStory(task, squadPmNames, resources);
+      if (!taskMatchesOwnerBuckets(task, ownerBucketSet, pmStory, teamPeopleMatchSet, pmPeopleMatchSet)) {
+        return false;
       }
       if (!taskMatchesIssueTypeFilter(task, typeFilter)) return false;
       if (kindFilter === "standalone" && !isParentlessPlannerTask(task)) return false;
@@ -1920,16 +1974,12 @@ export function TaskTable() {
     const releaseDateById = new Map(
       safeResult.tasks.map((item) => [item.id, item.releaseDate] as const),
     );
-    const pinnedOrder =
-      isUatTrackingEnabled && plannerMeta.dashboardTaskOrder.length > 0
-        ? plannerMeta.dashboardTaskOrder
-        : null;
-    const sorted = sortTasksForDashboard(filtered, releaseDateById, pinnedOrder);
+    const sorted = sortTasksForDashboard(filtered, releaseDateById, dashboardSort);
     if (needsPushFilterActive && unpushedOrderRef.current && unpushedOrderRef.current.length > 0) {
       return sortTasksByFrozenOrder(filtered, unpushedOrderRef.current);
     }
     return sorted;
-  }, [tasks, safeResult.tasks, visibleStatuses, jiraSprintFilter, emFilter, ownerPeopleMatchSet, typeFilter, kindFilter, needsPushFilterActive, pendingJiraChangesById, isUatTrackingEnabled, plannerMeta.dashboardTaskOrder, squadPmNames, resources]);
+  }, [tasks, safeResult.tasks, visibleStatuses, jiraSprintFilter, ownerBucketSet, teamPeopleMatchSet, pmPeopleMatchSet, typeFilter, kindFilter, needsPushFilterActive, pendingJiraChangesById, dashboardSort, squadPmNames, resources]);
 
   useEffect(() => {
     if (!needsPushFilterActive) {
@@ -2082,6 +2132,7 @@ export function TaskTable() {
     setTypeFilterOpen(false);
     setOwnerFilterOpen(false);
     setKindFilterOpen(false);
+    setIsSortMenuOpen(false);
     if (needsPushOnly) {
       restoreDefaultBoardFilters();
       return;
@@ -2090,7 +2141,7 @@ export function TaskTable() {
     setJiraSprintFilter("all");
     setVisibleStatuses([...statusFilterOptions]);
     setTypeFilter([...typeFilterOptions]);
-    setEmFilter("all");
+    setOwnerBuckets([]);
     setOwnerPeople([]);
     setKindFilter("all");
   };
@@ -2621,44 +2672,18 @@ export function TaskTable() {
     });
   };
 
-  /** Keep a status the user just chose in the filter, so that story stays on the dashboard. */
+  /**
+   * Keep a status the user just chose in the filter, so that story stays on the dashboard.
+   * Production stays off, matching the default filter.
+   */
   const revealStatusInFilter = (status: string) => {
     const key = status.trim().toLowerCase();
-    if (!key) return;
+    if (!key || key === "production" || key === "released") return;
     setVisibleStatuses((current) => {
       if (current.some((item) => item.trim().toLowerCase() === key)) return current;
       const known = statusFilterOptions.find((item) => item.trim().toLowerCase() === key) ?? status;
       return [...current, known];
     });
-  };
-
-  const importTasksFromFile = async (file: File) => {
-    setIsImportingTasks(true);
-    try {
-      const result = await parseTasksImportFile(file, resources);
-      if (result.error) {
-        window.alert(result.error);
-        return;
-      }
-      const validRows = result.rows.filter((row) => row.isValid);
-      if (validRows.length === 0) {
-        window.alert("No valid stories found in the file. Check the template columns and try again.");
-        return;
-      }
-      const newTaskIds = addTasks(validRows);
-      openBulkAssigneesForNewTasks(newTaskIds, "added");
-      const warningCount = validRows.filter((row) => row.warnings.length > 0).length;
-      setActionFeedback(
-        warningCount > 0
-          ? `Imported ${validRows.length} ${validRows.length === 1 ? "story" : "stories"} (${warningCount} with assignee warnings).`
-          : `Imported ${validRows.length} ${validRows.length === 1 ? "story" : "stories"}.`,
-      );
-    } finally {
-      setIsImportingTasks(false);
-      if (importFileInputRef.current) {
-        importFileInputRef.current.value = "";
-      }
-    }
   };
 
   const updateIntegrationFlags = (
@@ -2921,7 +2946,7 @@ export function TaskTable() {
             <div className="relative" ref={ownerFilterRef}>
               <button
                 type="button"
-                className={toolbarTriggerClass(ownerFilterOpen || emFilter !== "all")}
+                className={toolbarTriggerClass(ownerFilterOpen || ownerBuckets.length > 0)}
                 aria-expanded={ownerFilterOpen}
                 aria-haspopup="true"
                 title={ownerFilterHint}
@@ -2932,115 +2957,151 @@ export function TaskTable() {
               >
                 <span>Owner</span>
                 <ToolbarMenuChevron open={ownerFilterOpen} />
-                <span className="toolbar-strip-btn-value w-12">{ownerFilterSummary || "All"}</span>
+                <span className="toolbar-strip-btn-value w-16">{ownerFilterSummary || "All"}</span>
               </button>
               {ownerFilterOpen ? (
                 <div
                   className="toolbar-dropdown-shell owner-filter-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,16rem)]"
                   aria-label="Filter by owner"
                 >
-                  <ToolbarDropdownHeader title="Owner" subtitle="Who owns the work on this squad." />
-                  <div className="space-y-1 px-2 py-2">
+                  <ToolbarDropdownHeader title="Owner" subtitle="Tick any mix. A story shows when it matches one of them." />
+                  <div className="relative space-y-1 px-2 py-2">
+                    <label
+                      className={`toolbar-menu-choice ${ownerBuckets.length === 0 ? "toolbar-menu-choice-on" : ""}`}
+                      title="Clear EM, Team, and PM and show every owner"
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={ownerBuckets.length === 0}
+                        onChange={clearOwnerFilter}
+                      />
+                      <span className="min-w-0">
+                        <span className="block font-semibold text-slate-900">All</span>
+                        <span className="mt-0.5 block text-[11px] font-normal leading-snug text-slate-500">
+                          EM, team, and PM
+                        </span>
+                      </span>
+                    </label>
                     {(
                       [
-                        { value: "all" as const, label: "All", hint: "EM, team, and PM", people: false },
                         { value: "em" as const, label: "EM", hint: "Assigned to this squad’s EM", people: false },
                         {
-                          value: "non-em" as const,
+                          value: "team" as const,
                           label: "Team",
-                          hint: "Engineers / QC — excludes EM and PM-owned. Pick people on the right.",
+                          hint: "Engineers and QC, not EM or PM. Pick people on the right.",
                           people: true,
                         },
                         {
                           value: "pm" as const,
                           label: "PM",
-                          hint: "Assignee is a squad PM, or Story Product Manager is. Pick PMs on the right.",
+                          hint: "Assignee is a squad PM, or the Story lists one. Pick PMs on the right.",
                           people: true,
                         },
                       ] as const
                     ).map((option) => {
-                      const on = emFilter === option.value;
+                      const on = ownerBuckets.includes(option.value);
                       return (
-                        <div key={option.value} className="relative">
-                          <label
-                            className={`toolbar-menu-choice ${on ? "toolbar-menu-choice-on" : ""}`}
-                            title={option.people ? `${option.label}: choose specific people in the panel that opens on the right` : undefined}
-                          >
-                            <input
-                              type="radio"
-                              name="story-owner-filter"
-                              className="mt-0.5"
-                              checked={on}
-                              onChange={() => changeOwnerFilter(option.value)}
-                            />
-                            <span className="min-w-0">
-                              <span className="block font-semibold text-slate-900">{option.label}</span>
-                              <span className="mt-0.5 block text-[11px] font-normal leading-snug text-slate-500">
-                                {option.hint}
-                              </span>
+                        <label
+                          key={option.value}
+                          className={`toolbar-menu-choice ${on ? "toolbar-menu-choice-on" : ""}`}
+                          title={option.people ? `${option.label}: choose specific people in the panel on the right` : undefined}
+                        >
+                          <input
+                            type="checkbox"
+                            className="mt-0.5"
+                            checked={on}
+                            onChange={() => toggleOwnerBucket(option.value)}
+                          />
+                          <span className="min-w-0">
+                            <span className="block font-semibold text-slate-900">{option.label}</span>
+                            <span className="mt-0.5 block text-[11px] font-normal leading-snug text-slate-500">
+                              {option.hint}
                             </span>
-                            {option.people ? (
-                              <span className="owner-choice-arrow" aria-hidden>
-                                ›
-                              </span>
-                            ) : null}
-                          </label>
-                          {option.people && on && ownerPeopleScope ? (
-                            <div
-                              className="toolbar-dropdown-shell owner-people-flyout"
-                              aria-label={`Pick ${ownerScopeLabel} people`}
-                            >
-                              <ToolbarDropdownHeader
-                                title={ownerPeopleScope === "pm" ? "Squad PMs" : "Team people"}
-                                subtitle="Shows what Jira assigns them: the task itself, a dev subtask (parent shown once), or QC Engineer — EM and PM stories included."
-                              />
-                              {ownerPeopleGroups.length === 0 ? (
-                                <p className="px-3 py-2.5 text-[12px] text-slate-500">
-                                  No {ownerPeopleScope === "pm" ? "PMs" : "engineers or QC"} on Resources yet.
-                                </p>
-                              ) : (
-                                <div className="owner-people-picker">
-                                  <label
-                                    className="owner-people-option owner-people-option-all"
-                                    title={`Show every ${ownerScopeLabel} story`}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={pickedOwnerPeople.length === 0}
-                                      onChange={() => setOwnerPeople([])}
-                                    />
-                                    <span>All {ownerPeopleScope === "pm" ? "PMs" : "team"}</span>
-                                  </label>
-                                  <div className="owner-people-list">
-                                    {ownerPeopleGroups.map((group) => (
-                                      <div key={group.label}>
-                                        {ownerPeopleScope === "team" ? (
-                                          <div className="owner-people-group-label">{group.label}</div>
-                                        ) : null}
-                                        {group.names.map((name) => (
-                                          <label
-                                            key={name}
-                                            className="owner-people-option"
-                                            title={`Show what Jira assigns to ${name}: tasks assigned to them, stories with their FE / BE / Mobile subtask, or where they are QC Engineer`}
-                                          >
-                                            <input
-                                              type="checkbox"
-                                              checked={pickedOwnerPeople.includes(name)}
-                                              onChange={() => toggleOwnerPerson(name)}
-                                            />
-                                            <span className="truncate">{name}</span>
-                                          </label>
-                                        ))}
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
+                          </span>
+                          {option.people ? (
+                            <span className="owner-choice-arrow" aria-hidden>
+                              ›
+                            </span>
                           ) : null}
-                        </div>
+                        </label>
                       );
                     })}
+                    {ownerBuckets.includes("team") || ownerBuckets.includes("pm") ? (
+                      <div className="toolbar-dropdown-shell owner-people-flyout" aria-label="Pick owner people">
+                        {(
+                          [
+                            ownerBuckets.includes("team")
+                              ? {
+                                  key: "team" as const,
+                                  title: "Team people",
+                                  empty: "engineers or QC",
+                                  allLabel: "All team",
+                                  groups: teamPeopleGroups,
+                                  picked: pickedTeamPeople,
+                                  showRole: true,
+                                }
+                              : null,
+                            ownerBuckets.includes("pm")
+                              ? {
+                                  key: "pm" as const,
+                                  title: "Squad PMs",
+                                  empty: "PMs",
+                                  allLabel: "All PMs",
+                                  groups: pmPeopleGroups,
+                                  picked: pickedPmPeople,
+                                  showRole: false,
+                                }
+                              : null,
+                          ].filter((panel) => panel !== null)
+                        ).map((panel) => (
+                          <div key={panel.key}>
+                            <ToolbarDropdownHeader
+                              title={panel.title}
+                              subtitle="Shows what Jira assigns them, including EM and PM stories."
+                            />
+                            {panel.groups.length === 0 ? (
+                              <p className="px-3 py-2.5 text-[12px] text-slate-500">No {panel.empty} on Resources yet.</p>
+                            ) : (
+                              <div className="owner-people-picker">
+                                <label
+                                  className="owner-people-option owner-people-option-all"
+                                  title={`Show every ${panel.title} story`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={panel.picked.length === 0}
+                                    onChange={() => clearScopePeople(panel.key)}
+                                  />
+                                  <span>{panel.allLabel}</span>
+                                </label>
+                                <div className="owner-people-list">
+                                  {panel.groups.map((group) => (
+                                    <div key={group.label}>
+                                      {panel.showRole ? <div className="owner-people-group-label">{group.label}</div> : null}
+                                      {group.names.map((name) => (
+                                        <label
+                                          key={name}
+                                          className="owner-people-option"
+                                          title={`Show what Jira assigns to ${name}`}
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={panel.picked.includes(name)}
+                                            onChange={() => toggleOwnerPerson(name)}
+                                          />
+                                          <span className="truncate">{name}</span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="toolbar-dropdown-footer">
                     <button
@@ -3048,7 +3109,7 @@ export function TaskTable() {
                       className="toolbar-dropdown-footer-btn"
                       title="Show stories from every owner"
                       onClick={() => {
-                        changeOwnerFilter("all");
+                        clearOwnerFilter();
                         setOwnerFilterOpen(false);
                       }}
                     >
@@ -3132,6 +3193,67 @@ export function TaskTable() {
               ) : null}
             </div>
           </div>
+          <div className="task-table-toolbar-divider" aria-hidden />
+          <div className="relative flex shrink-0 items-center" ref={sortMenuRef}>
+            <button
+              type="button"
+              className={toolbarTriggerClass(isSortMenuOpen || dashboardSort !== "default")}
+              aria-expanded={isSortMenuOpen}
+              aria-haspopup="listbox"
+              title="Sort the visible stories"
+              onClick={() => {
+                if (!isSortMenuOpen) closeOtherFilterMenus("sort");
+                setIsSortMenuOpen((current) => !current);
+              }}
+            >
+              <span>Sort</span>
+              <ToolbarMenuChevron open={isSortMenuOpen} />
+              <span className="toolbar-strip-btn-value w-[4.5rem]">
+                {dashboardSort === "status"
+                  ? "Status"
+                  : dashboardSort === "release"
+                    ? "Release"
+                    : dashboardSort === "order"
+                      ? "Order"
+                      : "Default"}
+              </span>
+            </button>
+            {isSortMenuOpen ? (
+              <div className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,18rem)]">
+                <ToolbarDropdownHeader
+                  title="Sort"
+                  subtitle="Default is the latest status first, then Order, then the soonest release date. Blocked is not sorted by date."
+                />
+                <div className="space-y-1 px-2 py-2">
+                  {(
+                    [
+                      ["default", "Default", "Status, then Order, then release date"],
+                      ["status", "Status", "Latest step first, from Ready for Production back to Blocked"],
+                      ["release", "Release date", "Soonest release date first. Blocked stays at the end"],
+                      ["order", "Order", "Order number, lowest first"],
+                    ] as const
+                  ).map(([mode, label, hint]) => {
+                    const on = dashboardSort === mode;
+                    return (
+                      <button
+                        key={mode}
+                        type="button"
+                        className={`toolbar-menu-item ${on ? "toolbar-menu-item-active" : ""}`}
+                        title={hint}
+                        onClick={() => {
+                          unpushedOrderRef.current = null;
+                          setDashboardSort(mode);
+                          setIsSortMenuOpen(false);
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+          </div>
           {needsPushCount > 0 || needsPushOnly ? (
             <>
               <div className="task-table-toolbar-divider" aria-hidden />
@@ -3189,30 +3311,19 @@ export function TaskTable() {
               </button>
             ) : null}
             <div className="relative" ref={tasksMenuRef}>
-              <input
-                ref={importFileInputRef}
-                type="file"
-                accept=".xlsx,.xls,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/plain"
-                className="hidden"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) {
-                    void importTasksFromFile(file);
-                  }
-                }}
-              />
               <button
                 type="button"
                 className={toolbarTriggerClass(tasksMenuOpen)}
                 aria-expanded={tasksMenuOpen}
                 aria-haspopup="menu"
-                title="Add, import or bulk-insert tasks"
+                title="Add one task or paste several"
                 onClick={() => {
                   setIsSprintFilterOpen(false);
                   setIsStatusFilterOpen(false);
                   setTypeFilterOpen(false);
                   setOwnerFilterOpen(false);
                   setKindFilterOpen(false);
+                  setIsSortMenuOpen(false);
                   setTasksMenuOpen((value) => !value);
                 }}
               >
@@ -3223,11 +3334,11 @@ export function TaskTable() {
                 <div
                   className="toolbar-dropdown-shell absolute right-0 z-20 mt-2 w-[min(100vw-1.5rem,15rem)]"
                   role="menu"
-                  aria-label="Add or import tasks"
+                  aria-label="Add tasks"
                 >
                   <ToolbarDropdownHeader
                     title="Tasks"
-                    subtitle="Create one task, paste many, or import a spreadsheet."
+                    subtitle="Create one task, or paste several at once."
                   />
                   <div className="space-y-1 px-2 py-2">
                     {isEditor ? (
@@ -3241,39 +3352,6 @@ export function TaskTable() {
                         Add singular task
                       </button>
                     ) : null}
-                    {isEditor ? (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="toolbar-menu-item"
-                        disabled={isImportingTasks}
-                        title="Import tasks from an Excel, CSV or text file"
-                        onClick={() => {
-                          setTasksMenuOpen(false);
-                          importFileInputRef.current?.click();
-                        }}
-                      >
-                        {isImportingTasks ? "Importing…" : "Import from file"}
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="toolbar-menu-item"
-                      disabled={isDownloadingTemplate}
-                      aria-busy={isDownloadingTemplate}
-                      title="Download XLSX template for task import"
-                      onClick={() => {
-                        setTasksMenuOpen(false);
-                        setIsDownloadingTemplate(true);
-                        void downloadTasksImportTemplate(resources)
-                          .then(() => setActionFeedback("Template downloaded."))
-                          .catch(() => setActionFeedback("Template download failed."))
-                          .finally(() => setIsDownloadingTemplate(false));
-                      }}
-                    >
-                      {isDownloadingTemplate ? "Downloading…" : "Download template"}
-                    </button>
                     {isEditor ? (
                       <button
                         type="button"
@@ -3751,11 +3829,11 @@ export function TaskTable() {
                 <td colSpan={tableColSpan} className="p-4 text-center text-sm text-slate-600">
                   <div className="flex flex-col items-center gap-2">
                     <span>
-                      {emFilter === "em" && !anyEmStoryMarked
+                      {ownerBuckets.length === 1 && ownerBuckets[0] === "em" && !anyEmStoryMarked
                         ? "No EM stories marked yet. Pull from Jira once to mark stories whose Jira assignee is this squad’s EM (User Management email) — refresh keeps those marks."
-                        : emFilter === "pm" && !squadPmReady
+                        : ownerBuckets.length === 1 && ownerBuckets[0] === "pm" && !squadPmReady
                           ? "No squad PMs resolved yet. Add PM people on the roster (or PM emails in User Management) and map them on People → Jira assignees."
-                          : emFilter === "pm" && !anyPmStoryMarked
+                          : ownerBuckets.length === 1 && ownerBuckets[0] === "pm" && !anyPmStoryMarked
                             ? "No PM-owned stories found. Stories whose assignee is a squad PM, or Stories with that PM in Product Managers, appear here."
                             : "No tasks match the current filters."}
                     </span>
@@ -3766,7 +3844,7 @@ export function TaskTable() {
                       onClick={() => {
                         setVisibleStatuses(defaultVisibleStatusOptions);
                         setJiraSprintFilter("all");
-                        changeOwnerFilter("all");
+                        clearOwnerFilter();
                         setTypeFilter([...typeFilterOptions]);
                         setKindFilter("all");
                       }}

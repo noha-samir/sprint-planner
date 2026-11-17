@@ -202,7 +202,7 @@ sequenceDiagram
 
 ### Typical planning loop
 1. Set sprint window (super admin) and roster (super admin)  
-2. Add/import stories; assign people and hours  
+2. Add a story or bulk-insert several; assign people and hours  
 3. When the plan is ready to lock dates → **Mark Progress Now** (EM / super admin)  
 4. Push/pull Jira as needed (pull can import missing EM/squad stories and tags them **Jira sync**)  
 5. Archive via History when the sprint closes  

@@ -390,7 +390,7 @@ export const syncTaskFromJira = async (
 
   const children = await listParentSubtasks(credentials, parentIssueKey);
 
-  // Subtask statuses can move the parent forward (To Do → In Progress → Ready for Testing), never back.
+  // Subtask statuses can move the parent forward (To Do → In Progress → Ready for Review → Ready for Testing), never back.
   let statusFromChildren: SyncTaskFromJiraResult["statusFromChildren"];
   if (status && !keepPlannerBlocked) {
     const childDriven = resolveParentStatusFromChildren(

@@ -1,173 +1,159 @@
-import { normalizeReleaseGroup } from "@/lib/scheduler/releaseGroups";
-import { isUatTaskStatus } from "@/lib/scheduler/taskStatus";
 import type { ScheduleResult, Task } from "@/lib/scheduler/types";
 
+/** How the dashboard list is ordered. Default is status, then Order, then release date. */
+export type DashboardSortMode = "default" | "status" | "release" | "order";
+
 /**
- * UAT / Ready for Production float above other statuses in the dashboard list.
- * Lower rank = higher in the list. This is always the first sort key.
+ * Workflow position for the dashboard, latest step first.
+ * Lower rank sits higher in the list.
+ * @param status - Planner status label.
+ * @returns Rank. Unknown statuses sit after the named flow.
  */
-export const dashboardStatusTopRank = (status: string): number => {
-  if (isUatTaskStatus(status)) {
-    return 0;
+export const dashboardStatusRank = (status: string): number => {
+  switch (status.trim().toLowerCase()) {
+    case "production":
+    case "done":
+    case "released":
+      return 0;
+    case "ready for production":
+      return 1;
+    case "uat":
+      return 2;
+    case "staging":
+      return 3;
+    case "pending bug fixes":
+      return 4;
+    case "testing":
+      return 5;
+    case "ready for testing":
+      return 6;
+    case "final review":
+      return 7;
+    case "initial review":
+      return 8;
+    case "ready for review":
+      return 9;
+    case "in progress":
+    case "inprogress":
+      return 10;
+    case "to do":
+    case "todo":
+      return 11;
+    case "blocked":
+      return 12;
+    case "backlog":
+      return 13;
+    case "cancelled":
+      return 14;
+    case "closed":
+      return 15;
+    case "discoped":
+      return 16;
+    default:
+      return 17;
   }
-  if (status.trim().toLowerCase() === "ready for production") {
-    return 1;
-  }
-  return 2;
 };
 
-const isDashboardTopStatus = (status: string): boolean => dashboardStatusTopRank(status) < 2;
+const isBlockedDashboardStatus = (status: string): boolean => status.trim().toLowerCase() === "blocked";
 
 /**
- * Keep relative order, but move UAT then Ready for Production stories to the top.
+ * Order number, lower first. Stories with no Order sit last.
+ * @param a - First story.
+ * @param b - Second story.
+ * @returns Negative when a comes first.
  */
-export const floatNearReleaseStatusesToTop = (tasks: Task[]): Task[] => {
-  const top: Task[] = [];
-  const rest: Task[] = [];
-  for (const task of tasks) {
-    if (isDashboardTopStatus(task.status)) {
-      top.push(task);
-    } else {
-      rest.push(task);
-    }
-  }
-  top.sort((a, b) => {
-    const rankDiff = dashboardStatusTopRank(a.status) - dashboardStatusTopRank(b.status);
-    return rankDiff !== 0 ? rankDiff : 0;
-  });
-  return [...top, ...rest];
+const compareDashboardOrder = (a: Task, b: Task): number => {
+  const aPriority = a.poPriority ?? Number.MAX_SAFE_INTEGER;
+  const bPriority = b.poPriority ?? Number.MAX_SAFE_INTEGER;
+  return aPriority - bPriority;
 };
 
 /**
- * Default dashboard sort within a release group: PO Order first, then expected release date.
+ * Soonest release date first. Stories with no date sit last.
+ * @param a - First story.
+ * @param b - Second story.
+ * @param releaseDateById - UAT release date from the schedule, keyed by task id.
+ * @returns Negative when a comes first.
  */
-export const compareTasksWithinReleaseGroup = (
+const compareDashboardReleaseDate = (
   a: Task,
   b: Task,
   releaseDateById: Map<string, Date | null | undefined>,
 ): number => {
-  const aPriority = a.poPriority ?? Number.MAX_SAFE_INTEGER;
-  const bPriority = b.poPriority ?? Number.MAX_SAFE_INTEGER;
-  if (aPriority !== bPriority) {
-    return aPriority - bPriority;
-  }
-
   const aRelease = releaseDateById.get(a.id);
   const bRelease = releaseDateById.get(b.id);
-  if (!aRelease && !bRelease) return 0;
-  if (!aRelease) return 1;
-  if (!bRelease) return -1;
-  return aRelease.getTime() - bRelease.getTime();
+  const aTime = aRelease instanceof Date && !Number.isNaN(aRelease.getTime()) ? aRelease.getTime() : null;
+  const bTime = bRelease instanceof Date && !Number.isNaN(bRelease.getTime()) ? bRelease.getTime() : null;
+  if (aTime == null && bTime == null) return 0;
+  if (aTime == null) return 1;
+  if (bTime == null) return -1;
+  return aTime - bTime;
 };
 
 /**
- * Dashboard sort keys (in order):
- * 1. Status tier (UAT → Ready for Production → everything else)
- * 2. Order (poPriority)
- * 3. Release group adjacency / group rank
- * 4. Release date
+ * Compare two stories for the selected dashboard sort.
+ * Default is status (latest step first), then Order, then release date.
+ * Blocked stories are not ordered by release date.
+ * @param a - First story.
+ * @param b - Second story.
+ * @param releaseDateById - UAT release date from the schedule, keyed by task id.
+ * @param mode - Which sort the user picked.
+ * @returns Negative when a comes first.
  */
-export const compareTasksForDashboardOrder = (
+export const compareTasksForDashboardSort = (
   a: Task,
   b: Task,
   releaseDateById: Map<string, Date | null | undefined>,
-  groupRankByName: Map<string, number>,
+  mode: DashboardSortMode,
 ): number => {
-  const statusRankDiff = dashboardStatusTopRank(a.status) - dashboardStatusTopRank(b.status);
-  if (statusRankDiff !== 0) {
-    return statusRankDiff;
+  if (mode === "order") {
+    return compareDashboardOrder(a, b);
   }
-
-  const aPriority = a.poPriority ?? Number.MAX_SAFE_INTEGER;
-  const bPriority = b.poPriority ?? Number.MAX_SAFE_INTEGER;
-  if (aPriority !== bPriority) {
-    return aPriority - bPriority;
+  if (mode === "release") {
+    const aBlocked = isBlockedDashboardStatus(a.status);
+    const bBlocked = isBlockedDashboardStatus(b.status);
+    if (aBlocked !== bBlocked) return aBlocked ? 1 : -1;
+    if (aBlocked && bBlocked) return compareDashboardOrder(a, b);
+    return compareDashboardReleaseDate(a, b, releaseDateById);
   }
-
-  const aGroup = normalizeReleaseGroup(a.releaseGroup);
-  const bGroup = normalizeReleaseGroup(b.releaseGroup);
-
-  if (aGroup !== bGroup) {
-    if (!aGroup) return 1;
-    if (!bGroup) return -1;
-    const aRank = groupRankByName.get(aGroup) ?? Number.MAX_SAFE_INTEGER;
-    const bRank = groupRankByName.get(bGroup) ?? Number.MAX_SAFE_INTEGER;
-    if (aRank !== bRank) {
-      return aRank - bRank;
-    }
-    return aGroup.localeCompare(bGroup);
+  if (mode === "status") {
+    return dashboardStatusRank(a.status) - dashboardStatusRank(b.status);
   }
-
-  return compareTasksWithinReleaseGroup(a, b, releaseDateById);
-};
-
-export const buildReleaseGroupRankMap = (tasks: Task[]): Map<string, number> => {
-  const ranks = new Map<string, number>();
-  for (const task of tasks) {
-    const group = normalizeReleaseGroup(task.releaseGroup);
-    if (!group) {
-      continue;
-    }
-    const priority = task.poPriority ?? Number.MAX_SAFE_INTEGER;
-    const current = ranks.get(group);
-    if (current === undefined || priority < current) {
-      ranks.set(group, priority);
-    }
-  }
-  return ranks;
-};
-
-/**
- * Keep first-seen group order, but pull later members of the same release group next to
- * the first occurrence. Only clusters within the same status tier so UAT / RFP stay on top.
- */
-export const clusterTasksByReleaseGroup = (tasks: Task[]): Task[] => {
-  const placed = new Set<string>();
-  const result: Task[] = [];
-
-  for (const task of tasks) {
-    if (placed.has(task.id)) {
-      continue;
-    }
-    const group = normalizeReleaseGroup(task.releaseGroup);
-    const tier = dashboardStatusTopRank(task.status);
-    if (!group) {
-      result.push(task);
-      placed.add(task.id);
-      continue;
-    }
-    for (const other of tasks) {
-      if (placed.has(other.id)) {
-        continue;
-      }
-      if (dashboardStatusTopRank(other.status) !== tier) {
-        continue;
-      }
-      if (normalizeReleaseGroup(other.releaseGroup) === group) {
-        result.push(other);
-        placed.add(other.id);
-      }
-    }
-  }
-
-  return result;
+  const statusDiff = dashboardStatusRank(a.status) - dashboardStatusRank(b.status);
+  if (statusDiff !== 0) return statusDiff;
+  const orderDiff = compareDashboardOrder(a, b);
+  if (orderDiff !== 0) return orderDiff;
+  if (isBlockedDashboardStatus(a.status)) return 0;
+  return compareDashboardReleaseDate(a, b, releaseDateById);
 };
 
 /**
  * Build persisted dashboard row order from schedule results.
+ * Uses the default sort: status, then Order, then release date.
+ * @param tasks - Stories on the board.
+ * @param result - Current schedule, used for release dates.
+ * @returns Task ids in dashboard order.
  */
 export const buildDashboardTaskOrder = (tasks: Task[], result: ScheduleResult): string[] => {
   const releaseDateById = new Map(result.tasks.map((task) => [task.id, task.releaseDate]));
-  const groupRankByName = buildReleaseGroupRankMap(tasks);
   return [...tasks]
-    .sort((a, b) => compareTasksForDashboardOrder(a, b, releaseDateById, groupRankByName))
+    .sort((a, b) => compareTasksForDashboardSort(a, b, releaseDateById, "default"))
     .map((task) => task.id);
 };
 
 /**
- * Sort tasks for the dashboard table, optionally pinned to a saved order.
- * Status tier is always first; Order is next; release groups stay adjacent within a tier.
+ * Sort the visible dashboard rows.
+ * @param tasks - Rows that passed the filters.
+ * @param releaseDateById - UAT release date from the schedule, keyed by task id.
+ * @param mode - Default, status, release date, or Order.
+ * @returns A new array in the chosen order.
  */
+export const sortTasksForDashboard = (
+  tasks: Task[],
+  releaseDateById: Map<string, Date | null | undefined>,
+  mode: DashboardSortMode = "default",
+): Task[] => [...tasks].sort((a, b) => compareTasksForDashboardSort(a, b, releaseDateById, mode));
+
 /**
  * Keep saved dashboard order, then any active tasks missing from it (store order),
  * then newly bulk-added ids at the end.
@@ -203,49 +189,6 @@ export const appendTaskIdsToDashboardOrder = (
   }
 
   return next;
-};
-
-export const sortTasksForDashboard = (
-  tasks: Task[],
-  releaseDateById: Map<string, Date | null | undefined>,
-  pinnedOrder: string[] | null | undefined,
-): Task[] => {
-  const groupRankByName = buildReleaseGroupRankMap(tasks);
-  const sorted = [...tasks];
-
-  if (!pinnedOrder || pinnedOrder.length === 0) {
-    sorted.sort((a, b) => compareTasksForDashboardOrder(a, b, releaseDateById, groupRankByName));
-    return floatNearReleaseStatusesToTop(clusterTasksByReleaseGroup(sorted));
-  }
-
-  const orderIndex = new Map(pinnedOrder.map((id, index) => [id, index]));
-  sorted.sort((a, b) => {
-    const statusRankDiff = dashboardStatusTopRank(a.status) - dashboardStatusTopRank(b.status);
-    if (statusRankDiff !== 0) {
-      return statusRankDiff;
-    }
-
-    const aPriority = a.poPriority ?? Number.MAX_SAFE_INTEGER;
-    const bPriority = b.poPriority ?? Number.MAX_SAFE_INTEGER;
-    if (aPriority !== bPriority) {
-      return aPriority - bPriority;
-    }
-
-    const aIndex = orderIndex.get(a.id);
-    const bIndex = orderIndex.get(b.id);
-    const aPinned = aIndex !== undefined;
-    const bPinned = bIndex !== undefined;
-
-    if (aPinned && bPinned) {
-      return aIndex - bIndex;
-    }
-    if (aPinned !== bPinned) {
-      return aPinned ? -1 : 1;
-    }
-    return compareTasksForDashboardOrder(a, b, releaseDateById, groupRankByName);
-  });
-
-  return floatNearReleaseStatusesToTop(clusterTasksByReleaseGroup(sorted));
 };
 
 /**

@@ -1,5 +1,8 @@
 import type { Resource, ResourceType, Task } from "@/lib/scheduler/types";
 
+/** Owner groups. None selected means All. */
+export type OwnerBucket = "em" | "team" | "pm";
+
 /** Owner filter choices that can be narrowed to specific people. */
 export type OwnerPeopleScope = "team" | "pm";
 
@@ -84,4 +87,45 @@ export const taskHasAssignedPerson = (task: JiraAssignedPeopleFields, matchSet: 
     jiraNames.some((name) => name !== "" && isOwnerPeopleMatch(name, matchSet)) ||
     (task.jira?.subtasks ?? []).some((subtask) => isOwnerPeopleMatch(subtask.assigneeName, matchSet))
   );
+};
+
+/**
+ * Whether a story belongs on the board for the ticked owner groups.
+ * No groups means All. EM, Team, and PM combine: a story shows when it matches any ticked group.
+ * Picked people narrow only their group, and show that person's full Jira workload.
+ * @param task - EM flag plus the Jira assignee fields used for a person pick.
+ * @param buckets - Ticked groups. Empty is All.
+ * @param isPmStory - Whether this row is owned by a squad PM.
+ * @param teamPeople - Match set for picked team people. Empty means the whole Team group.
+ * @param pmPeople - Match set for picked PMs. Empty means the whole PM group.
+ * @returns True when the row should stay visible.
+ */
+export const taskMatchesOwnerBuckets = (
+  task: JiraAssignedPeopleFields & { isEmStory?: boolean },
+  buckets: ReadonlySet<OwnerBucket>,
+  isPmStory: boolean,
+  teamPeople: ReadonlySet<string>,
+  pmPeople: ReadonlySet<string>,
+): boolean => {
+  if (buckets.size === 0) return true;
+  const teamNarrowed = teamPeople.size > 0;
+  const pmNarrowed = pmPeople.size > 0;
+  if (buckets.size === 3 && !teamNarrowed && !pmNarrowed) return true;
+
+  if (buckets.has("em") && task.isEmStory) return true;
+  if (buckets.has("team")) {
+    if (teamNarrowed) {
+      if (taskHasAssignedPerson(task, teamPeople)) return true;
+    } else if (!task.isEmStory && !isPmStory) {
+      return true;
+    }
+  }
+  if (buckets.has("pm")) {
+    if (pmNarrowed) {
+      if (taskHasAssignedPerson(task, pmPeople)) return true;
+    } else if (isPmStory && !task.isEmStory) {
+      return true;
+    }
+  }
+  return false;
 };

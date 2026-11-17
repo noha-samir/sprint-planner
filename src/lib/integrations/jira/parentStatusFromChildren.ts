@@ -12,29 +12,41 @@ import {
 export const CHILD_DRIVEN_PARENT_STATUS = {
   TODO: "To Do",
   IN_PROGRESS: "In Progress",
+  READY_FOR_REVIEW: "Ready for Review",
   READY_FOR_TESTING: "Ready for Testing",
 } as const;
 
 const STAGE_STATUS = [
   CHILD_DRIVEN_PARENT_STATUS.TODO,
   CHILD_DRIVEN_PARENT_STATUS.IN_PROGRESS,
+  CHILD_DRIVEN_PARENT_STATUS.READY_FOR_REVIEW,
   CHILD_DRIVEN_PARENT_STATUS.READY_FOR_TESTING,
 ] as const;
 
-type Stage = 0 | 1 | 2;
+type Stage = 0 | 1 | 2 | 3;
 
 const normalize = (value: string) => value.trim().toLowerCase();
+
+/** Initial Review and Final Review are review steps, so the parent sits at Ready for Review. */
+const isReviewStatus = (status: string): boolean => {
+  const value = normalize(status);
+  return value === "ready for review" || value === "initial review" || value === "final review";
+};
 
 const isCancelledStatus = (status: string): boolean =>
   normalize(status) === "cancelled" || isDiscopedTaskStatus(status);
 
 /**
- * Workflow stage for a Jira status: 0 = To Do, 1 = In Progress (incl. review/blocked), 2 = Ready for Testing or later.
- * Code-review states (Initial/Final Review) sit after In Progress in this workflow, so they are stage 1.
+ * Workflow stage for a Jira status.
+ * 0 = To Do, 1 = In Progress (including Blocked), 2 = Ready for Review (including Initial/Final Review),
+ * 3 = Ready for Testing or later.
+ * @param status - Jira status name.
+ * @returns The stage used to find the slowest subtask.
  */
 export const workflowStageForStatus = (status: string): Stage => {
   const value = normalize(status);
   if (isTodoTaskStatus(status) && !value.includes("review")) return 0;
+  if (isReviewStatus(status)) return 2;
   if (
     isTestingTaskStatus(status) ||
     isUatTaskStatus(status) ||
@@ -42,14 +54,16 @@ export const workflowStageForStatus = (status: string): Stage => {
     isReleasedTaskStatus(status) ||
     value === "closed"
   ) {
-    return 2;
+    return 3;
   }
   return 1;
 };
 
 /**
- * Parent status implied by the subtasks (all subtasks; Cancelled/Discoped ignored).
- * All To Do → To Do; all Ready for Testing or later → Ready for Testing; otherwise → In Progress.
+ * Parent status implied by the slowest active subtask (Cancelled/Discoped ignored).
+ * All To Do → To Do. Any still In Progress or earlier → In Progress.
+ * Every subtask at least Ready for Review, but not all Ready for Testing → Ready for Review.
+ * Every subtask Ready for Testing or later → Ready for Testing.
  * @param childStatuses - Jira status names of every subtask under the parent.
  * @returns The implied status, or null when there are no active subtasks or a status is unknown.
  */
@@ -60,7 +74,9 @@ export const deriveParentStatusFromChildren = (childStatuses: Array<string | und
 
   const stages = active.map(workflowStageForStatus);
   if (stages.every((stage) => stage === 0)) return CHILD_DRIVEN_PARENT_STATUS.TODO;
-  if (stages.every((stage) => stage === 2)) return CHILD_DRIVEN_PARENT_STATUS.READY_FOR_TESTING;
+  const slowest = Math.min(...stages);
+  if (slowest >= 3) return CHILD_DRIVEN_PARENT_STATUS.READY_FOR_TESTING;
+  if (slowest >= 2) return CHILD_DRIVEN_PARENT_STATUS.READY_FOR_REVIEW;
   return CHILD_DRIVEN_PARENT_STATUS.IN_PROGRESS;
 };
 
