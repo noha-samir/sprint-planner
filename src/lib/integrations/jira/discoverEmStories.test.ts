@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildEmAssignedBacklogJql,
   buildEmStoryDiscoveryJql,
   discoverEmStoriesFromJira,
   EM_CARRYOVER_OPEN_STATUSES,
+  emAssignedBacklogClause,
   emSprintAwareStoryClause,
   existingIssueKeySet,
 } from "./discoverEmStories";
@@ -78,6 +80,28 @@ describe("buildEmStoryDiscoveryJql", () => {
     ).toBeNull();
   });
 
+  it("adds squad stories with no sprint only when they are assigned to the EM", () => {
+    expect(emAssignedBacklogClause("")).toBeNull();
+    expect(emAssignedBacklogClause("em-1")).toContain("sprint is EMPTY");
+    expect(emAssignedBacklogClause("em-1")).toContain('assignee = "em-1"');
+    expect(emAssignedBacklogClause("em-1")).toContain(quoteJql("Ready for Development"));
+    expect(
+      buildEmAssignedBacklogJql({
+        projectKey: "BR",
+        squadFieldId: "customfield_10001",
+        squadOptionId: "10001",
+        emAccountId: "em-1",
+      }),
+    ).toContain("sprint is EMPTY AND assignee = \"em-1\"");
+    expect(
+      buildEmAssignedBacklogJql({
+        projectKey: "BR",
+        squadFieldId: "customfield_10001",
+        squadOptionId: "10001",
+      }),
+    ).toBeNull();
+  });
+
   it("filters by squad option only", () => {
     expect(
       buildEmStoryDiscoveryJql({
@@ -115,6 +139,9 @@ describe("discoverEmStoriesFromJira", () => {
       config,
       new Set(["BR-1"]),
     );
+    expect(result.stories.map((story) => story.key)).toEqual(["BR-2"]);
+    const calls = vi.mocked(fetch).mock.calls;
+    expect(calls).toHaveLength(1);
     expect(result.stories).toEqual([
       {
         key: "BR-2",
@@ -125,6 +152,31 @@ describe("discoverEmStoriesFromJira", () => {
         estimateSeconds: null,
       },
     ]);
+    vi.unstubAllGlobals();
+  });
+
+  it("adds a squad story with no sprint when the assignee is the EM", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { jql?: string };
+        const issues = body.jql?.includes("sprint is EMPTY")
+          ? [{ key: "BR-9", fields: { summary: "Backlog", issuetype: { subtask: false }, assignee: { accountId: "em-1" } } }]
+          : [{ key: "BR-2", fields: { summary: "In sprint", issuetype: { subtask: false } } }];
+        return { ok: true, json: async () => ({ issues }) };
+      }),
+    );
+    const config = defaultSquadJiraConfig();
+    config.projectKey = "BR";
+    config.subtaskSquadFieldId = "customfield_10001";
+    config.subtaskSquadOptionId = "10001";
+    const result = await discoverEmStoriesFromJira(
+      { siteUrl: "https://example.atlassian.net", email: "a@b.co", apiToken: "x" },
+      config,
+      new Set(),
+      "em-1",
+    );
+    expect(result.stories.map((story) => story.key)).toEqual(["BR-2", "BR-9"]);
     vi.unstubAllGlobals();
   });
 });

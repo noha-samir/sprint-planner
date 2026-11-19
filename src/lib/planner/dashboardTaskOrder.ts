@@ -1,7 +1,7 @@
 import { normalizeReleaseGroup } from "@/lib/scheduler/releaseGroups";
 import type { ScheduleResult, Task } from "@/lib/scheduler/types";
 
-/** How the dashboard list is ordered. Default is status, then Order, then release date. */
+/** How the dashboard list is ordered. A release group stays one block in every mode. */
 export type DashboardSortMode = "default" | "status" | "release" | "order";
 
 /**
@@ -92,16 +92,34 @@ const compareDashboardReleaseDate = (
 };
 
 /**
- * Default dashboard order: status, then Order, then release date, with a release group kept as one block.
- * The block sits where its furthest story would sit. Stories inside it follow that same order.
- * Stories with no group stay single rows.
+ * Story furthest along the workflow. Lower rank is further along.
+ * @param members - Stories in one block.
+ * @returns The furthest story.
+ */
+const furthestStory = (members: readonly Task[]): Task =>
+  members.reduce((furthest, task) =>
+    dashboardStatusRank(task.status) < dashboardStatusRank(furthest.status) ? task : furthest,
+  );
+
+/**
+ * Story with the lowest Order. Missing Order sorts last.
+ * @param members - Stories in one block.
+ * @returns The story that places the block when sorting by Order.
+ */
+const earliestOrderStory = (members: readonly Task[]): Task =>
+  members.reduce((earliest, task) => (compareDashboardOrder(task, earliest) < 0 ? task : earliest));
+
+/**
+ * Keep each release group as one block. Stories with no group stay single rows.
  * @param tasks - Rows to sort.
- * @param releaseDateById - UAT release date from the schedule, keyed by task id.
+ * @param sortMembers - Order of stories inside a group.
+ * @param compareBlocks - Where each block sits. Receives the members already sorted.
  * @returns A new array.
  */
-const sortDefaultKeepingGroups = (
-  tasks: Task[],
-  releaseDateById: Map<string, Date | null | undefined>,
+const clusterReleaseGroups = (
+  tasks: readonly Task[],
+  sortMembers: (members: Task[]) => Task[],
+  compareBlocks: (a: readonly Task[], b: readonly Task[]) => number,
 ): Task[] => {
   const membersByGroup = new Map<string, Task[]>();
   const blocks: Task[][] = [];
@@ -117,19 +135,18 @@ const sortDefaultKeepingGroups = (
     else membersByGroup.set(group, [task]);
   }
 
-  const byDefault = (a: Task, b: Task) => compareTasksForDashboardSort(a, b, releaseDateById, "default");
   for (const members of membersByGroup.values()) {
-    blocks.push([...members].sort(byDefault));
+    blocks.push(sortMembers(members));
   }
-  blocks.sort((a, b) => byDefault(a[0], b[0]));
+  blocks.sort((a, b) => compareBlocks(a, b));
   return blocks.flat();
 };
 
 /**
  * Compare two stories for the selected dashboard sort.
- * Default is status (latest step first), then Order, then release date.
+ * Default is Order, then status (latest step first), then release date.
  * Blocked stories are not ordered by release date.
- * A release group is kept together by `sortTasksForDashboard`, placed by its furthest story.
+ * Release groups are kept together by `sortTasksForDashboard` in every mode.
  * @param a - First story.
  * @param b - Second story.
  * @param releaseDateById - UAT release date from the schedule, keyed by task id.
@@ -155,17 +172,17 @@ export const compareTasksForDashboardSort = (
   if (mode === "status") {
     return dashboardStatusRank(a.status) - dashboardStatusRank(b.status);
   }
-  const statusDiff = dashboardStatusRank(a.status) - dashboardStatusRank(b.status);
-  if (statusDiff !== 0) return statusDiff;
   const orderDiff = compareDashboardOrder(a, b);
   if (orderDiff !== 0) return orderDiff;
+  const statusDiff = dashboardStatusRank(a.status) - dashboardStatusRank(b.status);
+  if (statusDiff !== 0) return statusDiff;
   if (isBlockedDashboardStatus(a.status)) return 0;
   return compareDashboardReleaseDate(a, b, releaseDateById);
 };
 
 /**
  * Build persisted dashboard row order from schedule results.
- * Uses the default sort: status, then Order, then release date.
+ * Uses the default sort: Order, then status, then release date.
  * @param tasks - Stories on the board.
  * @param result - Current schedule, used for release dates.
  * @returns Task ids in dashboard order.
@@ -177,8 +194,10 @@ export const buildDashboardTaskOrder = (tasks: Task[], result: ScheduleResult): 
 
 /**
  * Sort the visible dashboard rows.
- * Default is status, then Order, then release date. A release group stays together and sits where its furthest story would sit.
- * Status, Release date, and Order do not regroup.
+ * A release group stays together in every mode.
+ * Default places the group at its lowest Order, then its furthest status, then its soonest release date.
+ * Inside the group the rows follow Order, then status, then release date.
+ * Status places the group at its furthest status. Order places it at its lowest Order. Release date places it at its soonest date.
  * @param tasks - Rows that passed the filters.
  * @param releaseDateById - UAT release date from the schedule, keyed by task id.
  * @param mode - Default, status, release date, or Order.
@@ -188,10 +207,42 @@ export const sortTasksForDashboard = (
   tasks: Task[],
   releaseDateById: Map<string, Date | null | undefined>,
   mode: DashboardSortMode = "default",
-): Task[] =>
-  mode === "default"
-    ? sortDefaultKeepingGroups(tasks, releaseDateById)
-    : [...tasks].sort((a, b) => compareTasksForDashboardSort(a, b, releaseDateById, mode));
+): Task[] => {
+  const byPair = (a: Task, b: Task) => compareTasksForDashboardSort(a, b, releaseDateById, mode);
+  if (mode === "status") {
+    const byStatusThenOrder = (a: Task, b: Task) =>
+      dashboardStatusRank(a.status) - dashboardStatusRank(b.status) || compareDashboardOrder(a, b);
+    return clusterReleaseGroups(
+      tasks,
+      (members) => [...members].sort(byStatusThenOrder),
+      (a, b) =>
+        dashboardStatusRank(furthestStory(a).status) - dashboardStatusRank(furthestStory(b).status) ||
+        compareDashboardOrder(earliestOrderStory(a), earliestOrderStory(b)),
+    );
+  }
+  if (mode === "order") {
+    return clusterReleaseGroups(
+      tasks,
+      (members) =>
+        [...members].sort((a, b) => compareDashboardOrder(a, b) || dashboardStatusRank(a.status) - dashboardStatusRank(b.status)),
+      (a, b) =>
+        compareDashboardOrder(earliestOrderStory(a), earliestOrderStory(b)) ||
+        dashboardStatusRank(furthestStory(a).status) - dashboardStatusRank(furthestStory(b).status),
+    );
+  }
+  if (mode === "release") {
+    return clusterReleaseGroups(
+      tasks,
+      (members) => [...members].sort(byPair),
+      (a, b) => byPair(a[0], b[0]),
+    );
+  }
+  return clusterReleaseGroups(
+    tasks,
+    (members) => [...members].sort(byPair),
+    (a, b) => byPair(a[0], b[0]),
+  );
+};
 
 /**
  * Keep saved dashboard order, then any active tasks missing from it (store order),

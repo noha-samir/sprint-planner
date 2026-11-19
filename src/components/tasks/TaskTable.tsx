@@ -63,6 +63,7 @@ import {
   type OwnerBucket,
 } from "@/lib/planner/ownerPeopleFilter";
 import { buildTaskDetailsSummaryChips, buildTaskDetailsSummaryRows } from "@/lib/planner/taskDetailsSummary";
+import { taskMatchesBoardSearch } from "@/lib/planner/boardSearch";
 import { buildReleaseGroupColorMap } from "@/lib/planner/releaseGroupColors";
 import { savePlannerAfterJiraSync, type PlannerSaveResult } from "@/lib/planner/flushPlannerState";
 import { mapWithConcurrency } from "@/lib/async/mapWithConcurrency";
@@ -551,6 +552,7 @@ export function TaskTable() {
   const [squadPmReady, setSquadPmReady] = useState(false);
   const [typeFilter, setTypeFilter] = useState<string[]>(() => buildIssueTypeFilterOptions([]));
   const [kindFilter, setKindFilter] = useState<"all" | "stories" | "standalone">("all");
+  const [boardSearch, setBoardSearch] = useState("");
   const [dashboardSort, setDashboardSort] = useState<DashboardSortMode>("default");
   const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [needsPushOnly, setNeedsPushOnly] = useState(false);
@@ -837,6 +839,7 @@ export function TaskTable() {
     );
     if (kindFilter === "stories") setKindFilter("all");
     if (needsPushOnly) setNeedsPushOnly(false);
+    if (boardSearch.trim()) setBoardSearch("");
     const teamNames = new Set(listOwnerPeopleGroups("team", resources).flatMap((group) => group.names));
     const newTaskHidden =
       ownerBuckets.length > 0 &&
@@ -1570,6 +1573,7 @@ export function TaskTable() {
     setOwnerBuckets([]);
     setOwnerPeople([]);
     setKindFilter("all");
+    setBoardSearch("");
   };
 
   /**
@@ -1954,6 +1958,7 @@ export function TaskTable() {
   // eslint-disable-next-line react-hooks/preserve-manual-memoization -- sort depends on live schedule map
   const orderedTasks = useMemo(() => {
     const filtered = tasks.filter((task) => {
+      if (boardSearch.trim()) return taskMatchesBoardSearch(task, boardSearch);
       const statusVisible = visibleStatuses.some(
         (status) => status.trim().toLowerCase() === task.status.trim().toLowerCase(),
       );
@@ -1979,7 +1984,7 @@ export function TaskTable() {
       return sortTasksByFrozenOrder(filtered, unpushedOrderRef.current);
     }
     return sorted;
-  }, [tasks, safeResult.tasks, visibleStatuses, jiraSprintFilter, ownerBucketSet, teamPeopleMatchSet, pmPeopleMatchSet, typeFilter, kindFilter, needsPushFilterActive, pendingJiraChangesById, dashboardSort, squadPmNames, resources]);
+  }, [tasks, safeResult.tasks, visibleStatuses, jiraSprintFilter, ownerBucketSet, teamPeopleMatchSet, pmPeopleMatchSet, typeFilter, kindFilter, needsPushFilterActive, pendingJiraChangesById, dashboardSort, squadPmNames, resources, boardSearch]);
 
   useEffect(() => {
     if (!needsPushFilterActive) {
@@ -2144,6 +2149,7 @@ export function TaskTable() {
     setOwnerBuckets([]);
     setOwnerPeople([]);
     setKindFilter("all");
+    setBoardSearch("");
   };
 
   // Pending changes per story the first time it was seen this session; leaving warns only about newer edits.
@@ -2708,9 +2714,35 @@ export function TaskTable() {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+      <div className="flex shrink-0 flex-nowrap items-center gap-2">
         <h2 className="text-lg font-semibold text-slate-900">Tasks</h2>
-        <span className="text-sm font-semibold text-slate-700">
+        <search className="toolbar-search">
+          <svg className="toolbar-search-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" strokeWidth="1.6" />
+            <path d="M12.5 12.5L17 17" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+          <input
+            type="search"
+            value={boardSearch}
+            placeholder="Search group or story number"
+            aria-label="Search by group or story number"
+            title="Search by release group or Jira story number. Other filters pause until this is cleared."
+            className="toolbar-search-input"
+            onChange={(event) => setBoardSearch(event.target.value)}
+          />
+          {boardSearch ? (
+            <button
+              type="button"
+              className="toolbar-search-clear"
+              title="Clear search"
+              aria-label="Clear search"
+              onClick={() => setBoardSearch("")}
+            >
+              ×
+            </button>
+          ) : null}
+        </search>
+        <span className="ml-auto text-sm font-semibold text-slate-700">
           Stories: <span className="tabular-nums">{totalStoryCount}</span> total
           {visibleStoryCount !== totalStoryCount ? (
             <span className="ml-2 font-normal text-slate-500">
@@ -3205,8 +3237,8 @@ export function TaskTable() {
               </button>
             ) : null}
           </div>
-          <div className="task-table-toolbar-divider" aria-hidden />
           <div className="task-table-toolbar-sort">
+            <div className="task-table-toolbar-divider" aria-hidden />
             <span className="task-table-toolbar-group-label">Sorting</span>
             <div className="relative flex shrink-0 items-center" ref={sortMenuRef}>
             <button
@@ -3233,18 +3265,18 @@ export function TaskTable() {
               </span>
             </button>
             {isSortMenuOpen ? (
-              <div className="toolbar-dropdown-shell absolute left-0 z-20 mt-2 w-[min(100vw-1.5rem,18rem)]">
+              <div className="toolbar-dropdown-shell absolute left-1/2 z-40 mt-2 w-[min(18rem,calc(100vw-2rem))] -translate-x-1/2">
                 <ToolbarDropdownHeader
                   title="Sort"
-                  subtitle="Default is the latest status first, then Order, then the soonest release date. A release group stays together and sits with its furthest story. Blocked is not sorted by date."
+                  subtitle="A release group always stays together. Default is Order, then status, then release date."
                 />
                 <div className="space-y-1 px-2 py-2">
                   {(
                     [
-                      ["default", "Default", "Status, then Order, then release date"],
-                      ["status", "Status", "Latest step first, from Ready for Production back to Blocked"],
-                      ["release", "Release date", "Soonest release date first. Blocked stays at the end"],
-                      ["order", "Order", "Order number, lowest first"],
+                      ["default", "Default", "Group stays together. Order, then status, then release date"],
+                      ["status", "Status", "Group stays together at its furthest status"],
+                      ["release", "Release date", "Group stays together at its soonest date. Blocked stays at the end"],
+                      ["order", "Order", "Group stays together at its lowest Order"],
                     ] as const
                   ).map(([mode, label, hint]) => {
                     const on = dashboardSort === mode;
@@ -3268,8 +3300,8 @@ export function TaskTable() {
               </div>
             ) : null}
             </div>
+            <div className="task-table-toolbar-divider" aria-hidden />
           </div>
-          <div className="task-table-toolbar-divider" aria-hidden />
           <div className="task-table-toolbar-actions">
             <span className="task-table-toolbar-group-label">Actions</span>
             {canManageSprintLifecycle ? (
@@ -3833,7 +3865,9 @@ export function TaskTable() {
                           ? "No squad PMs resolved yet. Add PM people on the roster (or PM emails in User Management) and map them on People → Jira assignees."
                           : ownerBuckets.length === 1 && ownerBuckets[0] === "pm" && !anyPmStoryMarked
                             ? "No PM-owned stories found. Stories whose assignee is a squad PM, or Stories with that PM in Product Managers, appear here."
-                            : "No tasks match the current filters."}
+                            : boardSearch.trim()
+                              ? "No stories match that group or story number."
+                              : "No tasks match the current filters."}
                     </span>
                     <button
                       type="button"
@@ -3845,6 +3879,7 @@ export function TaskTable() {
                         clearOwnerFilter();
                         setTypeFilter([...typeFilterOptions]);
                         setKindFilter("all");
+                        setBoardSearch("");
                       }}
                     >
                       Reset Filters

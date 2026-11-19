@@ -59,8 +59,8 @@ export async function POST(request: Request) {
     ]);
 
     const [storiesResult, standaloneTasks] = await Promise.all([
-      discoverEmStoriesFromJira(credentials, squadConfig, existingKeys),
-      discoverStandaloneTasksFromJira(credentials, squadConfig, existingKeys),
+      discoverEmStoriesFromJira(credentials, squadConfig, existingKeys, emAccountId),
+      discoverStandaloneTasksFromJira(credentials, squadConfig, existingKeys, emAccountId),
     ]);
 
     const seenKeys = new Set(storiesResult.stories.map((s) => s.key));

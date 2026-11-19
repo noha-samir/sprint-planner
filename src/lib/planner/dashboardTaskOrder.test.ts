@@ -63,7 +63,7 @@ describe("dashboardTaskOrder", () => {
     ]);
   });
 
-  it("uses Order then release date inside the same status, and skips dates for Blocked", () => {
+  it("sorts default by Order, then status, then release date, and skips dates for Blocked", () => {
     const tasks = [
       task("same-order-later", 1, null, "In Progress"),
       task("same-order-sooner", 1, null, "In Progress"),
@@ -81,8 +81,8 @@ describe("dashboardTaskOrder", () => {
     expect(sortTasksForDashboard(tasks, dates, "default").map((row) => row.id)).toEqual([
       "same-order-sooner",
       "same-order-later",
-      "higher-order",
       "blocked-early",
+      "higher-order",
       "blocked-late",
     ]);
   });
@@ -125,7 +125,7 @@ describe("dashboardTaskOrder", () => {
     expect(appendTaskIdsToDashboardOrder(["b", "a"], ["a", "b", "c"], ["c"])).toEqual(["b", "a", "c"]);
   });
 
-  it("orders saved dashboard ids by status, then Order, then release date", () => {
+  it("orders saved dashboard ids by Order, then status, then release date", () => {
     const tasks = [
       task("a", 3, "Beta"),
       task("b", 1, "Alpha"),
@@ -172,7 +172,7 @@ describe("dashboardTaskOrder", () => {
     expect(order).toEqual(["b", "c", "a", "d"]);
   });
 
-  it("keeps a release group together across statuses and places the block by its furthest story", () => {
+  it("keeps a release group together in every sort", () => {
     const tasks = [
       task("login", 1, null, "In Progress"),
       task("cart", 4, "Checkout", "In Progress"),
@@ -180,14 +180,38 @@ describe("dashboardTaskOrder", () => {
       task("pay", 2, "Checkout", "Ready for Review"),
     ];
     expect(sortTasksForDashboard(tasks, new Map(), "default").map((row) => row.id)).toEqual([
+      "login",
+      "pay",
+      "cart",
+      "review-other",
+    ]);
+    expect(sortTasksForDashboard(tasks, new Map(), "status").map((row) => row.id)).toEqual([
       "pay",
       "cart",
       "review-other",
       "login",
     ]);
+    expect(sortTasksForDashboard(tasks, new Map(), "order").map((row) => row.id)).toEqual([
+      "login",
+      "pay",
+      "cart",
+      "review-other",
+    ]);
+    const dates = new Map<string, Date>([
+      ["login", new Date("2026-05-01T12:00:00.000Z")],
+      ["cart", new Date("2026-06-01T12:00:00.000Z")],
+      ["review-other", new Date("2026-07-01T12:00:00.000Z")],
+      ["pay", new Date("2026-08-01T12:00:00.000Z")],
+    ]);
+    expect(sortTasksForDashboard(tasks, dates, "release").map((row) => row.id)).toEqual([
+      "login",
+      "cart",
+      "pay",
+      "review-other",
+    ]);
   });
 
-  it("sorts by Order within the same status before release date", () => {
+  it("sorts default by Order before status", () => {
     const tasks = [
       task("uat-late", 4, "Zeta", "UAT"),
       task("uat-early", 1, "Alpha", "UAT"),
@@ -195,7 +219,7 @@ describe("dashboardTaskOrder", () => {
       task("todo-late", 9, null, "To Do"),
     ];
     const ordered = sortTasksForDashboard(tasks, new Map(), "default");
-    expect(ordered.map((row) => row.id)).toEqual(["uat-early", "uat-late", "todo-early", "todo-late"]);
+    expect(ordered.map((row) => row.id)).toEqual(["uat-early", "todo-early", "uat-late", "todo-late"]);
   });
 
   it("keeps a captured order when a story's status would otherwise move it", () => {

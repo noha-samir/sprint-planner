@@ -133,7 +133,7 @@ function NewSprintButton() {
 export default function Home() {
   return (
     <main className="mx-auto flex h-full min-h-0 w-full min-w-0 max-w-full flex-1 flex-col gap-2 overflow-hidden md:gap-3">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
+      <div className="flex shrink-0 items-center gap-3">
         <div className="min-w-0">
           <h1 className="section-title">Dashboard</h1>
           <p className="mt-0.5 text-sm text-slate-500">Plan sprint tasks with FE/BE/QC parallel scheduling.</p>

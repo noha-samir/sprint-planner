@@ -120,7 +120,8 @@ export function HelpDocs() {
             email vs Jira assignee. Owner filter: tick any mix of EM, Team, and PM (All clears them). A story
             shows when it matches one ticked group. PM means the Jira assignee matches a squad PM email from
             User Management (same idea as EM), or the story’s Product Managers column matches. Leftover open
-            work from closed sprints is included.
+            work from closed sprints is included. A squad story with no sprint is added only when the Jira
+            assignee is the squad EM, and it shows under Sprint → No sprint.
           </li>
         </ol>
         <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-[13px] text-blue-950">
